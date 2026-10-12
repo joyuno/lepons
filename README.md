@@ -1,6 +1,10 @@
-# Lepons
+<p align="center">
+  <img src="icon.png" width="128" height="128" alt="Lepons">
+</p>
 
-여러 머신에서 돌아가는 Claude Code와 Codex를 한 창에서 열고, 나란히 보고, 머신끼리 코드를 나눠 읽게 하는 데스크톱 앱입니다.
+<h1 align="center">Lepons</h1>
+
+<p align="center">여러 머신에서 돌아가는 Claude Code와 Codex를 한 창에서 열고, 나란히 보고, 머신끼리 코드를 나눠 읽게 하는 데스크톱 앱입니다.</p>
 
 서버, 워크스테이션, 맥북처럼 흩어진 머신마다 터미널을 따로 띄우고 코드를 복사해 옮기던 일을 한곳으로 모읍니다. 원격 머신에는 아무것도 설치하지 않습니다. SSH 접속만 되면 됩니다.
 
