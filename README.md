@@ -11,7 +11,7 @@
 | 운영체제 | 파일 |
 |---|---|
 | Windows 10/11 | `.exe` 설치 파일 |
-| macOS | `.dmg` |
+| macOS (Apple Silicon, M1 이상) | `.dmg` |
 
 ### 설치
 
