@@ -68,3 +68,7 @@ VS Code나 Claude Code, Codex로 이미 작업하던 곳이 있다면 **불러�
 - 그 밖에 Lepons가 직접 보내는 데이터는 없습니다. Claude Code와 Codex는 각자의 서비스에 연결하고, 첫 실행 때 각자의 업데이트 명령으로 최신 버전을 받습니다.
 
 화면 언어는 한국어, 영어, 중국어를 지원합니다. 문제나 제안은 [Issues](https://github.com/joyuno/lepons/issues)에 남겨 주세요.
+
+## 라이선스
+
+[MIT](LICENSE)
