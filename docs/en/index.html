@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lepons — Claude Code & Codex on all your machines, in one window | Multi-PC AI agent orchestrator</title>
+  <meta name="description" content="Lepons is a free desktop app that shows the Claude Code and Codex sessions on this PC and your remote servers and VMs in one window, and lets those machines share codebases live over SSH and MCP. Windows and macOS.">
+  <link rel="canonical" href="https://joyuno.github.io/lepons/en/">
+  <link rel="alternate" hreflang="ko" href="https://joyuno.github.io/lepons/">
+  <link rel="alternate" hreflang="en" href="https://joyuno.github.io/lepons/en/">
+  <link rel="alternate" hreflang="x-default" href="https://joyuno.github.io/lepons/">
+  <link rel="icon" href="../icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Lepons">
+  <meta property="og:title" content="Lepons — Claude Code & Codex on all your machines, in one window">
+  <meta property="og:description" content="Drive the AI coding agents on your servers and VMs from one window, and let machines read each other's code over MCP.">
+  <meta property="og:url" content="https://joyuno.github.io/lepons/en/">
+  <meta property="og:image" content="https://joyuno.github.io/lepons/icon.png">
+  <meta property="og:locale" content="en_US">
+  <meta name="twitter:card" content="summary">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Lepons",
+    "alternateName": "Lepons Cockpit",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Windows 10, Windows 11, macOS",
+    "description": "A multi-PC orchestrator for Claude Code and Codex that lets machines share codebases over SSH and MCP.",
+    "url": "https://joyuno.github.io/lepons/en/",
+    "downloadUrl": "https://github.com/joyuno/lepons/releases/latest",
+    "license": "https://opensource.org/licenses/MIT",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "sameAs": ["https://github.com/joyuno/lepons"]
+  }
+  </script>
+  <style>
+    :root { --bg:#11161d; --panel:#171e26; --line:#232d38; --text:#cdd6e0; --muted:#7b8796; --live:#e8a33d; --link:#5fb3c4; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:16px/1.7 "Segoe UI",system-ui,sans-serif; }
+    main { max-width: 860px; margin: 0 auto; padding: 56px 24px 80px; }
+    header { text-align:center; }
+    header img { width:96px; height:96px; }
+    h1 { font-size: 34px; margin: 12px 0 6px; }
+    .lead { color: var(--muted); font-size: 18px; margin: 0 auto 26px; max-width: 640px; }
+    .cta { display:inline-block; background:var(--live); color:#21160a; font-weight:700; padding:12px 26px; border-radius:8px; text-decoration:none; }
+    .sub { display:block; margin-top:10px; font-size:13px; color:var(--muted); }
+    .lang { font-size:13px; color:var(--muted); margin-bottom:18px; }
+    h2 { font-size: 22px; margin: 48px 0 12px; border-bottom:1px solid var(--line); padding-bottom:8px; }
+    li { margin: 8px 0; }
+    strong { color:#fff; }
+    code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+    footer { margin-top: 56px; color: var(--muted); font-size: 13px; text-align:center; }
+    a { color: var(--link); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="lang"><a href="../">한국어</a> · <b>English</b></div>
+    <img src="../icon.png" alt="Lepons icon">
+    <h1>Lepons</h1>
+    <p class="lead">Run <strong>Claude Code</strong> and <strong>Codex</strong> on all your machines from one window, and let those machines read each other's codebases live.</p>
+    <a class="cta" href="https://github.com/joyuno/lepons/releases/latest">Download free</a>
+    <span class="sub">Windows 10/11 · macOS (Apple Silicon) · MIT license</span>
+  </header>
+
+  <h2>Features</h2>
+  <ul>
+    <li><strong>Codebase sharing between PCs</strong> — drag a folder onto another PC on the sharing map and that PC's Claude Code and Codex read and search it over MCP, one file at a time, so it costs only the tokens actually read.</li>
+    <li><strong>Split panes</strong> — up to four panes with sessions and files from different PCs side by side.</li>
+    <li><strong>Nothing to install remotely</strong> — SSH is all it takes; enter the password once and Lepons registers its key.</li>
+    <li><strong>Work that survives a dropped connection</strong> — remote sessions run in tmux.</li>
+    <li><strong>Workflow board</strong> — sessions, subagents and handoffs between PCs on one board.</li>
+    <li><strong>Usage batteries</strong> — what is left of your Claude and Codex 5-hour and 7-day limits.</li>
+  </ul>
+
+  <h2>Get started</h2>
+  <ol>
+    <li>Install the <a href="https://github.com/joyuno/lepons/releases/latest">latest release</a>.</li>
+    <li><strong>＋ Add PC → Remote PC</strong> and enter <code>user@host</code>.</li>
+    <li>Click a folder and choose Claude Code or Codex.</li>
+  </ol>
+  <p>The full guide is in the <a href="https://github.com/joyuno/lepons/blob/main/README.en.md">README</a>.</p>
+
+  <footer>Lepons · <a href="https://github.com/joyuno/lepons">GitHub</a> · MIT</footer>
+</main>
+</body>
+</html>
