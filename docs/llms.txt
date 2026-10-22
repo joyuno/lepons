@@ -10,3 +10,7 @@
 - Nothing is installed on remote PCs; SSH is enough. tmux keeps sessions alive across disconnects.
 - Sharing: drag a folder onto another PC on the sharing map; that PC's agents read it with `search_repo` and `read_file`, file by file, with secrets masked.
 - Shows Claude Code and Codex plan usage (5-hour and 7-day limits) as batteries.
+- Phone web app (1.7.0): served by the desktop app only on the PC's Tailscale addresses, signed in with a password plus an Authenticator (TOTP) code. Lists sessions waiting-first, shows a session's conversation, answers the agent's choices or a typed line, stops work with Esc (cannot end the agent), views files read-only, and sends "waiting for input" Web Push notifications to the home-screen app (iOS 16.4+, Android).
+- Tailscale (free for personal use) lets machines on other networks be added by picking them from the tailnet's device list.
+- Optional desktop pet (produck) that shows which session is waiting for input; custom characters can be imported.
+- One prompt can be sent to several sessions at once; open sessions are offered back after a crash or a normal close.

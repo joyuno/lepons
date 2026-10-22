@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lepons — 여러 PC의 Claude Code·Codex를 한 화면에서 | 멀티 PC AI 에이전트 오케스트레이터</title>
-  <meta name="description" content="Lepons는 이 PC와 원격 서버·VM의 Claude Code와 Codex 세션을 한 창에서 나눠 보고, SSH와 MCP로 PC끼리 코드베이스를 실시간 공유하는 무료 오픈 데스크톱 앱입니다. Windows·macOS 지원.">
-  <meta name="keywords" content="Claude Code, Codex, AI 코딩 에이전트, 멀티 에이전트, MCP, SSH, tmux, 원격 개발, 코드베이스 공유, Lepons">
+  <meta name="description" content="Lepons는 이 PC와 원격 서버·VM의 Claude Code와 Codex 세션을 한 창에서 나눠 보고, SSH와 MCP로 PC끼리 코드베이스를 실시간 공유하는 무료 오픈 데스크톱 앱입니다. 폰에서 세션을 보고 답할 수도 있습니다. Windows·macOS 지원.">
+  <meta name="keywords" content="Claude Code, Codex, AI 코딩 에이전트, 멀티 에이전트, MCP, SSH, tmux, 원격 개발, 코드베이스 공유, Tailscale, Lepons">
   <link rel="canonical" href="https://joyuno.github.io/lepons/">
   <link rel="alternate" hreflang="ko" href="https://joyuno.github.io/lepons/">
   <link rel="alternate" hreflang="en" href="https://joyuno.github.io/lepons/en/">
@@ -14,7 +14,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Lepons">
   <meta property="og:title" content="Lepons — 여러 PC의 Claude Code·Codex를 한 화면에서">
-  <meta property="og:description" content="원격 서버·VM의 AI 코딩 에이전트를 한 창에서 부리고, PC끼리 코드를 MCP로 나눠 읽게 하는 데스크톱 앱.">
+  <meta property="og:description" content="원격 서버·VM의 AI 코딩 에이전트를 한 창에서 관리하고, PC끼리 코드를 MCP로 나눠 읽게 하는 데스크톱 앱.">
   <meta property="og:url" content="https://joyuno.github.io/lepons/">
   <meta property="og:image" content="https://joyuno.github.io/lepons/og.png">
   <meta property="og:image:width" content="1200">
@@ -29,7 +29,7 @@
     "alternateName": "Lepons Cockpit",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows 10, Windows 11, macOS",
-    "description": "여러 PC의 Claude Code와 Codex를 한 화면에서 부리고, SSH와 MCP로 PC끼리 코드베이스를 공유하는 멀티 PC AI 에이전트 오케스트레이터.",
+    "description": "여러 PC의 Claude Code와 Codex를 한 화면에서 관리하고, SSH와 MCP로 PC끼리 코드베이스를 공유하는 멀티 PC AI 에이전트 오케스트레이터.",
     "url": "https://joyuno.github.io/lepons/",
     "downloadUrl": "https://github.com/joyuno/lepons/releases/latest",
     "license": "https://opensource.org/licenses/MIT",
@@ -68,7 +68,7 @@
     <div class="lang"><b>한국어</b> · <a href="en/">English</a></div>
     <img src="icon.png" alt="Lepons 아이콘">
     <h1>Lepons</h1>
-    <p class="lead">여러 PC의 <strong>Claude Code</strong>와 <strong>Codex</strong>를 한 화면에서 부리고, PC끼리 코드베이스를 실시간으로 나눠 읽게 하는 데스크톱 앱입니다.</p>
+    <p class="lead">여러 PC의 <strong>Claude Code</strong>와 <strong>Codex</strong>를 한 화면에서 관리하고, PC끼리 코드베이스를 실시간으로 나눠 읽게 하는 데스크톱 앱입니다.</p>
     <a class="cta" href="https://github.com/joyuno/lepons/releases/latest">무료로 받기</a>
     <span class="sub">Windows 10/11 · macOS (Apple Silicon) · MIT 라이선스</span>
   </header>
@@ -78,6 +78,7 @@
     <li>서버, 워크스테이션, 맥북마다 터미널을 따로 띄워 Claude Code나 Codex를 돌리고 있는 분</li>
     <li>한 PC의 에이전트가 다른 PC의 코드를 봐야 해서 git push·pull이나 파일 복사를 반복하는 분</li>
     <li>여러 에이전트가 지금 무엇을 하는지, 요금제 사용량이 얼마나 남았는지 한눈에 보고 싶은 분</li>
+    <li>에이전트를 돌려 두고 나와서도, 폰으로 내 차례인 세션을 확인하고 답하고 싶은 분</li>
   </ul>
 
   <h2>주요 기능</h2>
@@ -88,6 +89,11 @@
     <li><strong>끊겨도 계속되는 작업</strong> — 원격 세션은 tmux에서 돌아, 노트북을 덮어도 에이전트는 일을 계속합니다.</li>
     <li><strong>워크플로우 보드</strong> — 세션과 서브에이전트, PC 사이의 위임을 한 보드로 봅니다.</li>
     <li><strong>사용량 배터리</strong> — Claude·Codex 요금제의 5시간·7일 한도 남은 양을 배터리로 보여 줍니다.</li>
+    <li><strong>폰에서 보기·답하기</strong> — 폰으로 세션의 대화를 읽고, 선택지를 누르거나 다음 지시를 보냅니다. 입력을 기다리는 세션이 생기면 폰으로 알림이 옵니다. Tailscale 안에서만, 비밀번호와 인증 앱 코드로 열립니다.</li>
+    <li><strong>어디서든 연결</strong> — Tailscale(개인 사용 무료)을 쓰면 다른 네트워크의 PC도 기기 목록에서 골라 추가합니다. 회사 PC라면 사내 규정을 먼저 확인하세요.</li>
+    <li><strong>내 차례를 알려 주는 펫</strong> — 바탕화면의 오리가 입력을 기다리는 세션을 알려 주고, 누르면 그 세션이 열립니다.</li>
+    <li><strong>여러 세션에 한 번에 보내기</strong> — 같은 지시를 열려 있는 여러 세션에 한 번에 보냅니다.</li>
+    <li><strong>세션 복원</strong> — 꺼졌다 다시 켜도 열려 있던 세션과 패널을 모두 되살립니다.</li>
   </ul>
 
   <h2>다른 도구와 비교</h2>
@@ -101,7 +107,7 @@
   <h2>시작하기</h2>
   <ol>
     <li><a href="https://github.com/joyuno/lepons/releases/latest">최신 버전</a>을 받아 설치합니다.</li>
-    <li><strong>＋ PC 추가 → 원격 PC</strong>에 <code>사용자@IP주소</code>를 넣습니다.</li>
+    <li><strong>＋ PC 추가 → 원격 PC</strong>에 <code>사용자@IP주소</code>를 넣거나, <strong>Tailscale 기기에서</strong> 고릅니다.</li>
     <li>폴더를 누르고 Claude Code 또는 Codex를 고릅니다.</li>
   </ol>
   <p>자세한 사용법은 <a href="https://github.com/joyuno/lepons#readme">GitHub README</a>에 있습니다.</p>
