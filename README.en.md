@@ -24,7 +24,9 @@ No more opening a separate terminal for every server, workstation and laptop, or
 ### Install
 
 - **Windows**: run the `.exe`. The installer can be shown in Korean, English or Chinese. If "Windows protected your PC" appears, choose **More info → Run anyway**; the app has no code-signing certificate, which is what triggers the warning. If your browser blocks the download, choose **Keep**.
-- **macOS**: open the `.dmg` and drag Lepons Cockpit into Applications. The app is not notarized by Apple, so the first launch may say it "is damaged and can't be opened" or comes from an "unidentified developer". If so, run this once in Terminal and open it again:
+- **macOS**: open the `.dmg` and drag Lepons Cockpit into Applications. The app is not notarized by Apple, so the first launch shows a warning like "Apple could not verify 'Lepons Cockpit' is free of malware". Go to **System Settings → Privacy & Security** and press **Open Anyway** near the bottom (1.7.2 and later).
+
+  If it still will not open, or 1.7.1 or earlier says it "is damaged and can't be opened", run this once in Terminal and open it again:
 
   ```sh
   xattr -dr com.apple.quarantine "/Applications/Lepons Cockpit.app"
@@ -32,7 +34,7 @@ No more opening a separate terminal for every server, workstation and laptop, or
 
 ## Features
 
-1. **Codebase sharing between PCs**: on the sharing map, drag a folder onto another PC and that PC's Claude Code and Codex can read and search it. No git push or pull, no copying files. The other side can only read, and values that look like keys or tokens are masked before they leave. You can also hand work to an agent on another PC and follow its progress.
+1. **Codebase sharing between PCs**: on the sharing map, drag a folder onto another PC and that PC's Claude Code and Codex can read and search it. No git push or pull, no copying files. The receiving PC's agents can only read this folder; they cannot edit it directly, and values that look like keys or tokens are masked before they leave. To change something, they can hand the work to the PC that owns the folder, and that work runs there without permission checks. Share only between PCs you trust.
 2. **Split panes**: split right or down, up to four panes, each with a session or a file from any PC.
 3. **Claude Code, Codex or a terminal**: click a folder and choose Claude Code, Codex or Terminal to open it there. After Lepons starts, the first session on each PC updates the CLI first; the model is the CLI's own latest default. You can continue the folder's last conversation.
 4. **Work that survives a dropped connection**: remote sessions run inside tmux. Close the laptop or lose the network and the agent keeps working; reopen and you are back on the same screen.
@@ -48,7 +50,7 @@ No more opening a separate terminal for every server, workstation and laptop, or
 
 ## Getting started
 
-On the first launch a short guide walks through the main buttons. To see it again, use the power button at the top left → **Tutorial**. What each PC needs, with the install commands, is in **＋ Add PC → Guide**, which also checks this PC.
+On the first launch a short guide walks through the main buttons. To see it again, use the power button at the top left → **Tutorial**. What each PC needs, with the install commands, is in **＋ Add machine → Guide**, which also checks this PC.
 
 ### Preparing a remote PC
 
@@ -56,16 +58,16 @@ On the first launch a short guide walks through the main buttons. To see it agai
 - tmux (recommended; without it, a dropped connection ends that session's work)
 - Claude Code or Codex installed and signed in (if it is missing, Lepons offers to install it and types the official installer into that PC's terminal)
 
-### Adding a PC
+### Adding a machine
 
-**＋ Add PC** at the bottom left offers five choices.
+**＋ Add machine** at the bottom left offers five choices.
 
 | Button | What it does |
 |---|---|
-| **＋ Folder on this PC** | Pick a folder on this PC to register it. |
-| **＋ Remote PC** | Enter `<user>@<IP address or hostname>`, e.g. `ubuntu@10.0.0.5`. |
-| **＋ Tailscale** | Pick a machine from the devices signed in to your Tailscale account. See [Connect from anywhere](#connect-from-anywhere-tailscale) below. |
-| **Import existing work** | Finds what VS Code, Cursor, Claude Code and Codex remember and adds it at once. A good first click. |
+| **＋ Folder on this computer** | Pick a folder on this PC to register it. |
+| **＋ Remote machine** | Enter `<user>@<IP address or hostname>`, e.g. `ubuntu@10.0.0.5`. |
+| **＋ From Tailscale** | Pick a machine from the devices signed in to your Tailscale account. See [Connect from anywhere](#connect-from-anywhere-tailscale) below. |
+| **Import** | Finds what VS Code, Cursor, Claude Code and Codex remember and adds it at once. A good first click. |
 | **Guide** | Shows what this PC, a remote PC, Tailscale, the phone and the pet need, with install commands and this PC's Lepons public key. |
 
 If the remote PC does not have the Lepons key yet, a password field appears. Enter it once and Lepons adds its key to `~/.ssh/authorized_keys`; every later connection uses the key. The password is never stored. If the server does not allow password logins, copy the public key from **Guide** into the remote PC's `~/.ssh/authorized_keys`.
@@ -85,19 +87,19 @@ Hover a folder for **⚙** (open terminal, new file, rename, remove from the lis
 Machines outside your office or home network can be connected through [Tailscale](https://tailscale.com), which is free for personal use.
 
 1. Install Tailscale on each machine and sign in with the same account. The Linux server one-liner is in the **Guide**.
-2. **＋ Add PC → ＋ Tailscale** lists the machines on your account with name, OS and online state. Picking one fills in the remote PC form; fix the user name before `@` if it differs.
+2. **＋ Add machine → ＋ From Tailscale** lists the machines on your account with name, OS and online state. Picking one fills in the remote PC form; fix the user name before `@` if it differs.
 3. A remote PC you already added can move over from the power menu (⏻) → **Use Tailscale address**. Its folders and shares stay as they are.
 
 On a company PC, check your IT policy first: this links a company machine to an outside network, and whether that is allowed matters most.
 
 ## On your phone
 
-Power button → **Phone…** opens a setup wizard. Its first screen has two checkboxes; tick only what you want. With neither ticked, nothing turns on.
+Power button → **Phone…** opens a setup wizard. Tick what you want on the first screen; the push needs the first option too. With neither ticked, nothing turns on.
 
 - **See and answer sessions from my phone**
 - **Get a push on my phone when input is needed** (through the web app added to the home screen)
 
-The wizard walks through Tailscale on this PC (install, sign in), the Tailscale app on the phone, a password and an Authenticator app, and the address to open on the phone as a QR code. Every step can be skipped, and reopening it marks finished steps with ✓.
+The wizard goes: install Tailscale → sign in → Tailscale on the phone → password and Authenticator → alerts → open on the phone, where you turn on **Allow phone access** and press **Make the HTTPS address** to get the QR code. The HTTPS address needs HTTPS turned on in the Tailscale admin console. Every step can be skipped, and reopening it marks finished steps with ✓.
 
 What the phone page does:
 
@@ -142,6 +144,7 @@ Good to know:
 - When you connect on the sharing map, Lepons opens a reverse tunnel over the SSH connection and registers Lepons MCP with that PC's Claude Code and Codex.
 - The receiving agent searches with `search_repo` and opens only the files it needs with `read_file`. For each request, Lepons reads just that file, or the matching lines, on the PC that owns it.
 - Nothing is copied or sent ahead of time. Only what the agent actually reads enters its context, so that is all the tokens it costs.
+- The receiving agent can hand work to the owning PC with `delegate_task`; that PC's Claude Code or Codex does it there without permission checks, and `check_delegation` reports progress.
 
 ## Workflow
 
@@ -164,24 +167,24 @@ Good to know:
 
 ## Screen
 
-- **Sidebar**: power, theme and collapse at the top; PCs and their folders in the middle; ＋ Add PC, Sharing map and Workflow at the bottom. Drag folders and PCs to reorder them; the chevron left of a PC's name folds its folders (kept across launches).
+- **Sidebar**: power, theme and collapse at the top; PCs and their folders in the middle; ＋ Add machine, Sharing map and Workflow at the bottom. Drag folders and PCs to reorder them; the chevron left of a PC's name folds its folders (kept across launches).
 - **Status**: the dot at the end of a folder's row is green while it works, blinking amber while it connects, red if the connection failed. A session that finished and is waiting for your input gets its own dot.
 - **Send to several sessions**: with two or more sessions open, a button appears in the sidebar. Tick the sessions and send with Ctrl+Enter.
 - **Session restore**: after a crash or a normal close, the next launch offers to bring back every open pane and session. Remote sessions rejoin the work still running in tmux.
 - **Moving the window**: drag a pane's header.
-- **Usage**: while a session is open, Claude and Codex plan usage appears above ＋ Add PC as five-cell batteries of what is left (5h for the 5-hour limit, 7d for the 7-day one). Hover for the exact share and reset time; the arrow on the left folds it. Only agents that are running are shown, and Claude appears once a session opened by Lepons has replied.
+- **Usage**: while a session is open, Claude and Codex plan usage appears above ＋ Add machine as five-cell batteries of what is left (5h for the 5-hour limit, 7d for the 7-day one). Hover for the exact share and reset time; the arrow on the left folds it. Only agents that are running are shown, and Claude appears once a session opened by Lepons has replied.
 - **Light / dark**: the sun/moon button at the top left.
 - **Language**: Korean, English and Chinese, from the power button → **Language**. Dates and times follow the chosen language.
 
 ## Updates
 
-Lepons compares its version with the latest GitHub release when it starts and when you press **Check for updates** on the power button. If there is a newer one you are told, and **Update now** downloads it inside the app. The download is checked against the file published on GitHub before it is installed, then Lepons closes briefly and reopens on the new version. Releases on the same Electron download only the changed app part (about 13 MB). On macOS only those small updates install in the app; others open the download page. Your PCs and settings stay as they are.
+Lepons compares its version with the latest GitHub release when it starts and when you press **Check for updates** on the power button. If there is a newer one you are told, and **Update now** downloads it inside the app. The download is checked against the file published on GitHub before it is installed, then Lepons closes briefly and reopens on the new version. Releases whose runtime (Electron, native modules, build settings) is unchanged download only the changed app part (about 14 MB). On macOS only those small updates install in the app; others open the download page. Your PCs and settings stay as they are.
 
 ## Where Lepons connects
 
 - PCs you add: over SSH only.
 - Tailscale: only if you use it, Lepons asks this PC's Tailscale program for its device list and state.
-- Phone: only when **Phone** is turned on, the phone page is served on this PC's Tailscale addresses. With phone alerts on, "waiting for input" notifications go through the phone's push service (Apple, Google and so on), carrying only the PC and folder name.
+- Phone: only when **Allow phone access** is on, the phone page is served on this PC's Tailscale addresses. With phone alerts on, "waiting for input" notifications go through the phone's push service (Apple, Google and so on), carrying only the PC and folder name.
 - GitHub: asks for the latest release when Lepons starts and when you press **Check for updates**; downloads that release's files when you press **Update now**.
 - Claude (Haiku model): only when you press **Translate** on the workflow board, through this PC's Claude Code. That uses some Claude usage.
 - Nothing else is sent by Lepons itself. Claude Code and Codex connect to their own services, and update themselves with their own commands on first launch.
