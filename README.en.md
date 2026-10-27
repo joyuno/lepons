@@ -35,10 +35,10 @@ No more opening a separate terminal for every server, workstation and laptop, or
 ## Features
 
 1. **Codebase sharing between PCs**: on the sharing map, drag a folder onto another PC and that PC's Claude Code and Codex can read and search it. No git push or pull, no copying files. The receiving PC's agents can only read this folder; they cannot edit it directly, and values that look like keys or tokens are masked before they leave. To change something, they can hand the work to the PC that owns the folder, and that work runs there without permission checks. Share only between PCs you trust.
-2. **Split panes**: split right or down, up to four panes, each with a session or a file from any PC.
+2. **Split panes**: split right or down, as many panes as the screen fits (up to eight), or show one with ⤢, each with a session or a file from any PC.
 3. **Claude Code, Codex or a terminal**: click a folder and choose Claude Code, Codex or Terminal to open it there. After Lepons starts, the first session on each PC updates the CLI first; the model is the CLI's own latest default. You can continue the folder's last conversation.
 4. **Work that survives a dropped connection**: remote sessions run inside tmux. Close the laptop or lose the network and the agent keeps working; reopen and you are back on the same screen.
-5. **Nothing to install remotely**: no daemon, no server. Sessions and code sharing both travel over SSH. On the first connection, enter the password once and Lepons registers its SSH key for you.
+5. **Nothing to install remotely**: no daemon, no server. Sessions and code sharing both travel over SSH. On the first connection, enter the password once and Lepons registers its SSH key for you. A Windows PC has its SSH server off, so press 'Allow connections' once in that PC's Lepons, or paste the commands from the guide.
 6. **View and edit files in a pane**: Markdown (including Obsidian syntax), code, images, PDF and HTML open in a pane, and files on this PC or a remote one can be edited in place. The file tree has VS Code's right-click actions: copy, paste, rename, delete, copy path.
 7. **The workflow at a glance**: one board shows what each Claude Code or Codex session is doing, what it gave its subagents, and what passed between PCs.
 8. **Import what you already use**: brings in machines and folders from the remote folders VS Code and Cursor remember and from Claude Code and Codex session history.
@@ -199,4 +199,4 @@ Problems and suggestions are welcome in [Issues](https://github.com/joyuno/lepon
 
 ## License
 
-[MIT](LICENSE)
+Free to use. The license will be settled when the source is published.

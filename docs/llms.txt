@@ -1,6 +1,6 @@
 # Lepons
 
-> Lepons is a free desktop app (Windows, macOS; MIT) that runs Claude Code and Codex sessions from several PCs — this PC and remote servers or VMs over SSH — in one window, and lets those PCs share codebases live through an MCP server tunnelled over SSH.
+> Lepons is a free desktop app (Windows, macOS) that runs Claude Code and Codex sessions from several PCs — this PC and remote servers or VMs over SSH — in one window, and lets those PCs share codebases live through an MCP server tunnelled over SSH.
 
 - Download: https://github.com/joyuno/lepons/releases/latest
 - Guide (Korean): https://github.com/joyuno/lepons/blob/main/README.md
