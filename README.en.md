@@ -40,13 +40,12 @@ No more opening a separate terminal for every server, workstation and laptop, or
 4. **Work that survives a dropped connection**: remote sessions run inside tmux. Close the laptop or lose the network and the agent keeps working; reopen and you are back on the same screen.
 5. **Nothing to install remotely**: no daemon, no server. Sessions and code sharing both travel over SSH. On the first connection, enter the password once and Lepons registers its SSH key for you. A Windows PC has its SSH server off, so press **⚙ Settings → Connections from other PCs → Allow…** once in that PC's Lepons, or paste the commands from the guide.
 6. **View and edit files in a pane**: Markdown (including Obsidian syntax), code, images, PDF and HTML open in a pane, and files on this PC or a remote one can be edited in place. Text files open ready to edit and save with **Ctrl+S** (**⌘+S** on macOS); closing one with unsaved changes asks whether to save. The file tree has VS Code's right-click actions: copy, paste, rename, delete, copy path.
-7. **The workflow at a glance**: one board shows what each Claude Code or Codex session is doing, what it gave its subagents, and what passed between PCs.
+7. **Workflow map**: every PC's folders, sessions and subagents on one map, with each session's goal, what it is doing now and what passed between PCs readable without opening its record, and a jump to the sessions waiting for you.
 8. **Import what you already use**: brings in machines and folders from the remote folders VS Code and Cursor remember and from Claude Code and Codex session history.
 9. **Sessions in the phone app**: with the Lepons app for iPhone and Android (coming soon), read a session's conversation, tap a menu number or send the next instruction while you are out. When a session waits for you, your phone gets a notification. Everything between the phone and the PC is end-to-end encrypted; the relay in between cannot read it.
-10. **Overview**: every PC's folders and sessions on one map, with a jump to the sessions waiting for you.
-11. **A pet that says whose turn it is**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session. You can import your own pets.
-12. **One prompt to many sessions**: send the same instruction to several open sessions at once.
-13. **Pick up where you left off**: after a crash or a normal close, Lepons offers to bring back every open session and pane on the next launch.
+10. **A pet that says whose turn it is**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session. You can import your own pets.
+11. **One prompt to many sessions**: send the same instruction to several open sessions at once.
+12. **Pick up where you left off**: after a crash or a normal close, Lepons offers to bring back every open session and pane on the next launch.
 
 ## Getting started
 
@@ -55,7 +54,7 @@ On the first launch a short guide walks through the main buttons. To see it agai
 ### Preparing a remote PC
 
 - SSH access (password or key)
-- tmux (recommended; without it, a dropped connection ends that session's work)
+- tmux (recommended; without it, a dropped connection ends that session's work. A PC without it shows **Install tmux** in the list; click it and Lepons installs it in the background. If sudo needs a password, Lepons asks once in its own dialog and does not save it)
 - The AI agents you use (Claude Code, Codex and so on) installed and signed in (if one is missing, Lepons offers to install it and types the official installer into that PC's terminal. **⚙ Settings → AI accounts** shows each PC's install and sign-in state, and signs in on remote PCs without a terminal)
 
 PCs connect to each other over SSH only. One PC drives every VM and PC it can reach over SSH.
@@ -150,22 +149,19 @@ Good to know:
 - Nothing is copied or sent ahead of time. Only what the agent actually reads enters its context, so that is all the tokens it costs.
 - The receiving agent can hand work to the owning PC with `delegate_task`; that PC's Claude Code or Codex does it there without permission checks, and `check_delegation` reports progress.
 
-## Workflow
+## Workflow map
 
-**Workflow** at the bottom left shows each PC's sessions, their subagents and the handoffs between PCs on one board.
+**Workflow** at the bottom left (Ctrl+Shift+M, ⌘⇧M on macOS) puts the work on every PC on one map. Without reading a session's record you can see what it set out to do, how far it got, what it is doing now and whether it is waiting for you.
 
-- Each session card carries a **Claude** (amber) or **Codex** (teal) tag.
-- Click a card for that session's prompts, messages and actions in order.
-- Drag a PC's box wherever you like; the position is kept across launches.
-- Subagent instructions are usually written in English. The **Translate** button on a card shows them in the app's language, using a little of this PC's Claude usage (Haiku model) only when pressed.
-
-## Overview
-
-**Overview** in the top bar (Ctrl+Shift+M, ⌘⇧M on macOS) puts every PC's folders and sessions on one map.
-
-- PCs lead to folders and folders to sessions, and each session shows its workflow steps as a row of dots.
-- Working sessions glow, and **Needs you N** appears when sessions are waiting for you; click it to go to their panes one by one.
-- Click an agent session once to pick it and send it new work from the box below; click again to go to its pane.
+- Each PC is a hub with a monitor icon; its folders and sessions branch from it, and subagents branch from their sessions. This PC is marked; remote PCs carry a ↗ badge and, when known, their OS. The ring round a hub shows its connection state.
+- The summary under each item shows without hovering: for a session, what it is doing now and its goal; for a subagent, what it was asked and how long it has run or what it returned; for a folder, what its busiest session is doing and its counts.
+- The map opens at 30%, fitted so every PC is in view. Things move only where motion means something: dashes flow along sharing links and running delegations, light dots flow into working sessions, and a waiting session's ring pulses.
+- Drag a hub or folder to move it; the position is kept. Double-click to focus on that branch, and Esc to go back.
+- Click a session for a summary card (goal, progress, now, result) at the top of the right panel, with the step list below it. For a waiting session the panel shows the question and its options; answer it in its pane with **Go to its pane**.
+- With **Follow** on, the map moves to sessions that start working or start waiting for you.
+- The map is for watching only; it does not send commands or answers.
+- When sessions are waiting, **Needs you N** appears in the top bar; click it to open the map on the next waiting session.
+- Subagent instructions are usually written in English. The **Translate** button in the step list shows them in the app's language, using a little of this PC's Claude usage (Haiku model) only when pressed.
 
 ## In the terminal
 
@@ -182,12 +178,12 @@ Good to know:
 - **Sidebar**: ⚙ Settings, the phone icon and collapse at the top; PCs and their folders in the middle; ＋ Add machine, Sharing map and Workflow at the bottom. Drag folders and PCs to reorder them; the chevron left of a PC's name folds its folders (kept across launches).
 - **Pinned**: pin a folder from any PC and it gathers at the top of the list.
 - **Manage machines**: lets you rename each PC, edit its connection, reconnect it, and choose whether it connects when Lepons starts.
-- **Top bar**: Overview, the split buttons (which split the selected pane right or down) and, on Windows, the window buttons, all in one row. Drag the bar to move the window.
+- **Top bar**: Needs you N (when sessions are waiting), the split buttons (which split the selected pane right or down) and, on Windows, the window buttons, all in one row. Drag the bar to move the window.
 - **Pane tabs**: a pane gathers one project's sessions, terminals and files as tabs, and panes of the same project share a coloured band. Drag a tab to a pane's edge to split it off into a new pane of that project. Closing a tab leaves the session running in the list on the left.
 - **Status**: the dot at the end of a folder's row is green while it works, blinking amber while it connects, red if the connection failed. A session that finished and is waiting for your input gets its own dot.
 - **Send to several sessions**: with two or more sessions open, a button appears in the sidebar. Tick the sessions and send with Ctrl+Enter.
 - **Session restore**: after a crash or a normal close, the next launch offers to bring back every open pane and session. Remote sessions rejoin the work still running in tmux. To always reopen without asking, turn it on in **⚙ Settings → Startup**.
-- **Usage**: while a session is open, Claude and Codex plan usage appears above ＋ Add machine as five-cell batteries of what is left (5h for the 5-hour limit, 7d for the 7-day one). Hover for the exact share and reset time; the arrow on the left folds it. Only agents that are running are shown, and Claude appears once a session opened by Lepons has replied.
+- **Usage**: while a session is open, Claude and Codex plan usage appears above ＋ Add machine as five-cell batteries of what is left (5h for the 5-hour limit, 7d for the 7-day one). Hover for the exact share and reset time; the arrow on the left folds it. Only agents that are running are shown, and Claude appears once a session opened by Lepons has replied. It updates right after each Claude reply on this PC, and for a remote PC when one of its sessions finishes a turn or the PC is opened.
 - **Theme**: **⚙ Settings → Theme** offers light, dark and **System** (follows the PC's setting).
 - **Font**: **⚙ Settings → Font** sets the text size and font for terminals and file views. D2Coding, JetBrains Mono and Fira Code come with the app.
 - **Remote PCs**: **⚙ Settings → Remote PCs** lists your remote PCs one row each, with a switch to connect or disconnect. The **⋯** menu edits the address, shows AI accounts or removes the PC.
@@ -203,7 +199,7 @@ Lepons compares its version with the latest GitHub release when it starts and wh
 - The relay (`relay.lepons.app`): only when **Allow phone access** is on and a phone app is connected. Everything between the phone and the PC is end-to-end encrypted, so the relay cannot read it.
 - Phone notifications: with notifications on in the phone app, "waiting for input" (and, if chosen, "all done") notifications go through Expo's push service to Apple's or Google's push. They carry only the PC's name.
 - GitHub: asks for the latest release when Lepons starts and when you press **Check for updates**; downloads that release's files when you press **Update now**.
-- Claude (Haiku model): only when you press **Translate** on the workflow board, through this PC's Claude Code. That uses some Claude usage.
+- Claude (Haiku model): only when you press **Translate** on the workflow map, through this PC's Claude Code. That uses some Claude usage.
 - Nothing else is sent by Lepons itself. Claude Code and Codex connect to their own services, and update themselves with their own commands on first launch.
 
 ## How it differs from other tools
