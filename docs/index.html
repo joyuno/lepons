@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Lepons — 여러 PC의 Claude Code·Codex를 한 화면에서 | 멀티 PC AI 에이전트 오케스트레이터</title>
-  <meta name="description" content="Lepons는 이 PC와 원격 서버·VM의 Claude Code와 Codex 세션을 한 창에서 나눠 보고, SSH와 MCP로 PC끼리 코드베이스를 실시간으로 나눠 읽게 하는 무료 데스크톱 앱입니다. 폰에서 세션을 보고 답할 수도 있습니다. Windows·macOS 지원.">
-  <meta name="keywords" content="Claude Code, Codex, AI 코딩 에이전트, 멀티 에이전트, MCP, SSH, tmux, 원격 개발, 코드베이스 공유, Tailscale, Lepons">
+  <meta name="description" content="Lepons는 이 PC와 원격 서버·VM의 Claude Code와 Codex 세션을 한 창에서 나눠 보고, SSH와 MCP로 PC끼리 코드베이스를 실시간으로 나눠 읽게 하는 무료 데스크톱 앱입니다. 폰 앱으로 세션을 보고 답할 수도 있습니다. Windows·macOS 지원.">
+  <meta name="keywords" content="Claude Code, Codex, AI 코딩 에이전트, 멀티 에이전트, MCP, SSH, tmux, 원격 개발, 코드베이스 공유, 폰 앱, Lepons">
   <link rel="canonical" href="https://joyuno.github.io/lepons/">
   <link rel="alternate" hreflang="ko" href="https://joyuno.github.io/lepons/">
   <link rel="alternate" hreflang="en" href="https://joyuno.github.io/lepons/en/">
@@ -88,8 +88,8 @@
     <li><strong>끊겨도 계속되는 작업</strong> — 원격 세션은 tmux에서 돌아, 노트북을 덮어도 에이전트는 일을 계속합니다.</li>
     <li><strong>워크플로우 보드</strong> — 세션과 서브에이전트, PC 사이의 위임을 한 보드로 봅니다.</li>
     <li><strong>사용량 배터리</strong> — Claude·Codex 요금제의 5시간·7일 한도 남은 양을 배터리로 보여 줍니다.</li>
-    <li><strong>폰에서 보기·답하기</strong> — 폰으로 세션의 대화를 읽고, 선택지를 누르거나 다음 지시를 보냅니다. 입력을 기다리는 세션이 생기면 폰으로 알림이 옵니다. Tailscale 안에서만, 비밀번호와 인증 앱 코드로 열립니다.</li>
-    <li><strong>어디서든 연결</strong> — Tailscale(개인 사용 무료)을 쓰면 다른 네트워크의 PC도 기기 목록에서 골라 추가합니다. 회사 PC라면 사내 규정을 먼저 확인하세요.</li>
+    <li><strong>폰 앱으로 보기·답하기</strong> — iPhone·Android용 Lepons 앱(출시 준비 중)으로 세션의 대화를 읽고, 메뉴 번호를 누르거나 다음 지시를 보냅니다. 입력을 기다리는 세션이 생기면 폰으로 알림이 옵니다. 폰과 PC 사이의 내용은 종단간 암호화되어 중계 서버도 읽을 수 없습니다.</li>
+    <li><strong>전체 보기</strong> — 모든 PC의 폴더와 세션을 한 지도로 보고, 답을 기다리는 세션으로 바로 갑니다.</li>
     <li><strong>내 차례를 알려 주는 펫</strong> — 바탕화면의 오리가 입력을 기다리는 세션을 알려 주고, 누르면 그 세션이 열립니다.</li>
     <li><strong>여러 세션에 한 번에 보내기</strong> — 같은 지시를 열려 있는 여러 세션에 한 번에 보냅니다.</li>
     <li><strong>세션 복원</strong> — 꺼졌다 다시 켜면 열려 있던 세션과 패널을 되살릴지 묻습니다.</li>
@@ -106,7 +106,7 @@
   <h2>시작하기</h2>
   <ol>
     <li><a href="https://github.com/joyuno/lepons/releases/latest">최신 버전</a>을 받아 설치합니다.</li>
-    <li><strong>＋ PC 추가 → 원격 PC</strong>에 <code>사용자@IP주소</code>를 넣거나, <strong>Tailscale 기기에서</strong> 고릅니다.</li>
+    <li><strong>＋ PC 추가 → 원격 PC</strong>에 <code>사용자@IP주소</code>를 넣습니다.</li>
     <li>폴더를 누르고 Claude Code 또는 Codex를 고릅니다.</li>
   </ol>
   <p>자세한 사용법은 <a href="https://github.com/joyuno/lepons#readme">GitHub README</a>에 있습니다.</p>

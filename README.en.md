@@ -35,40 +35,41 @@ No more opening a separate terminal for every server, workstation and laptop, or
 ## Features
 
 1. **Codebase sharing between PCs**: on the sharing map, drag a folder onto another PC and that PC's Claude Code and Codex can read and search it. No git push or pull, no copying files. The receiving PC's agents can only read this folder; they cannot edit it directly, and values that look like keys or tokens are masked before they leave. To change something, they can hand the work to the PC that owns the folder, and that work runs there without permission checks. Share only between PCs you trust.
-2. **Split panes**: split right or down, as many panes as the screen fits (up to eight), or show one with ⤢, each with a session or a file from any PC.
-3. **Claude Code, Codex or a terminal**: click a folder and choose Claude Code, Codex or Terminal to open it there. After Lepons starts, the first session on each PC updates the CLI first; the model is the CLI's own latest default. You can continue the folder's last conversation.
+2. **Split panes with tabs**: split right or down, as many panes as the screen fits (up to eight), or show one with ⤢. A pane gathers one project's (one PC and folder's) AI sessions, terminals and files as tabs, so work from different PCs sits side by side.
+3. **AI agents or a terminal**: click a folder and choose Claude Code, Codex, Grok, Antigravity, Cursor or Terminal to open it there. After Lepons starts, the first session on each PC updates the CLI first; the model is the CLI's own latest default. You can continue the folder's last conversation, or one you pick from a list.
 4. **Work that survives a dropped connection**: remote sessions run inside tmux. Close the laptop or lose the network and the agent keeps working; reopen and you are back on the same screen.
-5. **Nothing to install remotely**: no daemon, no server. Sessions and code sharing both travel over SSH. On the first connection, enter the password once and Lepons registers its SSH key for you. A Windows PC has its SSH server off, so press 'Allow connections' once in that PC's Lepons, or paste the commands from the guide.
-6. **View and edit files in a pane**: Markdown (including Obsidian syntax), code, images, PDF and HTML open in a pane, and files on this PC or a remote one can be edited in place. The file tree has VS Code's right-click actions: copy, paste, rename, delete, copy path.
+5. **Nothing to install remotely**: no daemon, no server. Sessions and code sharing both travel over SSH. On the first connection, enter the password once and Lepons registers its SSH key for you. A Windows PC has its SSH server off, so press **⚙ Settings → Connections from other PCs → Allow…** once in that PC's Lepons, or paste the commands from the guide.
+6. **View and edit files in a pane**: Markdown (including Obsidian syntax), code, images, PDF and HTML open in a pane, and files on this PC or a remote one can be edited in place. Text files open ready to edit and save with **Ctrl+S** (**⌘+S** on macOS); closing one with unsaved changes asks whether to save. The file tree has VS Code's right-click actions: copy, paste, rename, delete, copy path.
 7. **The workflow at a glance**: one board shows what each Claude Code or Codex session is doing, what it gave its subagents, and what passed between PCs.
 8. **Import what you already use**: brings in machines and folders from the remote folders VS Code and Cursor remember and from Claude Code and Codex session history.
-9. **Sessions on your phone**: read a session's conversation, tap the agent's choices or send the next instruction while you are out. When a session waits for you, your phone gets a notification. Reachable only inside Tailscale, with a password and an Authenticator code.
-10. **Connect from anywhere**: with Tailscale, add a machine on another network by picking it from the list of devices on your account.
-11. **A pet that says whose turn it is**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session. You can import your own characters.
+9. **Sessions in the phone app**: with the Lepons app for iPhone and Android (coming soon), read a session's conversation, tap a menu number or send the next instruction while you are out. When a session waits for you, your phone gets a notification. Everything between the phone and the PC is end-to-end encrypted; the relay in between cannot read it.
+10. **Overview**: every PC's folders and sessions on one map, with a jump to the sessions waiting for you.
+11. **A pet that says whose turn it is**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session. You can import your own pets.
 12. **One prompt to many sessions**: send the same instruction to several open sessions at once.
 13. **Pick up where you left off**: after a crash or a normal close, Lepons offers to bring back every open session and pane on the next launch.
 
 ## Getting started
 
-On the first launch a short guide walks through the main buttons. To see it again, use the power button at the top left → **Tutorial**. What each PC needs, with the install commands, is in **＋ Add machine → Guide**, which also checks this PC.
+On the first launch a short guide walks through the main buttons. To see it again, use **⚙ Settings → Tutorial** at the top left. Ctrl+, (⌘+, on macOS) also opens Settings. What each PC needs, with the install commands, is in **＋ Add machine → Guide**, which also checks this PC.
 
 ### Preparing a remote PC
 
 - SSH access (password or key)
 - tmux (recommended; without it, a dropped connection ends that session's work)
-- Claude Code or Codex installed and signed in (if it is missing, Lepons offers to install it and types the official installer into that PC's terminal)
+- The AI agents you use (Claude Code, Codex and so on) installed and signed in (if one is missing, Lepons offers to install it and types the official installer into that PC's terminal. **⚙ Settings → AI accounts** shows each PC's install and sign-in state, and signs in on remote PCs without a terminal)
+
+PCs connect to each other over SSH only. One PC drives every VM and PC it can reach over SSH.
 
 ### Adding a machine
 
-**＋ Add machine** at the bottom left offers five choices.
+**＋ Add machine** at the bottom left offers four choices.
 
 | Button | What it does |
 |---|---|
 | **＋ Folder on this computer** | Pick a folder on this PC to register it. |
 | **＋ Remote machine** | Enter `<user>@<IP address or hostname>`, e.g. `ubuntu@10.0.0.5`. |
-| **＋ From Tailscale** | Pick a machine from the devices signed in to your Tailscale account. See [Connect from anywhere](#connect-from-anywhere-tailscale) below. |
 | **Import** | Finds what VS Code, Cursor, Claude Code and Codex remember and adds it at once. A good first click. |
-| **Guide** | Shows what this PC, a remote PC, Tailscale, the phone and the pet need, with install commands and this PC's Lepons public key. |
+| **Guide** | Shows what this PC, a remote PC, the phone and the pet need, with install commands and this PC's Lepons public key. |
 
 If the remote PC does not have the Lepons key yet, a password field appears. Enter it once and Lepons adds its key to `~/.ssh/authorized_keys`; every later connection uses the key. The password is never stored. If the server does not allow password logins, copy the public key from **Guide** into the remote PC's `~/.ssh/authorized_keys`.
 
@@ -76,55 +77,58 @@ If the remote PC does not have the Lepons key yet, a password field appears. Ent
 
 Click a folder in the list on the left and choose what to run.
 
-- **Claude Code / Codex / Terminal** starts it in that folder.
-- **Continue the last conversation** is ticked by default. It continues the folder's last conversation as a new session, and starts a new one where there is none.
+- **Claude Code / Codex / Grok / Antigravity / Cursor / Terminal** starts it in that folder.
+- **Continue the last conversation** is ticked by default. It continues the folder's last conversation as a new session, and starts a new one where there is none. For Claude Code and Codex, **Pick a past conversation…** lists the folder's earlier conversations to search by title; the one you pick continues as a new conversation and the original stays as it was.
 - **Run without permission checks** is off by default. Off, Claude Code starts in auto mode and Codex in automatic review, asking only about risky actions. On, every check is skipped and Codex also runs without its sandbox. Turn it on only for folders you trust.
 
-Hover a folder for **⚙** (open terminal, new file, rename, remove from the list; files on disk stay), and use the chevron left of its name to show its files. **Open terminal** opens a plain terminal in the same folder beside the Claude or Codex session, which keeps running. The buttons over an open file list make a new file or folder, refresh, and collapse folders; press refresh if a file an agent or terminal created does not show.
+Hover a folder for **⚙** (open terminal, new file, rename, remove from the list; files on disk stay), and use the chevron left of its name to show its files. **Open terminal** opens a plain terminal in the same folder beside the Claude or Codex session, which keeps running. The buttons over an open file list make a new file or folder, refresh, and collapse folders; press refresh if a file an agent or terminal created does not show. The **>_** button on a pane's header, or Ctrl+` (⌘+` on macOS), opens that project's terminal as a tab, and **>_** on a PC's row opens a terminal in that PC's home folder.
 
-## Connect from anywhere: Tailscale
+### Letting other PCs connect to this one (Windows)
 
-Machines outside your office or home network can be connected through [Tailscale](https://tailscale.com), which is free for personal use.
+Windows ships with its SSH server off. To use this PC as a remote PC from another PC's Lepons, press **⚙ Settings → Connections from other PCs → Allow…**. After one administrator prompt, Lepons turns on the OpenSSH server and opens the firewall only to SSH from the same network (LAN), with a rule named `Lepons-SSH-LAN`. **Turn off…** in the same tab puts it all back. On a company PC, ask your IT team first.
 
-1. Install Tailscale on each machine and sign in with the same account. The Linux server one-liner is in the **Guide**.
-2. **＋ Add machine → ＋ From Tailscale** lists the machines on your account with name, OS and online state. Picking one fills in the remote PC form; fix the user name before `@` if it differs.
-3. A remote PC you already added can move over from the power menu (⏻) → **Use Tailscale address**. Its folders and shares stay as they are.
+## Phone app
 
-On a company PC, check your IT policy first: this links a company machine to an outside network, and whether that is allowed matters most.
+On the phone, the **Lepons** app for iPhone and Android shows and answers this PC's sessions. It is coming soon to the App Store and Google Play.
 
-## On your phone
+### Connecting
 
-Power button → **Phone…** opens a setup wizard. Tick what you want on the first screen; the push needs the first option too. With neither ticked, nothing turns on.
+1. On the PC, click the phone icon at the top left → **Phone setup guide**, set a phone sign-in password and an authenticator app (Google Authenticator or similar), and turn on **Allow phone access**.
+2. **⚙ Settings → Phone app → Connect phone app** shows a QR code. Scan it with the Lepons app within two minutes.
+3. Check that both screens show the same six digits; if they do, press **Yes, same** on the PC.
+4. In the phone app, sign in with the password and the authenticator's six-digit code.
 
-- **See and answer sessions from my phone**
-- **Get a push on my phone when input is needed** (through the web app added to the home screen)
+The phone and the PC meet through a relay (`relay.lepons.app`), so they do not need to be on the same network. Everything between them is end-to-end encrypted so that only this PC and the phone can read it; the relay cannot. A PC connects to one phone; connecting a new phone unpairs the previous one.
 
-The wizard goes: install Tailscale → sign in → Tailscale on the phone → password and Authenticator → alerts → open on the phone, where you turn on **Allow phone access** and press **Make the HTTPS address** to get the QR code. The HTTPS address needs HTTPS turned on in the Tailscale admin console. Every step can be skipped, and reopening it marks finished steps with ✓.
+### What the phone app does
 
-What the phone page does:
-
-- **Sessions**: the ones waiting for you come first.
-- **Chat**: the session's conversation, read from the agent's own transcript. While the agent works, its current status line shows.
-- **Answer**: when the agent offers choices, tap a button, or use **Type an answer** to write your own. In the input box, `/` suggests commands and `@` suggests files.
-- **Stop**: interrupts what the agent is doing (Esc). The phone cannot end the agent; do that on the PC.
+- **Home**: what is running, waiting for input and done; Claude and Codex usage limits (5-hour and 7-day); and the connection state of your PCs. A PC that dropped can be asked to reconnect from the phone.
+- **Sessions**: grouped the way the PC's panes and tabs are.
+- **Chat**: read the agent's conversation, tap a menu number or send the next instruction; sending an empty line presses Enter. The stop icon takes two taps and interrupts what the agent is doing (Esc). The phone cannot end the agent; do that on the PC.
 - **Workflow**: what the agent did for each prompt, in order.
-- **Files**: Markdown, images, PDF and HTML in the session's folder, read-only. HTML is shown without scripts.
-- **PCs**: each machine's connection state.
-- **Alerts**: in Lepons added to the home screen, **Turn on alerts** sends a "waiting for input" notification when a session needs you (iPhone on iOS 16.4 or later, Android with Chrome). It carries only the PC and folder name, never agent output.
+- **Files**: Markdown, PDF and images in the session's folder.
+- **Map**: each PC's folders and sessions on one map; tap a session to open it.
+- **AI accounts**: the PC's AI sign-in state, view only. Sign in and out on the PC.
+- **Settings**: terminal text size and notifications. A **demo** lets you look around without a PC.
+
+### Notifications
+
+- **Waiting for input**: when a session waits for you. Several at once arrive as one notification, and none is sent while you are at the PC or looking at the app.
+- **All done** (optional): one quiet notification when every session that was working has finished.
+- Notifications carry only the PC's name, never agent output.
 
 Good to know:
 
-- The page is served only on this PC's Tailscale addresses, never on the public internet.
-- A sign-in lasts 10 hours. **Phone connected · Disconnect** on the desktop signs every phone out at once.
+- A sign-in lasts 10 hours.
 - Anything sent from the phone shows on the desktop as "Typed from the phone".
-- With Lepons on two PCs, each has its own phone page, named after the PC.
 - A sleeping PC cannot be reached from the phone; turn sleep off in its power settings.
+- Privacy policy: https://lepons.app/privacy · Support: https://lepons.app/support
 
 ## The pet and input alerts
 
-- Power button → **Show pet → On** puts a duck (produck) on the desktop. It is off by default.
+- **⚙ Settings → Pet → On** puts a duck (produck) on the desktop. It is off by default.
 - It changes with the session's state (working, waiting for input, done, connecting, disconnected, idle); click it to open that session. Drag it anywhere; double-click sends it back to the bottom-right corner.
-- **Import a character…** in the same menu takes a folder of per-state images (`idle.gif`, `working.gif` …, at least `idle`) or a Codex Pet folder.
+- **Import pet…** in the same tab takes a folder of per-state images (`idle.gif`, `working.gif` …, at least `idle`) or a Codex Pet folder. **View guide** explains how to make one.
 - The dot in the list on the left lights up for **sessions that finished and are waiting for your input**. If Lepons is behind other windows when that happens, the OS shows a notification.
 
 ## Sharing map
@@ -155,6 +159,14 @@ Good to know:
 - Drag a PC's box wherever you like; the position is kept across launches.
 - Subagent instructions are usually written in English. The **Translate** button on a card shows them in the app's language, using a little of this PC's Claude usage (Haiku model) only when pressed.
 
+## Overview
+
+**Overview** in the top bar (Ctrl+Shift+M, ⌘⇧M on macOS) puts every PC's folders and sessions on one map.
+
+- PCs lead to folders and folders to sessions, and each session shows its workflow steps as a row of dots.
+- Working sessions glow, and **Needs you N** appears when sessions are waiting for you; click it to go to their panes one by one.
+- Click an agent session once to pick it and send it new work from the box below; click again to go to its pane.
+
 ## In the terminal
 
 | To | Do |
@@ -167,24 +179,29 @@ Good to know:
 
 ## Screen
 
-- **Sidebar**: power, theme and collapse at the top; PCs and their folders in the middle; ＋ Add machine, Sharing map and Workflow at the bottom. Drag folders and PCs to reorder them; the chevron left of a PC's name folds its folders (kept across launches).
+- **Sidebar**: ⚙ Settings, the phone icon and collapse at the top; PCs and their folders in the middle; ＋ Add machine, Sharing map and Workflow at the bottom. Drag folders and PCs to reorder them; the chevron left of a PC's name folds its folders (kept across launches).
+- **Pinned**: pin a folder from any PC and it gathers at the top of the list.
+- **Manage machines**: lets you rename each PC, edit its connection, reconnect it, and choose whether it connects when Lepons starts.
+- **Top bar**: Overview, the split buttons (which split the selected pane right or down) and, on Windows, the window buttons, all in one row. Drag the bar to move the window.
+- **Pane tabs**: a pane gathers one project's sessions, terminals and files as tabs, and panes of the same project share a coloured band. Drag a tab to a pane's edge to split it off into a new pane of that project. Closing a tab leaves the session running in the list on the left.
 - **Status**: the dot at the end of a folder's row is green while it works, blinking amber while it connects, red if the connection failed. A session that finished and is waiting for your input gets its own dot.
 - **Send to several sessions**: with two or more sessions open, a button appears in the sidebar. Tick the sessions and send with Ctrl+Enter.
-- **Session restore**: after a crash or a normal close, the next launch offers to bring back every open pane and session. Remote sessions rejoin the work still running in tmux.
-- **Moving the window**: drag a pane's header.
+- **Session restore**: after a crash or a normal close, the next launch offers to bring back every open pane and session. Remote sessions rejoin the work still running in tmux. To always reopen without asking, turn it on in **⚙ Settings → Startup**.
 - **Usage**: while a session is open, Claude and Codex plan usage appears above ＋ Add machine as five-cell batteries of what is left (5h for the 5-hour limit, 7d for the 7-day one). Hover for the exact share and reset time; the arrow on the left folds it. Only agents that are running are shown, and Claude appears once a session opened by Lepons has replied.
-- **Light / dark**: the sun/moon button at the top left.
-- **Language**: Korean, English and Chinese, from the power button → **Language**. Dates and times follow the chosen language.
+- **Theme**: **⚙ Settings → Theme** offers light, dark and **System** (follows the PC's setting).
+- **Font**: **⚙ Settings → Font** sets the text size and font for terminals and file views. D2Coding, JetBrains Mono and Fira Code come with the app.
+- **Remote PCs**: **⚙ Settings → Remote PCs** lists your remote PCs one row each, with a switch to connect or disconnect. The **⋯** menu edits the address, shows AI accounts or removes the PC.
+- **Language**: Korean, English and Chinese, from **⚙ Settings → Language**. Dates and times follow the chosen language.
 
 ## Updates
 
-Lepons compares its version with the latest GitHub release when it starts and when you press **Check for updates** on the power button. If there is a newer one you are told, and **Update now** downloads it inside the app. The download is checked against the file published on GitHub before it is installed, then Lepons closes briefly and reopens on the new version. Releases whose runtime (Electron, native modules, build settings) is unchanged download only the changed app part (about 14 MB). On macOS only those small updates install in the app; others open the download page. Your PCs and settings stay as they are.
+Lepons compares its version with the latest GitHub release when it starts and when you press **⚙ Settings → Updates → Check for updates**. If there is a newer one you are told, and **Update now** downloads it inside the app. The download is checked against the file published on GitHub before it is installed, then Lepons closes briefly and reopens on the new version. Releases whose runtime (Electron, native modules, build settings) is unchanged download only the changed app part (about 14 MB). On macOS only those small updates install in the app; others open the download page. Your PCs and settings stay as they are.
 
 ## Where Lepons connects
 
 - PCs you add: over SSH only.
-- Tailscale: only if you use it, Lepons asks this PC's Tailscale program for its device list and state.
-- Phone: only when **Allow phone access** is on, the phone page is served on this PC's Tailscale addresses. With phone alerts on, "waiting for input" notifications go through the phone's push service (Apple, Google and so on), carrying only the PC and folder name.
+- The relay (`relay.lepons.app`): only when **Allow phone access** is on and a phone app is connected. Everything between the phone and the PC is end-to-end encrypted, so the relay cannot read it.
+- Phone notifications: with notifications on in the phone app, "waiting for input" (and, if chosen, "all done") notifications go through Expo's push service to Apple's or Google's push. They carry only the PC's name.
 - GitHub: asks for the latest release when Lepons starts and when you press **Check for updates**; downloads that release's files when you press **Update now**.
 - Claude (Haiku model): only when you press **Translate** on the workflow board, through this PC's Claude Code. That uses some Claude usage.
 - Nothing else is sent by Lepons itself. Claude Code and Codex connect to their own services, and update themselves with their own commands on first launch.
