@@ -1,17 +1,17 @@
 # Lepons
 
-> Lepons is a free desktop app (Windows, macOS) that runs Claude Code and Codex sessions from several PCs — this PC and remote servers or VMs over SSH — in one window, and lets those PCs share codebases live through an MCP server tunnelled over SSH.
+> Lepons is a free desktop app (Windows, macOS) that is one cockpit for the AI coding agents (Claude Code, Codex, Grok, Antigravity, Cursor) on this PC and on every VM or server it reaches over SSH: sessions in panes with tabs, a workflow map of every machine's work, and a phone app (iPhone, Android) to watch and answer sessions.
 
-- Download: https://github.com/joyuno/lepons/releases/latest
+- Download (Windows .exe, macOS .dmg, Android .apk): https://github.com/joyuno/lepons/releases/latest
 - Guide (Korean): https://github.com/joyuno/lepons/blob/main/README.md
 - Guide (English): https://github.com/joyuno/lepons/blob/main/README.en.md
+- Privacy: https://lepons.app/privacy · Terms: https://lepons.app/terms · Support: https://lepons.app/support
 
 ## Key facts
-- Nothing is installed on remote PCs; SSH is enough. tmux keeps sessions alive across disconnects; if a remote PC lacks it, Lepons installs it in one click (asking for the sudo password in its own dialog when needed, never saved).
-- Sharing: drag a folder onto another PC on the sharing map; that PC's agents read it with `search_repo` and `read_file`, file by file, with secrets masked. They can also hand work to the owning PC with `delegate_task`, which runs there without permission prompts.
-- Shows Claude Code and Codex plan usage (5-hour and 7-day limits) as batteries; Claude usage updates after each reply on this PC and when a remote session finishes a turn.
-- Phone app (1.8.0, iOS and Android, coming soon to the App Store and Google Play): pairs with the desktop app through a relay (relay.lepons.app) by scanning a QR code and comparing six digits on both screens, then signs in with a password plus an Authenticator (TOTP) code. Traffic is end-to-end encrypted; the relay cannot read it. Shows running, waiting and finished sessions grouped like the PC's panes and tabs, Claude and Codex usage limits, a session's conversation (menu numbers, typed lines, Enter, stop with Esc; it cannot end the agent), workflow, files (Markdown, PDF, images) and a work map per PC. Push notifications only for "waiting for input" (coalesced) and an optional quiet "all done"; they carry only the PC's name. Privacy: https://lepons.app/privacy, support: https://lepons.app/support.
-- PC-to-PC connections are SSH only; one PC drives every VM and PC it can reach over SSH. On Windows, Lepons can turn on the OpenSSH server with a LAN-only firewall rule.
-- Agents: Claude Code, Codex, Grok, Antigravity and Cursor. The workflow map (Ctrl/Cmd+Shift+M) shows every PC as a hub with its folders, sessions and subagents, each with a summary (goal, current step, result); it is watch-only.
-- Optional desktop pet (produck) that shows which session is waiting for input; custom characters can be imported.
-- One prompt can be sent to several sessions at once; open sessions are offered back after a crash or a normal close.
+- Desktop: up to eight panes; a pane holds one project's (machine and folder's) AI sessions, terminals and files as tabs. Files on this PC or a remote machine can be viewed and edited in place.
+- Remote machines need only SSH; nothing is installed there. Sessions run in tmux and survive dropped connections. If tmux is missing, Lepons installs it in one click (sudo password asked in its own dialog, never saved).
+- Workflow map (Ctrl/Cmd+Shift+M): a hub per machine with folders, sessions and subagents; always-visible summaries and a Goal / Progress / Now / Result card per session; "Needs you N" jumps to waiting sessions; focus mode on one branch; Follow mode; watch-only.
+- Phone app: iPhone in App Store review (coming soon); Android as a direct APK from GitHub Releases, Google Play coming. Pairs by QR plus a six-digit check, signs in with a password and an authenticator (TOTP) code, connects through a relay (relay.lepons.app) with end-to-end encryption the relay cannot read. Notifications only for sessions waiting for input, coalesced, and not sent while the user is at the PC or in the app; an optional silent "all done". Notifications carry only the PC's name. The phone can answer and stop (Esc) but never quit an agent.
+- Shows Claude and Codex plan usage (5-hour and 7-day limits) live; shows each machine's AI install and sign-in state and signs in on remote machines without a terminal.
+- Sharing map: drag a folder onto another machine and its agents read and search it over MCP (read-only, secrets masked); work can be delegated to the owning machine.
+- Optional desktop pet (produck) that shows which session is waiting for input.
