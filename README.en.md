@@ -6,9 +6,9 @@
 
 <p align="center"><a href="README.md">한국어</a> · <b>English</b> · <a href="README.zh-CN.md">中文</a></p>
 
-<p align="center"><b>One cockpit for the AI coding agents on this PC and on every VM or server you reach over SSH</b></p>
+<p align="center"><b>AI coding on your PC and remote servers, in one window</b></p>
 
-<p align="center">A free desktop app that puts Claude Code, Codex, Grok, Antigravity and Cursor sessions into panes and tabs in one window, shows every machine's work on a workflow map, and lets you answer from the phone app when you are away.</p>
+<p align="center">Split the screen for AI sessions, terminals and files, and share code between computers. Manage remote PCs and AI sign-ins, then check and answer sessions from your phone when away.</p>
 
 <!-- SCREENSHOT: hero
      File: added later by the screenshot job (e.g. screenshots/hero.png)

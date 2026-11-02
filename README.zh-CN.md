@@ -6,9 +6,9 @@
 
 <p align="center"><a href="README.md">한국어</a> · <a href="README.en.md">English</a> · <b>中文</b></p>
 
-<p align="center"><b>一个驾驶舱，管理本机以及所有能 SSH 访问的虚拟机、服务器上的 AI 编程智能体</b></p>
+<p align="center"><b>在一个窗口中管理本机和远程服务器上的 AI 编程工作</b></p>
 
-<p align="center">一款免费桌面应用：把 Claude Code、Codex、Grok、Antigravity、Cursor 会话放进同一窗口的面板和标签，用工作流地图一眼看清每台机器在做什么，离开电脑时也能用手机应用回复。</p>
+<p align="center">分屏查看 AI 会话、终端和文件，在电脑之间共享代码。管理远程电脑和 AI 登录，离开电脑时也能在手机上查看工作并回复。</p>
 
 <!-- SCREENSHOT: hero
      文件：之后由截图任务添加（例如 screenshots/hero.png）

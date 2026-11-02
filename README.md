@@ -6,9 +6,9 @@
 
 <p align="center"><b>한국어</b> · <a href="README.en.md">English</a> · <a href="README.zh-CN.md">中文</a></p>
 
-<p align="center"><b>이 PC와 SSH로 닿는 VM·서버의 AI 코딩 에이전트를 한 조종석에서</b></p>
+<p align="center"><b>내 PC와 원격 서버의 AI 코딩 작업을 한 화면에서</b></p>
 
-<p align="center">Claude Code, Codex, Grok, Antigravity, Cursor 세션을 한 창의 패널과 탭으로 나눠 보고, 워크플로우 지도로 모든 PC의 일을 한눈에 보고, 자리를 떠나도 폰 앱으로 답하는 무료 데스크톱 앱입니다.</p>
+<p align="center">화면을 나눠 AI와 터미널, 파일을 함께 보고, 컴퓨터 사이에 코드를 공유하세요. 원격 PC와 AI 로그인을 관리하고, 밖에서는 폰으로 작업을 확인하고 답할 수 있습니다.</p>
 
 <!-- SCREENSHOT: hero
      파일: 나중에 스크린샷 작업에서 추가 (예: screenshots/hero.png)
