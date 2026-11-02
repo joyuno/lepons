@@ -39,14 +39,20 @@
 
 ## What it does
 
-### 1. Every machine's AI agents in one window
+### 1. Sharing map — share code with AI on another computer
+
+Drag a folder onto another computer in the sharing map. Its AI can read and search the files it needs, without copying code or moving it through Git.
+
+The receiving AI cannot edit those files directly, but can delegate work to an AI on the computer that owns the folder. Delegated work runs without permission prompts, so share only between computers you trust. Values resembling keys or tokens are masked before being sent.
+
+### 2. Every machine's AI agents in one window
 
 - Click a folder and choose **Claude Code, Codex, Grok, Antigravity, Cursor** or a terminal, and it opens in that folder, whether on this PC or on a VM or server you reach over SSH.
 - Split right or down, up to eight panes. A pane gathers one project's (one machine and folder's) AI sessions, terminals and files as tabs; drag a tab to a pane's edge to split off a new pane.
 - Markdown, code, images, PDF and HTML open in a pane, and files on remote machines can be edited in place and saved with **Ctrl+S** (**⌘+S** on macOS).
 - Nothing is installed on remote machines; SSH is enough. Remote sessions run inside tmux, so closing the laptop or losing the network does not stop the agent, and reopening puts you back on the same screen.
 
-### 2. Workflow map
+### 3. Workflow map
 
 <!-- SCREENSHOT: workflow-map
      File: added later by the screenshot job (e.g. screenshots/workflow-map.png)
@@ -62,7 +68,7 @@ See what each session set out to do, how far it got, what it is doing now and wh
 - **Follow.** When on, the map moves to a session that starts working or waits for you. Touching the map pauses it for 30 seconds.
 - **Motion only where it means something.** Running handoffs between machines and shares flow as dashed lines, faint dots flow into working sessions, and waiting sessions blink their outline. Everything else stays still.
 
-### 3. Phone app
+### 4. Phone app
 
 <!-- SCREENSHOT: phone
      File: added later by the screenshot job (e.g. screenshots/phone.png)
@@ -77,12 +83,11 @@ When you step away, the **Lepons** app for iPhone and Android shows this PC's se
 - **Read and answer.** Sessions are laid out like the PC's panes and tabs; read the conversation and send a menu number, Enter or the next instruction. Stop (Esc) takes two taps, and the phone can never quit an agent.
 - **Map, files, usage.** See one machine's workflow map at a time, open Markdown, PDF and images from the session's folder, and check Claude and Codex usage limits and AI account state. A **demo** lets you look around without a PC.
 
-### 4. Also
+### 5. Also
 
 - **Live usage limits**: what is left of your Claude and Codex 5-hour and 7-day limits, as batteries. It updates as soon as Claude on this PC replies; remote sessions update when they finish a turn.
 - **AI sign-in on remote machines**: **⚙ Settings → AI accounts** shows which AIs are installed and signed in on each machine, and signs in on remote machines without a terminal.
 - **One-click tmux**: a remote machine without tmux shows **Install tmux**; click it and Lepons installs it in the background. If sudo needs a password, Lepons asks once in its own dialog and does not keep it.
-- **Machines reading each other's code**: on the **Sharing map**, drag a folder onto another machine and that machine's agents read and search it over MCP. They can only read it, and values that look like keys or tokens are masked. They can also hand work to the machine that owns the folder, where it runs without permission prompts, so share only between machines you trust.
 - **Pet**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session.
 
 ## Getting started
