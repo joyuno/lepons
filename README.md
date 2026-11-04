@@ -17,7 +17,7 @@
 
 ## 다운로드
 
-**[최신 버전 받기](https://github.com/joyuno/lepons/releases/latest)**
+**[최신 버전 받기](https://github.com/joyuno/lepons/releases/latest)** · 소개 페이지: [lepons.app](https://lepons.app)
 
 | 기기 | 받는 곳 |
 |---|---|

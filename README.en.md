@@ -17,7 +17,7 @@
 
 ## Download
 
-**[Get the latest version](https://github.com/joyuno/lepons/releases/latest)**
+**[Get the latest version](https://github.com/joyuno/lepons/releases/latest)** · Website: [lepons.app](https://lepons.app/en/)
 
 | Device | Where |
 |---|---|

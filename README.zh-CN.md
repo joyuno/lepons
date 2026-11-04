@@ -17,7 +17,7 @@
 
 ## 下载
 
-**[获取最新版本](https://github.com/joyuno/lepons/releases/latest)**
+**[获取最新版本](https://github.com/joyuno/lepons/releases/latest)** · 网站：[lepons.app](https://lepons.app/en/)
 
 | 设备 | 获取方式 |
 |---|---|
