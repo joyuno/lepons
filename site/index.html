@@ -177,11 +177,11 @@
 <h2 id="dlh">여기서 받아요</h2>
 <p class="dlsub">PC 앱부터 설치해요. 폰 앱은 PC 앱과 연결해서 써요.</p>
 <div class="plats">
-<div class="plat"><h3>Windows</h3><p>Windows 10, 11</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest">Windows용 받기</a></div>
-<div class="plat"><h3>macOS</h3><p>Apple Silicon(M1 이상)</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest">macOS용 받기</a></div>
-<div class="plat"><h3>Android</h3><p>APK 파일을 직접 받아 설치해요. Google Play는 아직 비공개 테스트 중이에요.</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk">APK 받기</a></div>
+<div class="plat"><h3>Windows</h3><p>Windows 10, 11</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest" data-asset=".exe">Windows용 다운로드</a></div>
+<div class="plat"><h3>macOS</h3><p>Apple Silicon(M1 이상)</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest" data-asset="-arm64.dmg">macOS용 다운로드</a></div>
+<div class="plat"><h3>Android</h3><p>APK 파일을 직접 받아 설치해요. Google Play는 아직 비공개 테스트 중이에요.</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk">APK 다운로드</a></div>
 <div class="plat"><h3>iPhone</h3>
-<!-- iPhone 상태 한 줄: App Store 승인 뒤에는 바로 아래 줄을 <p>App Store에서 받아요.</p><a class="btn ink" href="앱스토어 주소">App Store에서 받기</a></div> 로 바꾸세요. en/index.html도 같이 고치세요. -->
+<!-- iPhone 상태 한 줄: App Store 승인 뒤에는 바로 아래 줄을 <p>App Store에서 받아요.</p><a class="btn ink" href="앱스토어 주소">App Store에서 다운로드</a></div> 로 바꾸세요. en/index.html도 같이 고치세요. -->
 <p>아직 App Store에 없어요. 올라오면 여기에 링크를 걸게요.</p><span class="btn soon">준비 중</span></div>
 </div>
 <p class="dlnote">Windows와 macOS 설치 파일은 서명이 없어서 경고가 나올 수 있어요. Windows에서는 추가 정보, 실행을 누르고, macOS에서는 시스템 설정의 개인정보 보호 및 보안에서 그래도 열기를 눌러요.</p>
@@ -189,5 +189,6 @@
 </section>
 
 <footer class="foot"><a href="/privacy">개인정보 처리방침</a><a href="/terms">이용약관</a><a href="/support">지원</a><a href="mailto:joy981017@gmail.com">문의·피드백</a><a href="https://github.com/joyuno/lepons">소스 코드 (MIT 라이선스)</a></footer>
+<script>/* Point the buttons straight at the latest release files; the release page stays the fallback. */fetch("https://api.github.com/repos/joyuno/lepons/releases/latest").then((r) => r.json()).then((r) => {for (const a of document.querySelectorAll("a[data-asset]")) { const f = r.assets.find((x) => x.name.endsWith(a.dataset.asset)); if (f) a.href = f.browser_download_url; }}).catch(() => {});</script>
 </body>
 </html>

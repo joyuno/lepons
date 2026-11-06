@@ -177,8 +177,8 @@
 <h2 id="dlh">Get it here</h2>
 <p class="dlsub">Install the PC app first. The phone app connects to it.</p>
 <div class="plats">
-<div class="plat"><h3>Windows</h3><p>Windows 10, 11</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest">Download for Windows</a></div>
-<div class="plat"><h3>macOS</h3><p>Apple Silicon (M1 or later)</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest">Download for macOS</a></div>
+<div class="plat"><h3>Windows</h3><p>Windows 10, 11</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest" data-asset=".exe">Download for Windows</a></div>
+<div class="plat"><h3>macOS</h3><p>Apple Silicon (M1 or later)</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest" data-asset="-arm64.dmg">Download for macOS</a></div>
 <div class="plat"><h3>Android</h3><p>Install the APK file directly. Google Play is still a closed test.</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk">Download APK</a></div>
 <div class="plat"><h3>iPhone</h3>
 <!-- iPhone status line: after App Store approval, replace the line right below with <p>Get it from the App Store.</p><a class="btn ink" href="App Store URL">Get it on the App Store</a></div> and change index.html too. -->
@@ -189,5 +189,6 @@
 </section>
 
 <footer class="foot"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="mailto:joy981017@gmail.com">Contact</a><a href="https://github.com/joyuno/lepons">Source code (MIT License)</a></footer>
+<script>/* Point the buttons straight at the latest release files; the release page stays the fallback. */fetch("https://api.github.com/repos/joyuno/lepons/releases/latest").then((r) => r.json()).then((r) => {for (const a of document.querySelectorAll("a[data-asset]")) { const f = r.assets.find((x) => x.name.endsWith(a.dataset.asset)); if (f) a.href = f.browser_download_url; }}).catch(() => {});</script>
 </body>
 </html>
