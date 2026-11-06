@@ -79,7 +79,7 @@ When you step away, the **Lepons** app for iPhone and Android shows this PC's se
 
 - **Pair with a QR code.** Scan the QR on the PC with the phone app and check that both screens show the same six digits.
 - **End-to-end encrypted.** The phone and PC connect from anywhere through a relay (`relay.lepons.app`); only this PC and the phone can read what passes between them. The relay cannot.
-- **Notifications that do not spam.** You are notified only when a session waits for input. Several waiting at once become one notification, and nothing is sent while you have just typed at the PC or are looking at the phone app. An optional, silent **all done** tells you once when everything has finished. Notifications carry only the PC's name.
+- **Notifications that matter.** The PC and the phone are told only when Claude Code or Codex puts up a choice. Several at once become one notification. Nothing is sent while you are looking at the phone app, and if you leave it unanswered, it is sent then. Notifications carry only the PC's name.
 - **Read and answer.** Sessions are laid out like the PC's panes and tabs; read the conversation and send a menu number, Enter or the next instruction. Stop (Esc) takes two taps, and the phone can never quit an agent.
 - **Map, files, usage.** See one machine's workflow map at a time, open Markdown, PDF and images from the session's folder, and check Claude and Codex usage limits and AI account state. A **demo** lets you look around without a PC.
 
