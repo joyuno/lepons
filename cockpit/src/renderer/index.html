@@ -68,6 +68,8 @@
         /* The rail's head and the bar over the panes: one height, so they line up. */
         --topBar: 32px;
         --ground: #11161d;
+        /* Usage chart series, the phone's (mobile/src/ui.tsx). */
+        --series0: #1fa0ba; --series1: #b88c25; --series2: #7f79e3; --series3: #d6688e; --series4: #588018; --series5: #6b7685;
         --panel: #171e26;
         --raise: #1e2731;
         --line: #232d38;
@@ -103,6 +105,7 @@
            than the work area, as VS Code's Light Modern and Linear do, so the
            window has depth without one large white field. */
         --ground: #f3f4f6;
+        --series0: #00849f; --series1: #b58b24; --series2: #5d55b3; --series3: #d9708f; --series4: #586008; --series5: #8c959f;
         --panel: #e9ebef;
         --raise: #dfe2e7;
         --line: #d2d6dc;
@@ -163,11 +166,12 @@
       #railEdge:hover, body.railDragging #railEdge { background: var(--line); }
       body.railDragging #rail { transition: none; }
       body.railCollapsed #railEdge { display: none; }
-      body.railCollapsed #phoneButton,
+      body.railCollapsed .railHead #phoneButton,
       body.railCollapsed .railTabs,
       body.railCollapsed #workspaces,
       body.railCollapsed .railFoot { display: none; }
-      /* Collapsed, ⚙ stays: settings are the way back to everything else. It stacks over the toggle. */
+      /* Collapsed, ⚙ stays: settings are the way back to everything else. It stacks over the toggle.
+         (macOS has no rail head: its buttons are in the title bar, below.) */
       body.railCollapsed .railHead { padding: 12px 0 8px; flex-direction: column; justify-content: center; }
       .railHead {
         padding: 10px 10px 6px 10px; color: var(--muted);
@@ -368,7 +372,7 @@
       .railBtn.on { color: var(--live); background: var(--raise); }
       /* With no OS title bar the rail's head is what the window is dragged
          by -- and double-clicked to maximize, right-clicked for the window
-         menu, the way a title bar is. Its toggle opts back out, or it would
+         menu, the way a title bar is (on macOS the title bar is, below). Its toggle opts back out, or it would
          stop receiving clicks at all. */
       body.frameless .railHead {
         -webkit-app-region: drag; app-region: drag; user-select: none;
@@ -376,18 +380,27 @@
       body.frameless .railHead button {
         -webkit-app-region: no-drag; app-region: no-drag;
       }
-      /* macOS keeps its traffic lights in the head's left corner (12px in,
-         three 14px lights with 6px between, then room): the head's own buttons
-         start after them. Collapsed, the rail widens to hold them and the
-         toggle drops below. Full screen moves them into the menu bar, so the
-         corner is given back. Double-clicking the head does what the
-         system's "double-click a title bar" setting says, as a Mac title bar does. */
-      body.trafficLights .railHead { padding-left: 82px; }
-      body.trafficLights.railCollapsed #rail { width: 82px; flex-basis: 82px; }
-      body.trafficLights.railCollapsed .railHead { padding: 30px 0 8px; }
-      body.trafficLights.fullScreen .railHead { padding-left: 10px; }
-      body.trafficLights.fullScreen.railCollapsed #rail { width: 42px; flex-basis: 42px; }
-      body.trafficLights.fullScreen.railCollapsed .railHead { padding-top: 12px; }
+      /* macOS keeps its traffic lights in the window's top-left corner, fixed
+         in window points: they end about 71pt in, whatever the page's zoom.
+         So the band keeps 82pt clear there, divided by the zoom main.ts
+         reports (--zoom), or Cmd+- would slide « under the green light.
+         There the title bar runs the
+         full width as a thin band over the rail and the panes: the lights at
+         its left, the rail's « » right after them as in Finder, and at its
+         right the split buttons, then the phone and settings buttons moved
+         over from the rail head (main.ts). The rail starts under the band, so
+         collapsing it gives back its whole width instead of keeping 82px of
+         corner for the lights. Full screen moves the lights into the menu bar,
+         so their room is given back. */
+      body.trafficLights #titleBar { position: fixed; top: 0; left: 0; right: 0; z-index: 4; padding: 0 8px 0 calc(82px / var(--zoom, 1)); }
+      body.trafficLights.fullScreen #titleBar { padding-left: 8px; }
+      body.trafficLights #rail { margin-top: var(--topBar); }
+      body.trafficLights main { padding-top: var(--topBar); }
+      body.trafficLights .railHead { display: none; }
+      body.trafficLights.railCollapsed #rail { width: 0; flex-basis: 0; border-right-width: 0; }
+      body.trafficLights #titleBar .railIconBtn,
+      body.trafficLights #railToggle { -webkit-app-region: no-drag; app-region: no-drag; }
+      body.trafficLights #titleBar .railIconBtn { width: 28px; height: 24px; padding: 0; margin: 0 2px; }
       body.railCollapsed .railDrag { display: none; }
       .railIconBtn {
         flex: 0 0 auto; border: 0; background: none; color: var(--muted); cursor: pointer;
@@ -398,7 +411,8 @@
       /* --- main ------------------------------------------------------- */
       main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
       /* One thin bar over the panes (and the map, guide and workflow), as
-         tall as the rail's head so their bottoms line up: its empty space
+         tall as the rail's head so their bottoms line up (on macOS it spans
+         the rail too, below): its empty space
          drags the window, and at its right end sit the split buttons, then,
          on Windows and Linux with no OS frame, the usual ─ □ ✕. */
       #titleBar { display: flex; align-items: center; height: var(--topBar); flex: 0 0 var(--topBar); }
@@ -883,6 +897,26 @@
       #settingsPanel .setBadge.good { color: var(--go); border-color: color-mix(in srgb, var(--go) 40%, var(--line)); }
       #settingsPanel .setBadge.bad { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
       #settingsPanel .setNote { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+      /* Usage chart: the phone's (home.tsx UsdBars) -- a week of stacked bars under a dashed line at the axis top. */
+      #settingsPanel .setChart { margin: 0 0 16px; padding: 14px 16px 12px; border: 1px solid var(--line); border-radius: 10px; }
+      #settingsPanel .setChartHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+      #settingsPanel .setChartNote { flex: 1; color: var(--live); }
+      #settingsPanel .setChartHead strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+      #settingsPanel .setChartPlot { display: flex; height: 140px; }
+      #settingsPanel .setChartAxis { position: relative; width: 52px; flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+      #settingsPanel .setChartAxis span { position: absolute; left: 0; transform: translateY(-50%); }
+      #settingsPanel .setChartBars { flex: 1; display: flex; align-items: flex-end; gap: 8px; border-top: 1px dashed var(--muted); border-bottom: 1px solid var(--line);
+        background: linear-gradient(var(--line), var(--line)) 0 50% / 100% 1px no-repeat; }
+      #settingsPanel .setChartBar { flex: 1; display: flex; flex-direction: column-reverse; min-height: 2px; border-radius: 5px 5px 0 0; overflow: hidden; }
+      #settingsPanel .setChartBar i { display: block; min-height: 1px; }
+      #settingsPanel .setChartBar i + i { border-bottom: 2px solid var(--ground); }
+      #settingsPanel .setChartNone { flex: 1; align-self: center; text-align: center; color: var(--muted); font-size: 11px; }
+      #settingsPanel .setChartDays { display: flex; gap: 8px; margin: 6px 0 0 52px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+      #settingsPanel .setChartDays span { flex: 1; text-align: center; }
+      #settingsPanel .setChartDays .peak { color: var(--text); font-weight: 600; }
+      #settingsPanel .setChartLegend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--muted); font-size: 11px; }
+      #settingsPanel .setChartLegend span { display: inline-flex; align-items: center; gap: 6px; }
+      #settingsPanel .setChartLegend i { width: 8px; height: 8px; border-radius: 2px; }
       #settingsPanel .setNote.bad { color: var(--stop); }
       /* 원격 PC 관리: a count line, then one card per PC -- lamp, name and
          address as one button that opens its details, a switch, and ⋯. */
@@ -1210,8 +1244,8 @@
       .agentTag.grok { color: var(--text); }
       .agentTag.agy { color: var(--muted); }
       .agentTag.agent { color: var(--dim); }
-      .mapAgents { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 10.5px; color: var(--muted); }
-      .mapAgents .agentTag { cursor: pointer; background: none; }
+      .mapAgents { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0 6px; font-size: 10.5px; color: var(--muted); }
+      .mapAgents .agentTag { cursor: pointer; background: none; white-space: nowrap; }
       .mapAgents .agentTag.off { opacity: .45; border-style: dashed; color: var(--muted); }
       .mapApplying { font-size: 10.5px; color: var(--muted); margin: 0 0 6px; animation: lampBreathe 1.4s ease-in-out infinite; }
       button.mapApplyFailed { display: block; border: 0; background: none; padding: 0 0 6px; text-align: left; font: inherit; font-size: 10.5px; cursor: pointer; }
@@ -1407,7 +1441,8 @@
            -- with the two views to switch to under it. -->
       <div class="railHead">
         <!-- Settings first, in the corner, then the phone page (its state in
-             the icon's colour, a menu on click). -->
+             the icon's colour, a menu on click). On macOS main.ts moves both,
+             and the toggle, into the title bar. -->
         <button class="railIconBtn" id="settingsButton"></button>
         <button class="railIconBtn" id="phoneButton"></button>
         <span class="railDrag"></span>

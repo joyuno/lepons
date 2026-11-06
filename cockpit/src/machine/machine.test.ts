@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test, type TestContext } from "node:test";
@@ -57,7 +57,8 @@ const adapters: Array<{
     skip: shell === undefined,
     start: async () => {
       // A space on purpose: an account's name can hold one, on a Windows PC above all.
-      const home = slashes(scratchDir("machine home-"));
+      // Real path: macOS reaches its temp folder through /var -> /private/var, and the node reports the resolved one.
+      const home = slashes(realpathSync(scratchDir("machine home-")));
       const node = await startFakeNode(generateHostKey(), { home, shell: shell! });
       const reach: MachineReach = {
         ensureKeyReady: async () => ({ ok: true }),

@@ -194,7 +194,8 @@ function sshServer(): HTMLElement {
 }
 
 function phone(actions: GuideActions): HTMLElement {
-  const element = section("phone", 3, t("guide.phoneHead"), t("guide.phoneIntro"));
+  // On macOS the phone icon sits in the title bar's right end, not the rail head (main.ts).
+  const element = section("phone", 3, t("guide.phoneHead"), t(window.cockpit.trafficLights ? "guide.phoneIntroMac" : "guide.phoneIntro"));
   const open = document.createElement("button");
   open.type = "button";
   open.className = "guideButton";

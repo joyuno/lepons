@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 
@@ -50,7 +50,8 @@ test("a shared folder on this PC is read and searched inside its own bounds only
 // A whole drive (stored as "C:/") or a POSIX root ("/") added as a folder:
 // reads resolve under it and search results come back relative to it.
 test("a root folder reads and searches with paths relative to the root", async () => {
-  const base = mkdtempSync(join(tmpdir(), "lepons-root-"));
+  // Real path, resolved the way grepLocal resolves it: macOS reaches its temp folder through /var -> /private/var.
+  const base = realpathSync.native(mkdtempSync(join(tmpdir(), "lepons-root-")));
   try {
     mkdirSync(join(base, "sub"));
     writeFileSync(join(base, "sub", "a.txt"), "root needle\n");

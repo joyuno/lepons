@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { agents, signedInFrom, type AgentKind } from "../agent/agents.ts";
 import type { AgentAccount } from "../shared/ipc.ts";
-import { readProbe } from "../ssh/capabilities.ts";
+import { inLoginShell, probeScript, probeTimeoutMs, readProbe } from "../ssh/capabilities.ts";
 import { agentEndpoint } from "../ssh/identity.ts";
 import { generateKeyPair } from "../ssh/keys.ts";
 import { leponsIdentityName } from "../ssh/ssh-config.ts";
@@ -108,8 +108,27 @@ async function signedInOf(kind: AgentKind): Promise<boolean | undefined> {
   }
 }
 
+/**
+ * This PC asked the way a remote one is (probeScript, remoteLoginScript):
+ * through the account's login + interactive shell, which is where a terminal
+ * and a session here find the agents. Off Windows the app's own PATH is the
+ * wrong one: opened from Finder or the Dock it is launchd's
+ * /usr/bin:/bin:/usr/sbin:/sbin, so claude and codex under nvm, Homebrew or
+ * ~/.local/bin read as not installed. `-l` alone is not enough either: nvm
+ * sits in ~/.zshrc (inLoginShell). Undefined: the shell never answered.
+ */
+async function askLoginShell(script: string): Promise<string | undefined> {
+  try {
+    return (await run(inLoginShell(script), { timeout: probeTimeoutMs })).stdout;
+  } catch (error) {
+    // Cut off or exited non-zero, it may still have said what it found.
+    return (error as { stdout?: string }).stdout || undefined;
+  }
+}
+
 /** What the AI accounts tab shows: each agent's version here, and its sign-in where knowable. */
 export async function agentAccounts(): Promise<AgentAccount[]> {
+  if (platform() !== "win32") return remoteAgentAccounts(await askLoginShell(`${probeScript}; ${remoteLoginScript}`));
   return Promise.all((Object.keys(agents) as AgentKind[]).map(async (kind): Promise<AgentAccount> => {
     const version = await versionOf(kind);
     if (version === undefined || version === "") return { kind };
@@ -131,7 +150,11 @@ export const remoteLoginScript = Object.values(agents).flatMap((agent) => {
     // To a file, not a pipe: a child the kill misses would hold a pipe open.
     `command -v ${command.split(" ")[0]} >/dev/null 2>&1 && f=$(mktemp) && ( ` +
     // In its own process group (set -m), so the kill reaches a node an npm shim started too.
-    `set -m 2>/dev/null; ${command} >"$f" 2>&1 </dev/null & p=$!; (sleep 5; kill -- -$p || kill $p) >/dev/null 2>&1 & k=$!; wait $p; r=$?; kill $k 2>/dev/null; ` +
+    // zsh refuses set -m in a subshell and drops the whole subshell for trying -- every
+    // Mac's sign-in read as unknown -- so it is tried in a throwaway one first; without
+    // it the kill takes the command's children (pkill -P) and then the command. KILL,
+    // not TERM: npm's codex.js catches TERM and exits 0, which read as signed in.
+    `(set -m) 2>/dev/null && set -m; ${command} >"$f" 2>&1 </dev/null & p=$!; (sleep 5; kill -9 -- -$p || { pkill -9 -P $p; kill -9 $p; }) >/dev/null 2>&1 & k=$!; wait $p; r=$?; kill $k 2>/dev/null; ` +
     `echo "${agent.kind}-login:$(tr '\\r\\n' '  ' <"$f") rc:$r"; rm -f "$f" )`,
   ];
 }).join("; ");
@@ -175,9 +198,12 @@ export async function collectSetupInfo(): Promise<SetupInfo> {
   const posix = platform() !== "win32";
   await ensureLeponsKey();
   const kinds = Object.keys(agents) as AgentKind[];
-  const found = await Promise.all(kinds.map((kind) => versionOf(kind)));
-
-  const agentVersions: Partial<Record<AgentKind, string>> = {};
+  // Off Windows from the login shell, as agentAccounts asks. A shell that never
+  // got to the end is no answer: the app's own PATH then fills in, as before, so
+  // the guide does not offer to reinstall what that shell could not report.
+  const probe = posix ? readProbe((await askLoginShell(probeScript)) ?? "") : undefined;
+  const found = probe?.shellRead ? [] : await Promise.all(kinds.map((kind) => versionOf(kind)));
+  const agentVersions: Partial<Record<AgentKind, string>> = probe?.capabilities.agentVersions ?? {};
   kinds.forEach((kind, index) => {
     const version = found[index];
     if (version !== undefined && version !== "") agentVersions[kind] = version;

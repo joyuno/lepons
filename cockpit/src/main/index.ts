@@ -1220,7 +1220,8 @@ function createWindow(): BrowserWindow {
   // index.html). macOS keeps only the traffic lights, which is where a Mac
   // user closes a window: titleBarStyle "hidden" is what leaves them behind,
   // where frame:false alone would take them too. They sit at the left of the
-  // rail head, which keeps that corner free for them (index.html).
+  // title bar, which runs the full width on macOS to keep that corner free
+  // for them (index.html).
   const mac = process.platform === "darwin";
   // The page's colour before it has painted, so a light window does not
   // flash dark: the theme it last reported (setTheme), else the OS's, which

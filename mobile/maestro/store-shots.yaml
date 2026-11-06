@@ -14,6 +14,17 @@ appId: app.lepons.mobile
     optional: true
 - waitForAnimationToEnd
 - takeScreenshot: 01-home
+# The rest of home (usage chart, remaining usage, PCs) is below the fold: a second shot from the bottom.
+# Two scrolls put the usage chart whole on Android's shorter screen; iOS takes a third to reach the bottom.
+- scroll
+- scroll
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - scroll
+- waitForAnimationToEnd
+- takeScreenshot: 01b-home-more
 - tapOn: "(.*, )?(Sessions|세션)(, .*)?"
 - waitForAnimationToEnd
 - takeScreenshot: 02-sessions

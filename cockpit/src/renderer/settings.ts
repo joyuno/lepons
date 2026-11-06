@@ -2,7 +2,7 @@ import type { t as translate } from "../i18n/i18n.ts";
 import type { PcState } from "../shared/status.ts";
 import type { AgentAccount, PhoneSettingsView, SettingsAction, SettingsInfo } from "../shared/ipc.ts";
 import type { TokenStats } from "../agent/token-stats.ts";
-import { modelLabel, modelTotals, tokenTotals, usdText } from "./token-totals.ts";
+import { modelLabel, modelStacks, modelTotals, tokenDates, tokenTotals, usdCeiling, usdDays, usdText, usdTick } from "./token-totals.ts";
 import { agentKinds, agents, type AgentKind } from "../agent/agents.ts";
 import { accountAction } from "../agent/install.ts";
 import type { SetupStep } from "./phone-setup.ts";
@@ -465,6 +465,64 @@ function remoteRow(deps: SettingsDeps, pc: ReturnType<SettingsDeps["remotes"]>[n
   return row;
 }
 
+/**
+ * The phone's usage chart (home.tsx UsdBars): a week of dollars a day, stacked by model, one colour per model
+ * however the project changes. Nothing priced in view: no chart, or a note when some rows had no price.
+ */
+function usageChart(stats: TokenStats, project: string, t: typeof translate): HTMLElement | undefined {
+  const dates = tokenDates(stats.days, stats.today);
+  const { usd, partial } = usdDays(stats.days, dates, project);
+  if (!usd.some((day) => day !== undefined)) return partial ? line(t("settings.tokens.partialCost")) : undefined;
+  const stacks = modelStacks(stats.days, dates, project);
+  const peak = Math.max(...usd.map((day) => day ?? 0));
+  const ceiling = usdCeiling(peak);
+  const label = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+  const name = (model: string) => model === "other" ? t("settings.tokens.otherModels") : model === "unknown" ? t("settings.tokens.unknownModel") : modelLabel(model);
+  const make = (tag: string, className: string, text = "") => { const node = document.createElement(tag); node.className = className; node.textContent = text; return node; };
+
+  const chart = make("figure", "setChart");
+  chart.setAttribute("role", "img");
+  chart.setAttribute("aria-label", `${t("settings.tokens.chart")}: ${dates.map((date, i) => `${label(date)} ${usd[i] === undefined ? "—" : usdText(usd[i]!)}`).join(", ")}. ${stacks.shown.map(({ model, usd: amount }) => `${name(model)} ${usdText(amount)}`).join(", ")}`);
+  const head = make("div", "setChartHead");
+  head.append(make("span", "setChartNote", partial ? t("settings.tokens.partialCost") : ""), make("strong", "", t("settings.tokens.peak", { usd: usdText(peak) })));
+  const plot = make("div", "setChartPlot");
+  const axis = make("div", "setChartAxis");
+  for (const [value, at] of [[ceiling, 0], [ceiling / 2, 50], [0, 100]] as const) {
+    const tick = make("span", "", usdTick(value));
+    tick.style.top = `${at}%`;
+    axis.append(tick);
+  }
+  const bars = make("div", "setChartBars");
+  usd.forEach((day, i) => {
+    if (day === undefined) { bars.append(make("span", "setChartNone", "—")); return; }
+    const bar = make("div", "setChartBar");
+    bar.style.height = `${day / ceiling * 100}%`;
+    for (const { slot } of stacks.shown) {
+      const amount = stacks.days[i]?.[slot] ?? 0;
+      if (!(amount > 0)) continue;
+      const part = make("i", "");
+      part.style.flexGrow = String(amount);
+      part.style.background = `var(--series${slot})`;
+      bar.append(part);
+    }
+    bars.append(bar);
+  });
+  plot.append(axis, bars);
+  const days = make("div", "setChartDays");
+  const peakAt = usd.indexOf(peak);
+  dates.forEach((date, i) => days.append(make("span", i === peakAt ? "peak" : "", label(date))));
+  const legend = make("div", "setChartLegend");
+  for (const { slot, model } of stacks.shown) {
+    const key = make("span", "");
+    const swatch = make("i", "");
+    swatch.style.background = `var(--series${slot})`;
+    key.append(swatch, name(model));
+    legend.append(key);
+  }
+  chart.append(head, plot, days, legend);
+  return chart;
+}
+
 const act = (action: SettingsAction, value?: string) => () => cockpit.settingsAction(action, value);
 /** relay/protocol.ts's DEFAULT_SERVER; that module is main's (node:crypto). */
 const DEFAULT_RELAY = "wss://relay.lepons.app";
@@ -514,6 +572,8 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
       chips.append(chip);
     }
     nodes.push(chips);
+    const chart = usageChart(tokens, tokenProject, t);
+    if (chart) nodes.push(chart);
     const totals = tokenTotals(tokens.days, tokenProject);
     for (const kind of agentKinds.filter((candidate) => agents[candidate].can.usage.tokens)) {
       const total = totals.find((candidate) => candidate.agent === kind);

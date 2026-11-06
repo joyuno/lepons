@@ -4717,6 +4717,20 @@ document.body.classList.toggle("frameless", cockpit.frameless);
 document.body.classList.toggle("trafficLights", cockpit.trafficLights);
 document.body.classList.toggle("winControls", cockpit.frameless && !cockpit.trafficLights);
 cockpit.onFullScreen((on) => document.body.classList.toggle("fullScreen", on));
+// On macOS the title bar is a full-width band under the traffic lights
+// (index.html), so the rail head's controls move into it: « » beside the
+// lights, the phone and settings buttons after the split buttons.
+if (cockpit.trafficLights) {
+  const titleBar = el("titleBar");
+  titleBar.prepend(el("railToggle"));
+  splitDownButton.after(el("phoneButton"), el("settingsButton"));
+  // First in the page, so Tab meets the band first, as the eye does.
+  document.body.prepend(titleBar);
+  // The page's zoom, for the room the lights need in window points.
+  const syncZoom = (): void => document.documentElement.style.setProperty("--zoom", String(window.outerWidth / window.innerWidth));
+  syncZoom();
+  window.addEventListener("resize", syncZoom);
+}
 el("winMin").addEventListener("click", () => cockpit.windowControl("minimize"));
 el("winMax").addEventListener("click", () => cockpit.windowControl("maximize"));
 el("winClose").addEventListener("click", () => cockpit.windowControl("close"));
@@ -5364,7 +5378,7 @@ function paintPhone(view: PhoneSettingsView): void {
 }
 
 /**
- * The rail-head icon's colour: muted while the phone is off or not set up,
+ * The rail-head icon's colour (in the title bar on macOS): muted while the phone is off or not set up,
  * amber while it waits for a phone, green once one is signed in -- auth's
  * live-session count, the same one the dialog's 끊기 acts on. A paired
  * phone app takes the relay link's own colour.
