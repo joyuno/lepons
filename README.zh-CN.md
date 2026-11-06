@@ -140,4 +140,5 @@ Remote-SSH 会在远程机器上安装 VS Code Server 来搭建开发环境。Le
 - 隐私政策：https://lepons.app/privacy
 - 使用条款：https://lepons.app/terms
 - 支持：https://lepons.app/support
+- 咨询与反馈：欢迎随时发邮件到 [joy981017@gmail.com](mailto:joy981017@gmail.com)，问题、不便或想要的功能都可以。
 - 问题或建议：[Issues](https://github.com/joyuno/lepons/issues)

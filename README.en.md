@@ -140,4 +140,5 @@ Yes. Lepons is an open-source project under the MIT License, and its source code
 - Privacy policy: https://lepons.app/privacy
 - Terms of use: https://lepons.app/terms
 - Support: https://lepons.app/support
+- Questions and feedback: write to [joy981017@gmail.com](mailto:joy981017@gmail.com) about anything, big or small.
 - Problems or ideas: [Issues](https://github.com/joyuno/lepons/issues)

@@ -140,4 +140,5 @@ Remote-SSH는 원격에 VS Code Server를 설치해 개발 환경을 만듭니�
 - 개인정보처리방침: https://lepons.app/privacy
 - 이용약관: https://lepons.app/terms
 - 지원: https://lepons.app/support
+- 문의·피드백: [joy981017@gmail.com](mailto:joy981017@gmail.com)으로 궁금한 점, 불편한 점, 바라는 기능 무엇이든 편하게 보내 주세요.
 - 문제나 제안: [Issues](https://github.com/joyuno/lepons/issues)
