@@ -1,0 +1,50 @@
+# 컨테이너 2개.
+#
+# 맥의 폴더는 하나도 연결하지 않았다. 볼륨은 relay 기록을 담는 logs 하나뿐이고, 맥이 아니라
+# Docker VM 안에 있다. 그래서 "맥의 파일에 접근하지 않는다"를 이 파일만 보고 확인할 수 있다.
+# ports도 두지 않았다. 맥의 8787은 이미 다른 프로세스가 쓰고 있고, 공개 포트가
+# 없어야 CF-Connecting-IP를 믿고 IP당 한도를 적용할 수 있다.
+name: lepons-relay
+
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    environment:
+      GOMEMLIMIT: 96MiB # 128M 한도에 닿기 전에 GC가 먼저 메모리를 회수한다. 강제 종료되는 것보다 잠깐 느려지는 편이 낫다.
+      LOG_DIR: /logs # 기록은 날짜별 파일로 남기고, 14일이 지나면 relay가 지운다(main.go keepLogs).
+    volumes:
+      - logs:/logs
+    networks: [inside]
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    logging: # 기록은 logs 볼륨으로 간다. 여기에는 시작 실패와 panic만 남는다. 그 밖에 죽은 이유는 기록 파일에 있다.
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?relay/.env 파일에 TUNNEL_TOKEN=... 을 넣어 주세요}
+    networks: [inside, out]
+    depends_on: [relay]
+    # 터널 로그는 남기지 않는다. 다시 켜지 말 것. cloudflared는 요청이 실패하면(relay 재시작 중
+    # 등) 방 ID 32자 전체가 든 URL을 남기는데 처리방침은 앞 6자리만 남긴다고 약속한다. 기간으로
+    # 지우는 기능도 없다. 터널 상태와 실시간 로그는 Cloudflare 대시보드(Networks → Tunnels)에서 본다.
+    logging:
+      driver: none
+
+volumes:
+  logs:
+
+networks:
+  inside:
+    internal: true # relay는 외부로 접속할 수 없다. 외부와 통신하는 것은 cloudflared뿐이다.
+  out:

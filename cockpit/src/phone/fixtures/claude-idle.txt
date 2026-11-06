@@ -1,0 +1,20 @@
+ ▐▛███▛█   Claude Code v2.1.308
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   ~\work\scratch
+
+
+❯ Use the AskUserQuestion tool exactly once to ask me which color I like, with the options Red,
+  Green and Blue. After I answer, reply with only the word ANSWER: followed by my answer, nothing
+  else.
+
+● User answered Claude's questions:
+  ⎿  · Which color do you like? → purple
+
+● ANSWER: purple
+
+✻ Brewed for 6s · done 5:33 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts · ← 6 agents                               ◐ medium · /effort

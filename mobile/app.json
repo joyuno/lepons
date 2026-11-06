@@ -1,0 +1,94 @@
+{
+  "expo": {
+    "name": "Lepons",
+    "slug": "lepons",
+    "owner": "joyuno",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "lepons",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#171E26",
+    "ios": {
+      "bundleIdentifier": "app.lepons.mobile",
+      "supportsTablet": false,
+      "entitlements": {
+        "com.apple.developer.usernotifications.time-sensitive": true
+      },
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "locales": {
+      "ko": "./locales/ko.json",
+      "en": "./locales/en.json",
+      "zh-Hans": "./locales/zh.json"
+    },
+    "android": {
+      "package": "app.lepons.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#171E26"
+      },
+      "permissions": ["android.permission.CAMERA", "android.permission.POST_NOTIFICATIONS"],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.VIBRATE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        { "backgroundColor": "#171E26", "image": "./assets/splash-icon.png", "imageWidth": 200 }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "PC 화면의 QR을 찍어 연결해요",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      ["expo-audio", { "microphonePermission": false, "recordAudioAndroid": false, "enableBackgroundPlayback": false }],
+      ["expo-secure-store", { "faceIDPermission": false }],
+      ["expo-notifications", { "defaultChannel": "waiting" }],
+      [
+        "expo-font",
+        {
+          "ios": {
+            "fonts": [
+              "./assets/fonts/Pretendard-Regular.otf",
+              "./assets/fonts/Pretendard-SemiBold.otf",
+              "./assets/fonts/Pretendard-Bold.otf"
+            ]
+          },
+          "android": {
+            "fonts": [
+              {
+                "fontFamily": "Pretendard",
+                "fontDefinitions": [
+                  { "path": "./assets/fonts/Pretendard-Regular.otf", "weight": 400 },
+                  { "path": "./assets/fonts/Pretendard-SemiBold.otf", "weight": 600 },
+                  { "path": "./assets/fonts/Pretendard-Bold.otf", "weight": 700 }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "eas": { "projectId": "0b739dbd-9fb1-4ba9-9e57-88e5013c32b9" }
+    }
+  }
+}

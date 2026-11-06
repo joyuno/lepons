@@ -1,0 +1,101 @@
+{
+  "name": "lepons-cockpit",
+  "version": "1.9.3",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Lepons cockpit: SSH session management for Lepons nodes",
+  "scripts": {
+    "test": "node --test --test-force-exit \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.phone.json",
+    "build": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "dist:win": "node build.mjs && electron-builder --win && node make-patch.mjs && node prune-release.mjs",
+    "dist:mac": "node build.mjs && electron-builder --mac && node make-patch.mjs && node prune-release.mjs",
+    "postinstall": "node -e \"for (const arch of ['arm64', 'x64']) try { require('fs').chmodSync('node_modules/node-pty/prebuilds/darwin-' + arch + '/spawn-helper', 0o755) } catch {}\""
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/language-data": "^6.5.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.5",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "codemirror": "^6.0.2",
+    "d3-force": "^3.0.0",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.0.11",
+    "node-pty": "^1.1.0",
+    "qrcode": "^1.5.4",
+    "ssh2": "^1.17.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/ssh2": "^1.15.5",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "material-icon-theme": "^5.39.0",
+    "typescript": "^7.0.2"
+  },
+  "main": "dist/main.cjs",
+  "build": {
+    "appId": "com.lepons.cockpit",
+    "productName": "Lepons Cockpit",
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/node-pty/**/*",
+      "node_modules/ssh2/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "Needed to connect over SSH to PCs on the same network (router).",
+        "NSDocumentsFolderUsageDescription": "Needed to open projects in your Documents folder and let agents edit their files.",
+        "NSDesktopFolderUsageDescription": "Needed to open projects on your Desktop and let agents edit their files.",
+        "NSDownloadsFolderUsageDescription": "Needed to open projects in your Downloads folder and let agents edit their files."
+      },
+      "extraResources": [
+        {
+          "from": "build/mac-strings"
+        },
+        {
+          "from": "build/mac-strings/zh-Hans.lproj",
+          "to": "zh_CN.lproj"
+        }
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "artifactName": "Lepons-Cockpit-Setup-${version}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "ko_KR",
+        "en_US",
+        "zh_CN"
+      ],
+      "multiLanguageInstaller": true,
+      "displayLanguageSelector": true
+    }
+  }
+}

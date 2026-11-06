@@ -1,0 +1,4 @@
+"NSLocalNetworkUsageDescription" = "需要此权限才能通过 SSH 连接同一网络（路由器）中的电脑。";
+"NSDocumentsFolderUsageDescription" = "需要此权限才能打开“文稿”文件夹中的项目，并让代理修改其中的文件。";
+"NSDesktopFolderUsageDescription" = "需要此权限才能打开“桌面”文件夹中的项目，并让代理修改其中的文件。";
+"NSDownloadsFolderUsageDescription" = "需要此权限才能打开“下载”文件夹中的项目，并让代理修改其中的文件。";

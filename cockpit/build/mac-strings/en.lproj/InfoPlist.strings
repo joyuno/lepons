@@ -1,0 +1,4 @@
+"NSLocalNetworkUsageDescription" = "Needed to connect over SSH to PCs on the same network (router).";
+"NSDocumentsFolderUsageDescription" = "Needed to open projects in your Documents folder and let agents edit their files.";
+"NSDesktopFolderUsageDescription" = "Needed to open projects on your Desktop and let agents edit their files.";
+"NSDownloadsFolderUsageDescription" = "Needed to open projects in your Downloads folder and let agents edit their files.";

@@ -1,0 +1,1797 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src data: 'self'; frame-src data:"
+    />
+    <title>Lepons</title>
+    <link rel="stylesheet" href="renderer.css" />
+    <style>
+      /*
+        A cockpit for machines, so the surface is an instrument panel rather
+        than a terminal chrome: a cool slate ground with one warm signal colour.
+        Amber is spent only on things that are live; everything else stays
+        quiet, so a running session is the first thing the eye finds.
+      */
+
+      /* Pretendard carries Korean + Latin (rail, dialogs, guide prose).
+         Noto Sans SC is subsetted to just the glyphs the zh dictionary uses —
+         arbitrary Chinese text outside that fixed vocabulary still falls
+         back to the OS font, same as before this stack existed. */
+      @font-face {
+        font-family: "Pretendard Variable";
+        src: url("fonts/PretendardVariable.woff2") format("woff2");
+        font-weight: 45 920;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Noto Sans SC";
+        src: url("fonts/NotoSansSC-Subset.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      /* Code fonts the settings offer, bundled so a pick works on any PC.
+         D2Coding ships no bold and no woff2: bold is synthesized. */
+      @font-face {
+        font-family: "D2Coding";
+        src: url("fonts/D2Coding.ttf") format("truetype");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2");
+        font-weight: 700;
+        font-style: normal;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Fira Code";
+        src: url("fonts/FiraCode-VF.woff2") format("woff2");
+        font-weight: 300 700;
+        font-style: normal;
+        font-display: swap;
+      }
+      :root {
+        /* The rail's head and the bar over the panes: one height, so they line up. */
+        --topBar: 32px;
+        --ground: #11161d;
+        --panel: #171e26;
+        --raise: #1e2731;
+        --line: #232d38;
+        /* Canvas dots: visible enough to read as a pannable board, faint
+           enough that the graph on top stays the subject. */
+        --grid: rgba(123, 135, 150, .22);
+        --text: #cdd6e0;
+        --muted: #7b8796;
+        --dim: #55606d;
+        --idle: #3a4552;
+        --live: #e8a33d;
+        --live-dim: #5a4526;
+        --link: #5fb3c4;
+        --go: #3fb950;
+        --stop: #ec5d5e;
+        --scroll: #2c3742;
+        --scroll-hover: #3a4753;
+        --rail: 244px;
+        /* How things move: one curve, three durations. motion.ts holds the same values. */
+        --ease: cubic-bezier(0.2, 0, 0, 1);
+        --t-fast: 120ms;
+        --t-mid: 220ms;
+        --t-slow: 360ms;
+        --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+        --sans:
+          "Pretendard Variable", "Noto Sans SC", "Segoe UI Variable Text", "Segoe UI",
+          system-ui, sans-serif;
+      }
+      /* Same instrument panel, lit from the front instead of the back --
+         every surface and accent flips, the layout and spacing don't. */
+      :root[data-theme="light"] {
+        /* Soft grey, not paper white: the rail and dialogs sit a step darker
+           than the work area, as VS Code's Light Modern and Linear do, so the
+           window has depth without one large white field. */
+        --ground: #f3f4f6;
+        --panel: #e9ebef;
+        --raise: #dfe2e7;
+        --line: #d2d6dc;
+        --grid: rgba(107, 117, 128, .28);
+        --text: #1f2328;
+        --muted: #59636e;
+        --dim: #8c959f;
+        --idle: #b6bec7;
+        --live: #b8720f;
+        --live-dim: #e8c99a;
+        --link: #2f7c8a;
+        --go: #1a7f37;
+        --stop: #dc3e42;
+        --scroll: #c9ced4;
+        --scroll-hover: #b3bac2;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0; display: flex; background: var(--ground); color: var(--text);
+        font: 13px/1.55 var(--sans); overflow: hidden;
+      }
+      button { font: inherit; color: inherit; }
+      :focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+
+      /* Scrollbars, everywhere at once.
+         Left unstyled, Chromium draws the platform's own -- which on this
+         Windows build is the wide grey one from a decade ago, sitting inside
+         a dark instrument panel. These rules are global rather than per-pane
+         so a scrolling surface added later cannot forget to match: the rail,
+         both boards, the guide, the dialog lists and xterm's viewport all
+         inherit them without naming any of them. */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: var(--scroll) transparent;
+      }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: var(--scroll); border-radius: 6px;
+        /* The border is transparent padding, not a frame: it keeps the thumb
+           off the pane edge without a second colour to keep in step. */
+        border: 2px solid transparent; background-clip: content-box;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: content-box; }
+      /* Where two scrollbars meet; unstyled it is a pale square. */
+      ::-webkit-scrollbar-corner { background: transparent; }
+
+      /* --- rail ------------------------------------------------------- */
+      #rail {
+        width: var(--rail); flex: 0 0 var(--rail); background: var(--panel);
+        border-right: 1px solid var(--line); display: flex; flex-direction: column;
+        transition: width var(--t-fast) var(--ease), flex-basis var(--t-fast) var(--ease); overflow: hidden; position: relative;
+      }
+      body.railCollapsed #rail { width: 42px; flex-basis: 42px; }
+      /* The rail's right edge, dragged to set its width. */
+      #railEdge { position: absolute; top: 0; right: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 2; }
+      #railEdge:hover, body.railDragging #railEdge { background: var(--line); }
+      body.railDragging #rail { transition: none; }
+      body.railCollapsed #railEdge { display: none; }
+      body.railCollapsed #phoneButton,
+      body.railCollapsed .railTabs,
+      body.railCollapsed #workspaces,
+      body.railCollapsed .railFoot { display: none; }
+      /* Collapsed, ⚙ stays: settings are the way back to everything else. It stacks over the toggle. */
+      body.railCollapsed .railHead { padding: 12px 0 8px; flex-direction: column; justify-content: center; }
+      .railHead {
+        padding: 10px 10px 6px 10px; color: var(--muted);
+        display: flex; align-items: center; gap: 2px;
+      }
+      /* 14px in and 2px down from the window's corner: at 10px and 0 the ⚙ looked about to be cut by the frame. */
+      body:not(.railCollapsed) .railHead { height: var(--topBar); padding: 2px 10px 0 14px; }
+      /* The empty middle of the head: what the window is dragged by. */
+      .railDrag { flex: 1; align-self: stretch; }
+      .railTabs { display: flex; gap: 4px; margin-top: 4px; }
+      #usageBar {
+        display: flex; align-items: center; gap: 4px; padding: 0 10px 4px;
+        font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+      }
+      #usageBar[hidden] { display: none; }
+      #usageText { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 3px 12px; }
+      #usageText.off { opacity: .7; }
+      #usageText.stacked { flex-direction: column; align-items: flex-start; }
+      .usageGroup { display: inline-flex; align-items: center; gap: 7px; }
+      .usageAgent { font-weight: 600; font-size: 10.5px; min-width: 42px; }
+      .usageAgent.claude { color: var(--live); }
+      .usageAgent.codex { color: var(--link); }
+      .usageAgent.agy { color: var(--muted); }
+      .usageItem { display: inline-flex; align-items: center; gap: 3px; cursor: default; }
+      .usageWindow { color: var(--dim); font-size: 9.5px; }
+      /* Five cells in a body with a nub, filled from the left. */
+      .battery {
+        position: relative; display: inline-flex; gap: 1px; padding: 1px;
+        border: 1px solid var(--muted); border-radius: 2px; margin-right: 2px;
+      }
+      .battery::after {
+        content: ""; position: absolute; right: -3px; top: 2px; width: 2px; height: 3px;
+        background: var(--muted); border-radius: 0 1px 1px 0;
+      }
+      .battery i { width: 3px; height: 5px; border-radius: 1px; background: transparent; transform-origin: left; }
+      .battery.ok i.full { background: var(--go); }
+      .battery.low i.full { background: var(--live); }
+      .battery.out i.full { background: var(--stop); }
+      /* A chevron like VS Code's section headers: down folds it away, up brings it back. */
+      #usageToggle { display: inline-flex; align-self: flex-start; padding: 1px; margin-left: -4px; }
+      .railTabs .railBtn { flex: 1; text-align: center; padding: 6px 4px; }
+      #railToggle {
+        border: 0; background: none; color: var(--muted); cursor: pointer;
+        font-size: 12px; padding: 2px 7px; border-radius: 4px; letter-spacing: 0;
+      }
+      #railToggle:hover { background: var(--raise); color: var(--text); }
+      #workspaces { flex: 1; overflow-y: auto; padding-bottom: 8px; }
+      /* A machine's folders hang off a guide line, indented under it, and a
+         rule parts one machine from the next. Without them a heading in the
+         same grey as the rows read as one more row, and nothing said where
+         one machine's folders ended. The active row's amber edge lands on the
+         guide, so the selection still reads as the folder's own marker. */
+      .machine { position: relative; padding: 0 0 6px 12px; }
+      .machine + .machine { border-top: 1px solid var(--line); }
+      .machine::before {
+        content: ""; position: absolute; left: 12px; top: 32px; bottom: 10px;
+        border-left: 1px solid var(--idle);
+      }
+      .machine .ws { padding-left: 14px; }
+      .machineHead {
+        display: flex; align-items: center; gap: 8px; padding: 10px 18px 5px;
+        margin-left: -12px;
+        font-family: var(--sans); font-size: 10.5px; font-weight: 600; color: var(--text);
+      }
+      .machineHead .name {
+        flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .iconBtn {
+        border: 0; background: none; color: var(--muted); cursor: pointer;
+        padding: 0 3px; line-height: 1; font-size: 13px; border-radius: 3px;
+      }
+      .iconBtn:hover { color: var(--text); background: var(--raise); }
+      /* The folder row's two controls -- settings and the file list -- are
+         things to hit, not marks to notice: 13px glyphs were a hunt. */
+      .ws .iconBtn { font-size: 17px; padding: 4px 5px; border-radius: 4px; }
+      .ws .agentTag { margin-right: 6px; font-size: 9px; padding: 0 4px; }
+      .iconBtn.on { color: var(--live); }
+      .ws {
+        display: flex; align-items: center; gap: 9px; width: 100%;
+        padding: 7px 18px 7px 18px; border: 0; border-left: 2px solid transparent;
+        background: none; text-align: left; cursor: pointer;
+      }
+      .ws:hover { background: var(--raise); }
+      /* Where a dragged folder or machine will land. */
+      .dropBefore { box-shadow: inset 0 2px 0 var(--live); }
+      .dropAfter { box-shadow: inset 0 -2px 0 var(--live); }
+      .ws.active { background: var(--raise); border-left-color: var(--live); }
+      .lamp {
+        width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px;
+        background: var(--idle);
+        padding: 0; border: 0; appearance: none;
+      }
+      /* Live is green, the colour of a go; connecting is amber, the colour of
+         on-its-way. The traffic-light reading people already have, rather than
+         amber meaning both "live" and "selected" at once. */
+      .lamp.live { background: var(--go); box-shadow: 0 0 0 3px color-mix(in srgb, var(--go) 18%, transparent); }
+      .lamp.wait { background: var(--live); }
+      @keyframes lampBreathe { 50% { opacity: .35; } }
+      /* Barely there, and with its own curve: a breath has no end to arrive at,
+         and --ease would make it a blink. */
+      @keyframes lampWorking { 50% { opacity: .72; } }
+      .lamp.stop { background: var(--stop); }
+      /* A running lamp is the stop control; an idle one connects. */
+      button.lamp { cursor: pointer; }
+      button.lamp:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--go) 35%, transparent); }
+      button.lamp.stoppable:hover,
+      button.lamp.stoppable:focus-visible {
+        box-shadow: 0 0 0 3px var(--stop); background: var(--stop);
+      }
+      /* One vocabulary for every lamp and the phone's dots (shared/status.ts):
+         working breathes green, waiting is amber, done green, failed red, idle grey,
+         and a hollow ring: the terminal is up, the AI in it has gone.
+         A PC's lamp: live green, connecting amber, failed red, off grey. */
+      .lamp[data-status="working"] { background: var(--go); animation: lampWorking 2.4s ease-in-out infinite; }
+      .lamp[data-status="done"], .lamp[data-status="live"] { background: var(--go); box-shadow: 0 0 0 3px color-mix(in srgb, var(--go) 18%, transparent); }
+      .lamp[data-status="waiting"] { background: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent); }
+      .lamp[data-status="connecting"] { background: var(--live); }
+      .lamp[data-status="failed"] { background: var(--stop); }
+      .lamp[data-status="shellOnly"] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+      .paneHeader .lamp { margin-right: 6px; }
+
+      /* The row's actions stay out of the way until the row is pointed at or
+         focused. They were all permanently visible, which made a list of
+         folders read as a wall of icons. Out of the layout, not just out of
+         sight: hidden but still sized, they kept the name from the width it
+         could use. :focus-within and not :hover alone, or they would be
+         unreachable by keyboard -- focusing the row shows them, and Tab
+         moves on into them. */
+      .ws .iconBtn, .machineHead .iconBtn { display: none; }
+      .ws:hover .iconBtn, .ws:focus-within .iconBtn,
+      .machineHead:hover .iconBtn, .machineHead:focus-within .iconBtn { display: inline-block; }
+      /* Cleanup mode: a picked row is tinted and barred in the stop colour;
+         the row's own buttons step aside so a click only picks. */
+      .machine .ws.pickable .iconBtn, .machine .ws.pickable .treeToggle { visibility: hidden; }
+      .ws.pickable button { pointer-events: none; }
+      .ws.picked, .ws.picked.active { background: color-mix(in srgb, var(--stop) 10%, transparent); border-left-color: var(--stop); }
+      .ws.picked:hover { background: color-mix(in srgb, var(--stop) 16%, transparent); }
+      .machineHead .iconBtn.cleaning { display: inline-block; color: var(--stop); }
+      .iconBtn .lucide { margin-right: 0; vertical-align: -2px; }
+      .pickBar {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+        margin: 4px 12px 2px 2px; font-size: 11px;
+      }
+      .pickHint { flex: 1 0 100%; color: var(--muted); }
+      .pickBar button {
+        border: 1px solid var(--line); background: var(--raise); color: var(--text);
+        padding: 3px 9px; border-radius: 5px; font: inherit; cursor: pointer;
+      }
+      .pickBar .pickRemove { flex: 1; border-color: transparent; background: var(--stop); color: #fff; }
+      .pickBar .pickRemove:hover:not(:disabled) { background: color-mix(in srgb, var(--stop) 85%, #000); }
+      .pickBar .pickRemove:disabled { opacity: .4; cursor: default; }
+      .pickBar .pickCancel:hover { border-color: var(--muted); }
+      /* A pin whose PC is off or cut off: still there, a click away from connecting. */
+      .ws.offline { opacity: .5; }
+      /* The PC list's own head, where the PC 관리 edit mode is switched. */
+      .railListHead {
+        display: flex; align-items: center; gap: 8px; padding: 10px 18px 5px;
+        font-family: var(--sans); font-size: 10.5px; font-weight: 600; color: var(--muted);
+      }
+      .railListHead .name { flex: 1; }
+      .machine + .railListHead { border-top: 1px solid var(--line); }
+      .machineHead.managing .iconBtn, .railListHead .iconBtn { display: inline-block; }
+      .grip { cursor: grab; color: var(--muted); }
+      .machineHead > .lamp { margin-right: 2px; }
+      .reconnectBtn { padding: 1px 8px; font-size: 11px; border-radius: 10px; border: 1px solid var(--stop); color: var(--stop); background: transparent; cursor: pointer; }
+      .reconnectBtn:hover { background: color-mix(in srgb, var(--stop) 12%, transparent); }
+      .autoConnect { display: flex; align-items: center; gap: 6px; padding: 2px 12px 4px 28px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+      .wsText { flex: 1; min-width: 0; }
+      .wsName {
+        display: block; font-size: 12.5px; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      /* Two lines before the ellipsis, here and on every preview surface --
+         one clipped line hid too much before the hover ever happened. */
+      .wsMeta {
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+        font-size: 10.5px; color: var(--muted);
+        overflow: hidden; word-break: break-word;
+      }
+      /* A session waiting on the operator gets a dot, not a color change on
+         the lamp -- the lamp is connection state, this is "your turn". The
+         name turns bold and the dot follows it, where a notification badge
+         sits in a chat list -- before the name it read as part of the name. */
+      .wsTitle { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .ws.waiting .wsName { font-weight: 600; }
+      .shareBadge { flex: none; font-size: 10px; font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .waitingDot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+      .railFoot { border-top: 1px solid var(--line); padding: 8px; }
+      #settingsButton .lucide { margin: 0; vertical-align: -2px; }
+      .railBtn {
+        display: block; width: 100%; text-align: left; border: 0; background: none;
+        color: var(--muted); padding: 7px 10px; border-radius: 5px; cursor: pointer;
+        font-size: 12px;
+      }
+      .railBtn:hover { background: var(--raise); color: var(--text); }
+      .railBtn[hidden] { display: none; }
+      .railBtn.primary { color: var(--text); }
+      .railBtn.on { color: var(--live); background: var(--raise); }
+      /* With no OS title bar the rail's head is what the window is dragged
+         by -- and double-clicked to maximize, right-clicked for the window
+         menu, the way a title bar is. Its toggle opts back out, or it would
+         stop receiving clicks at all. */
+      body.frameless .railHead {
+        -webkit-app-region: drag; app-region: drag; user-select: none;
+      }
+      body.frameless .railHead button {
+        -webkit-app-region: no-drag; app-region: no-drag;
+      }
+      /* macOS keeps its traffic lights in the head's left corner (12px in,
+         three 14px lights with 6px between, then room): the head's own buttons
+         start after them. Collapsed, the rail widens to hold them and the
+         toggle drops below. Full screen moves them into the menu bar, so the
+         corner is given back. Double-clicking the head does what the
+         system's "double-click a title bar" setting says, as a Mac title bar does. */
+      body.trafficLights .railHead { padding-left: 82px; }
+      body.trafficLights.railCollapsed #rail { width: 82px; flex-basis: 82px; }
+      body.trafficLights.railCollapsed .railHead { padding: 30px 0 8px; }
+      body.trafficLights.fullScreen .railHead { padding-left: 10px; }
+      body.trafficLights.fullScreen.railCollapsed #rail { width: 42px; flex-basis: 42px; }
+      body.trafficLights.fullScreen.railCollapsed .railHead { padding-top: 12px; }
+      body.railCollapsed .railDrag { display: none; }
+      .railIconBtn {
+        flex: 0 0 auto; border: 0; background: none; color: var(--muted); cursor: pointer;
+        padding: 7px 9px; border-radius: 5px; font-size: 13px;
+      }
+      .railIconBtn:hover { background: var(--raise); color: var(--text); }
+
+      /* --- main ------------------------------------------------------- */
+      main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+      /* One thin bar over the panes (and the map, guide and workflow), as
+         tall as the rail's head so their bottoms line up: its empty space
+         drags the window, and at its right end sit the split buttons, then,
+         on Windows and Linux with no OS frame, the usual ─ □ ✕. */
+      #titleBar { display: flex; align-items: center; height: var(--topBar); flex: 0 0 var(--topBar); }
+      body:not(.winControls) #winControls { display: none; }
+      .titleDrag { flex: 1; align-self: stretch; -webkit-app-region: drag; app-region: drag; }
+      #titleBar .paneBtn { width: 28px; height: 24px; margin: 0 2px; -webkit-app-region: no-drag; app-region: no-drag; }
+      #titleBar .paneBtn .splitIcon { vertical-align: middle; }
+      #winControls { display: flex; align-self: stretch; margin-left: 6px; -webkit-app-region: no-drag; app-region: no-drag; }
+      #winControls button {
+        width: 46px; padding: 0; border: 0; border-radius: 0; background: none; color: var(--muted);
+        font-size: 12px; cursor: pointer;
+      }
+      #winControls button:hover { background: var(--line); color: var(--text); }
+      #winControls #winClose:hover { background: var(--stop); color: #fff; }
+      /* Positioned so the zoom bar can sit over a view without being inside
+         it -- a control parked in a scrolling pane scrolls away with it. */
+      #contentRow { flex: 1; display: flex; min-height: 0; position: relative; }
+      #zoomBar {
+        position: absolute; right: 18px; bottom: 18px; z-index: 5;
+        display: flex; align-items: center; gap: 2px; padding: 3px;
+        border: 1px solid var(--line); border-radius: 8px;
+        background: color-mix(in srgb, var(--panel) 80%, transparent); backdrop-filter: blur(6px);
+        opacity: .55; transition: opacity var(--t-fast) var(--ease);
+      }
+      /* Same cascade gotcha as #terminal above: this rule's own `display: flex`
+         wins over the `[hidden]` UA default, so showView()'s zoomBar.hidden = true
+         never actually hid it on Terminal/Guide views without this override. */
+      #zoomBar[hidden] { display: none; }
+      #zoomBar:hover { opacity: 1; }
+      #zoomBar button {
+        padding: 0; border: 0; background: none; color: var(--muted); cursor: pointer;
+        width: 26px; height: 24px; border-radius: 5px; font-size: 14px; line-height: 1;
+      }
+      #zoomBar button:hover { background: var(--raise); color: var(--text); }
+      #zoomPct {
+        min-width: 46px; text-align: center; font-family: var(--sans); font-variant-numeric: tabular-nums;
+        font-size: 11px; color: var(--muted); user-select: none;
+      }
+      /* Flex items default to min-width:auto, not 0 -- without this, a
+         flex item never shrinks below its content's intrinsic width (here,
+         xterm's internal .xterm-screen element, which carries an explicit
+         pixel width from the last fit() call). That silently never mattered
+         before #workflowPanel existed as a sibling actually competing for
+         the row's width. */
+      #terminal { flex: 1; min-height: 0; min-width: 0; display: flex; }
+      /* Setting `display` in an author rule always wins over the browser's
+         own `[hidden] { display:none }` (a lower-priority UA-origin style),
+         regardless of selector specificity -- without this override,
+         showView()'s terminalPanel.hidden = true stopped visually hiding
+         #terminal the moment it gained an explicit `display` above, and
+         Map/Guide view silently lost half their width to an invisible,
+         still-laid-out terminal pane. */
+      #terminal[hidden] { display: none; }
+      .paneSplit { display: flex; flex: 1; min-height: 0; min-width: 0; gap: 6px; padding: 6px; }
+      .paneLeaf {
+        flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column;
+        border: 1px solid transparent; border-radius: 6px; overflow: hidden;
+      }
+      .paneLeaf.focused { border-color: var(--live); }
+      .paneHeader, .paneTabs {
+        background: var(--panel); border-bottom: 1px solid var(--line);
+        font-family: var(--sans); font-size: 10.5px; color: var(--muted);
+      }
+      .paneHeader { flex: 0 0 24px; display: flex; align-items: center; padding: 0 8px; user-select: none; }
+      .paneHeader.movable { cursor: grab; }
+      /* A 2px band across the top, one colour per project; inset, so no size changes. */
+      .paneHeader { --band-l: 58%; box-shadow: inset 0 2px 0 hsl(var(--band-h, 0) 65% var(--band-l) / var(--band-a, 0)); }
+      .paneHeader[style*="--band-h"] { --band-a: 1; }
+      :root[data-theme="light"] .paneHeader { --band-l: 42%; }
+      /* The name takes what the buttons leave, and gives way first: buttons keep their size and their one line. */
+      .paneHeader .name { flex: 1 1 auto; min-width: 2em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 6px; }
+      .paneHeader .paneBtn { flex-shrink: 0; white-space: nowrap; }
+      /* The tab row under the head; positioned so a tab's offsetLeft counts from here. */
+      .paneTabs { flex: 0 0 22px; position: relative; display: flex; overflow-x: auto; scrollbar-width: none; }
+      .paneTab {
+        flex: 0 1 auto; min-width: 4em; max-width: 14em; display: flex; align-items: center; gap: 4px;
+        border: 0; border-right: 1px solid var(--line); background: none; color: var(--muted);
+        font: inherit; padding: 0 6px; cursor: pointer;
+      }
+      .paneTab.shown { color: var(--text); background: var(--ground); }
+      /* One per strip, moved by main.ts showTabsMoved: amber where typing goes. */
+      .tabInk { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--muted); pointer-events: none; }
+      .paneLeaf.focused .tabInk { background: var(--live); }
+      /* A closed tab, for the moment its width goes. */
+      .paneTab.tabGhost { flex: none; min-width: 0; overflow: hidden; white-space: nowrap; pointer-events: none; }
+      .paneTab .tabName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .paneTab.dirty .tabName::before { content: "● "; color: var(--live); }
+      .paneTab.attention .tabName { color: var(--live); }
+      .paneTab .tabClose { opacity: 0; padding: 0 2px; border-radius: 3px; }
+      .paneTab:hover .tabClose, .paneTab.shown .tabClose { opacity: 1; }
+      .paneTab .tabClose:hover { background: var(--raise); color: var(--text); }
+      /* `.fileOverlay { display: flex }` beats the UA [hidden] rule, so a hidden
+         tab's overlay stayed on screen. Invisible, not display:none: the frame keeps painting. */
+      .fileOverlay[hidden] { visibility: hidden; }
+      /* Overlays sit above the panes (z-index 4): see-through while dragging, so the zone marks and messages below show. */
+      #terminal.tabDragging ~ .fileOverlay { pointer-events: none; opacity: .4; }
+      #terminal.tabDragging .paneLeaf { position: relative; }
+      /* No hover tip mid-drag: the drop rebuilds the head, and a tip whose name is gone never hears the pointer leave. */
+      #terminal.tabDragging .paneHeader .name { pointer-events: none; }
+      #terminal.tabDragging .paneLeaf.dropOk { border-color: var(--link); }
+      #terminal.tabDragging .paneLeaf.dropDenied, #terminal.tabDragging .paneLeaf.dragSource { opacity: .45; }
+      #terminal.tabDragging .paneLeaf[data-denied]:not([data-denied=""])::after {
+        content: attr(data-denied); position: absolute; z-index: 5; inset: auto 8px 8px 8px; text-align: center;
+        font-size: 11.5px; color: var(--text); background: var(--panel); border-radius: 6px; padding: 6px;
+      }
+      /* Where the tab would go, drawn over the pane and its file (z-index 5 > 4): the
+         whole pane to join it, its right or bottom quarter to split off there. */
+      #terminal.tabDragging .paneLeaf:not([data-zone=""])[data-zone]::before {
+        content: ""; position: absolute; inset: 0; z-index: 5; pointer-events: none; border-radius: 6px;
+        border: 2px solid var(--link); background: color-mix(in srgb, var(--link) 18%, transparent);
+      }
+      #terminal.tabDragging .paneLeaf[data-zone="right"]:not([data-zone=""])::before { left: var(--dropEdge, 75%); }
+      #terminal.tabDragging .paneLeaf[data-zone="bottom"]:not([data-zone=""])::before { top: var(--dropEdge, 75%); }
+      /* A project from the rail gets all four edges, and shows the half its new pane takes. */
+      #terminal.projectDragging { --dropEdge: 50%; }
+      #terminal.tabDragging .paneLeaf[data-zone="left"]:not([data-zone=""])::before { right: var(--dropEdge); }
+      #terminal.tabDragging .paneLeaf[data-zone="top"]:not([data-zone=""])::before { bottom: var(--dropEdge); }
+      .paneBtn {
+        border: 0; background: none; color: var(--muted); cursor: pointer;
+        padding: 0 4px; line-height: 1; font-size: 11px; border-radius: 3px; margin-left: 2px;
+      }
+      .paneBtn:hover { color: var(--text); background: var(--raise); }
+      .paneBtn:disabled { opacity: .35; cursor: default; background: none; color: var(--muted); }
+      .paneHandle { flex: 0 0 auto; background: transparent; }
+      /* One pane zoomed: everything else in the layout steps aside, kept as it was. */
+      #terminal.zoomed .paneLeaf:not(.zoomed), #terminal.zoomed .paneHandle,
+      #terminal.zoomed .paneSplit:not(:has(.zoomed)) { display: none; }
+      /* A pane opening or closing, for the moment it moves (main.ts movePanes). */
+      #terminal.panesMoving { position: relative; }
+      #terminal.panesMoving .paneLeaf { position: absolute; }
+      #terminal.panesMoving .paneHandle { visibility: hidden; }
+      .paneDivider { position: absolute; z-index: 5; pointer-events: none; background: var(--muted); }
+      .paneHandle-row { width: 6px; cursor: col-resize; }
+      .paneHandle-column { height: 6px; cursor: row-resize; }
+      .paneHandle:hover { background: var(--line); }
+      .paneSlot { flex: 1; min-height: 0; padding: 4px 6px 6px; }
+      /* Why this session is not running, over its terminal. */
+      .paneSlot.noted { display: flex; flex-direction: column; gap: 8px; }
+      .paneSlot.noted > :last-child { flex: 1; min-height: 0; }
+      .sessionNote { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
+      .sessionNote button { padding: 5px 10px; border-radius: 5px; border: 1px solid var(--line); background: var(--raise); cursor: pointer; }
+      /* An empty or stopped pane's message, centred over it: text, then buttons. */
+      .paneSlot { position: relative; }
+      /* A pane smaller than a split would allow, after the window shrank. */
+      .paneSlot.tooSmall::after {
+        content: attr(data-small); position: absolute; right: 8px; bottom: 6px; z-index: 2; pointer-events: none;
+        padding: 2px 7px; border-radius: 4px; background: var(--panel); border: 1px solid var(--line);
+        font-family: var(--sans); font-size: 10.5px; color: var(--muted);
+      }
+      .paneMessage {
+        position: absolute; inset: 0; z-index: 1; background: var(--ground);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        padding: 24px; text-align: center;
+      }
+      .paneMessage p { max-width: 46ch; margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+      .paneMessage .row { margin-top: 14px; justify-content: center; }
+      .paneMessage .row button { flex: none; padding: 7px 16px; }
+      .paneMessage .row button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      #map, #guide { flex: 1; min-height: 0; min-width: 0; overflow: auto; position: relative; }
+      /* The title bar's "확인 필요 n": opens the workflow map on the next waiting session. */
+      .wmPill {
+        height: 22px; margin: 0 6px; padding: 0 10px; border-radius: 11px; cursor: pointer;
+        border: 1px solid color-mix(in srgb, var(--live) 55%, transparent);
+        background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live);
+        font-size: 11.5px; font-weight: 600; -webkit-app-region: no-drag; app-region: no-drag;
+      }
+      .wmPill[hidden] { display: none; }
+      #workflow { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; background: var(--ground); }
+      /* --- the workflow map (workflowmap/): a canvas with its strip, zoom bar,
+         focus bar and right panel over it. Every colour is a theme variable:
+         the canvas reads the same ones (paint.ts themeFrom). */
+      .wmCanvas { position: absolute; inset: 0; display: block; touch-action: none; }
+      .wmCanvas.grab { cursor: grabbing; }
+      .wmStrip {
+        position: absolute; left: 0; right: 0; top: 0; height: 44px; z-index: 2;
+        display: flex; align-items: center; gap: 12px; padding: 0 14px;
+        background: color-mix(in srgb, var(--ground) 88%, transparent); border-bottom: 1px solid var(--line);
+        backdrop-filter: blur(6px);
+      }
+      .wmCrumb { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+      .wmCrumb b { color: var(--text); font-weight: 650; }
+      .wmCrumb i { font-style: normal; margin: 0 6px; color: var(--dim); }
+      .wmNeedBox { position: relative; flex: none; }
+      .wmNeed {
+        display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 11px; border-radius: 13px; cursor: pointer;
+        border: 1px solid color-mix(in srgb, var(--live) 55%, transparent);
+        background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-weight: 650; font-size: 12.5px;
+      }
+      .wmNeedN {
+        display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+        background: var(--live); color: var(--ground); font-size: 11px; font-weight: 700;
+      }
+      .wmNeedList {
+        position: absolute; top: 32px; left: 0; z-index: 5; min-width: 280px; margin: 0; padding: 6px; list-style: none;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .45);
+      }
+      .wmNeedList[hidden] { display: none; }
+      .wmNeedItem { display: grid; grid-template-columns: 14px 1fr; column-gap: 6px; width: 100%; padding: 7px 8px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; align-items: center; }
+      .wmNeedItem:hover, .wmNeedItem:focus-visible { background: var(--raise); }
+      .wmNeedList li.none { padding: 7px 8px; color: var(--muted); }
+      .wmNeedList small { grid-column: 2; color: var(--muted); font-size: 11.5px; }
+      .wmSum { display: flex; gap: 14px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+      .wmSum b { color: var(--text); font-weight: 700; margin-left: 2px; }
+      .wmSum .work b { color: var(--go); }
+      .wmSp { flex: 1; }
+      .wmTog {
+        display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12.5px; white-space: nowrap;
+      }
+      .wmTog.on { color: var(--go); border-color: color-mix(in srgb, var(--go) 55%, transparent); background: color-mix(in srgb, var(--go) 12%, transparent); }
+      .wmTog.on::before { content: ""; width: 6px; height: 6px; border-radius: 3px; background: var(--go); }
+      .wmZoom {
+        position: absolute; left: 14px; top: 58px; z-index: 2; display: flex; align-items: center; height: 30px; padding: 0 4px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      }
+      .wmZoom button { width: 26px; height: 24px; border: 0; background: none; border-radius: 5px; color: var(--text); font-size: 16px; line-height: 1; cursor: pointer; }
+      .wmZoom button:hover { background: var(--raise); }
+      .wmPct { min-width: 44px; text-align: center; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; user-select: none; }
+      .wmFocus {
+        position: absolute; left: 14px; top: 98px; z-index: 2; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 6px 0 12px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: var(--muted);
+      }
+      .wmFocus[hidden] { display: none; }
+      .wmFocus b { color: var(--text); }
+      .wmFocusBack { display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; cursor: pointer; padding: 3px 6px; border-radius: 6px; color: var(--text); }
+      .wmFocusBack:hover { background: var(--raise); }
+      .wmFocus kbd { font: 600 10.5px var(--mono); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--muted); }
+      .wmEmpty { position: absolute; left: 0; right: 0; top: 50%; text-align: center; color: var(--muted); font-size: 12.5px; }
+      .wmEmpty[hidden] { display: none; }
+      /* The right panel: summary card first, then the step list. */
+      .wmPanel {
+        position: absolute; top: 52px; right: 8px; bottom: 8px; width: 360px; z-index: 3; display: flex; flex-direction: column;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+        box-shadow: 0 10px 30px -10px rgba(0, 0, 0, .45);
+      }
+      .wmPanel[hidden] { display: none; }
+      .wmPanel .ph { display: flex; gap: 12px; align-items: flex-start; padding: 16px 16px 12px; }
+      .wmPanel .av { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; background: var(--raise); border: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+      .wmPanel .phT { flex: 1; min-width: 0; }
+      .wmPanel .pt { font-size: 15px; font-weight: 700; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wmPanel .ps { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+      .wmPanel .close { flex: none; border: 0; background: none; color: var(--muted); font-size: 14px; width: 26px; height: 26px; border-radius: 6px; cursor: pointer; }
+      .wmPanel .close:hover { background: var(--raise); color: var(--text); }
+      .wmPanel .pb { flex: 1; overflow: auto; padding: 0 16px 16px; }
+      .wmPanel .stateNote { margin-bottom: 10px; font-size: 12px; color: var(--stop); }
+      .wmPanel .sum { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--ground); display: grid; gap: 8px; }
+      .wmPanel .sumH { font-size: 12px; color: var(--muted); font-weight: 600; }
+      .wmPanel .sr { display: grid; grid-template-columns: 38px 1fr; gap: 8px; font-size: 13px; line-height: 1.5; }
+      .wmPanel .sk { color: var(--muted); font-size: 12px; padding-top: 1px; }
+      .wmPanel .sv { min-width: 0; word-break: keep-all; overflow-wrap: anywhere; }
+      .wmPanel .sv.strong { font-weight: 650; }
+      .wmPanel .sv.muted { color: var(--muted); }
+      .wmPanel .goal { white-space: pre-wrap; }
+      .wmPanel .goal.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+      .wmPanel .more { display: block; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--link); font-size: 12px; cursor: pointer; }
+      .wmPanel .ago { color: var(--muted); font-weight: 400; font-size: 12px; }
+      .wmPanel .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); font-weight: 400; }
+      .wmPanel .q { margin-top: 12px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent); background: color-mix(in srgb, var(--live) 10%, transparent); border-radius: 12px; padding: 12px 14px; }
+      .wmPanel .qh { color: var(--live); font-weight: 650; font-size: 12px; }
+      .wmPanel .qt { margin-top: 8px; font-weight: 700; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+      .wmPanel .qo { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+      .wmPanel .qo li { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; font-weight: 600; cursor: default; }
+      .wmPanel .qo li b { width: 12px; flex: none; }
+      .wmPanel .qo li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      .wmPanel .qo small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+      .wmPanel .qn { margin-top: 10px; font-size: 12px; color: var(--muted); }
+      .wmPanel .steps { margin-top: 14px; }
+      .wmPanel .cap { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+      .wmPanel .sec { margin: 16px 0 4px; font-size: 12px; color: var(--muted); }
+      .wmPanel .secH { margin: 18px 0 8px; font-size: 13px; color: var(--muted); }
+      .wmPanel .secH b { color: var(--text); margin-right: 6px; }
+      .wmPanel .log, .wmPanel .flist { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+      .wmPanel .log li { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; font-size: 13px; line-height: 1.5; }
+      .wmPanel .log .k { color: var(--muted); font-weight: 600; font-size: 12px; }
+      .wmPanel .log .k.run { color: var(--go); }
+      .wmPanel .log .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+      .wmPanel .tm { font-size: 12px; color: var(--muted); white-space: nowrap; }
+      .wmPanel .flist { gap: 2px; }
+      .wmPanel .flist li { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+      .wmPanel .flist .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wmPanel .go { padding: 12px 16px; border-top: 1px solid var(--line); }
+      .wmPanel .goBtn { width: 100%; height: 36px; border-radius: 9px; border: 0; background: var(--text); color: var(--ground); font-weight: 650; cursor: pointer; }
+      .wmPanel .goBtn span { margin-left: 4px; }
+      /* The panel's step list shows whole steps, as the old full-width detail did. */
+      .wmPanel .wfStep { font-size: 12px; padding: 5px 0 5px 2px; }
+      .wmPanel .wfStep .x { display: block; white-space: normal; overflow: visible; }
+      /* Status dots in the DOM, as the rail's lamps colour them. */
+      .wmDot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+      .wmDot.working { background: var(--go); }
+      .wmDot.waiting { background: transparent; box-shadow: inset 0 0 0 2px var(--live); }
+      .wmDot.done { background: transparent; box-shadow: inset 0 0 0 1.5px var(--go); }
+      .wmDot.failed { background: var(--stop); }
+
+/* --- dialogs ---------------------------------------------------- */
+      dialog {
+        background: var(--panel); color: var(--text); border: 1px solid var(--line);
+        border-radius: 10px; padding: 20px 22px;
+        /* Never wider than the window: a fixed 460px overflowed once the
+           window shrank below it (min window width is 720, but the content
+           row shares that with the rail). */
+        width: min(460px, calc(100vw - 48px));
+      }
+      dialog::backdrop { background: #05080ccc; }
+      /* The one entrance: a short rise and a fade, on `translate` so it never fights an element's own transform. */
+      @keyframes rise { from { opacity: 0; translate: 0 8px; } }
+      @keyframes fadeIn { from { opacity: 0; } }
+      dialog[open]:not(.tour) { animation: rise var(--t-mid) var(--ease); }
+      dialog[open]:not(.tour)::backdrop { animation: fadeIn var(--t-mid) var(--ease); }
+      #phoneToast:popover-open { animation: rise var(--t-mid) var(--ease); }
+      #phoneDialog, #relayDialog { max-height: calc(100vh - 48px); overflow-y: auto; }
+      #phoneDialog, #relayDialog { width: min(560px, calc(100vw - 48px)); }
+      #relayDialog h3 { margin: 4px 0 6px; font-size: 13.5px; }
+      #relayDialog h2 { display: flex; align-items: center; }
+      #setupProgress { margin-left: auto; color: var(--muted); font: 500 12px var(--sans); }
+      /* Fills as the walk goes on; the element stays, so a CSS transition carries it. */
+      #setupTrack { height: 2px; margin: 8px 0 12px; border-radius: 1px; background: var(--line); overflow: hidden; }
+      #setupFill { display: block; height: 100%; background: var(--live); transform: scaleX(0); transform-origin: left; transition: transform var(--t-mid) var(--ease); }
+      /* While two steps cross: no scrollbars for the moment one sticks out. */
+      #relayDialog.sliding { overflow: hidden; }
+      /* Drawn once as the closing page comes up. */
+      .setupCheck { width: 18px; height: 18px; margin-right: 6px; vertical-align: -3px; fill: none; stroke: var(--go); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+      .setupCheck path { stroke-dasharray: 1; animation: drawCheck var(--t-slow) var(--ease); }
+      @keyframes drawCheck { from { stroke-dashoffset: 1; } }
+      .phoneStep { min-height: 150px; }
+      .phoneStep[hidden] { display: none; }
+      .phoneQr { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+      .phoneQr img { width: 132px; height: 132px; border-radius: 6px; background: #fff; flex: none; }
+      .phoneQr img[hidden] { display: none; }
+      .phoneLine { display: flex; gap: 8px; margin-top: 12px; }
+      .phoneLine button {
+        flex: none; padding: 6px 10px; border-radius: 5px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--raise);
+      }
+      #setupTotpKey { display: block; margin-top: 6px; font: 12px var(--mono); user-select: all; }
+      #setupTotpBox[hidden], #setupTotpDone[hidden], #setupPasswordKept[hidden] { display: none; }
+      #setupAppOpen { margin-top: 10px; }
+      #phoneStatus { user-select: text; }
+      #relayDialog .phoneQr img { width: 200px; height: 200px; }
+      #relayScan[hidden], #relayConfirm[hidden], #relayDialog button[hidden] { display: none; }
+      #relayCode { display: block; margin: 12px 0; text-align: center; font: 600 32px var(--mono); letter-spacing: 6px; }
+      #settingsPanel .setAdvanced { max-width: 440px; margin-top: 18px; }
+      #settingsPanel .setAdvanced summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+      #settingsPanel .setAdvanced input[type="text"] {
+        display: block; width: 100%; box-sizing: border-box; margin: 6px 0; padding: 9px 12px; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--ground); color: var(--text); font: 13px var(--mono);
+      }
+      #settingsPanel .setAdvanced input[type="text"]:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+      #phoneButton .lucide { margin: 0; vertical-align: -2px; }
+      #phoneButton.failed { color: var(--stop); }
+      #phoneButton.waiting { color: var(--live); }
+      #phoneButton.signedIn { color: var(--go); }
+      /* Lucide icons beside a label: centred on the text, a small gap after. */
+      .lucide { display: inline-flex; vertical-align: -3px; margin-right: 6px; }
+      #phoneToast {
+        position: fixed; inset: auto auto 24px 50%; margin: 0; transform: translateX(-50%);
+        background: var(--panel); color: var(--text); border: 1px solid var(--live); border-radius: 8px;
+        padding: 8px 14px; font-size: 12.5px; box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .55);
+      }
+      #phoneToast[hidden] { display: none; }
+
+      /* --- product tour (tour.ts): the dim is the lit box's own shadow, so
+         one element both darkens the screen and leaves the hole, and moving
+         it is a transition rather than a redraw. */
+      dialog.tour {
+        position: fixed; inset: 0; width: 100vw; height: 100vh; max-width: none; max-height: none;
+        margin: 0; padding: 0; border: 0; background: transparent; overflow: hidden;
+      }
+      dialog.tour::backdrop { background: transparent; }
+      .tourLight {
+        position: absolute; border-radius: 8px; pointer-events: none;
+        box-shadow: 0 0 0 200vmax rgba(5, 8, 12, .62);
+        transition: left var(--t-slow) var(--ease), top var(--t-slow) var(--ease), width var(--t-slow) var(--ease), height var(--t-slow) var(--ease);
+      }
+      .tourLight::after {
+        content: ""; position: absolute; inset: -2px; border-radius: 10px;
+        border: 2px solid var(--live); animation: tourPulse 1.6s ease-out infinite;
+      }
+      dialog.tour.centered .tourLight::after { display: none; }
+      @keyframes tourPulse {
+        0% { opacity: .95; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.08); }
+      }
+      .tourCard {
+        position: absolute; width: min(320px, calc(100vw - 24px));
+        background: var(--panel); color: var(--text); border: 1px solid var(--line);
+        border-radius: 10px; padding: 16px 18px 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .35);
+        opacity: 0; transform: translateY(8px); transition: opacity var(--t-mid) var(--ease), transform var(--t-mid) var(--ease);
+      }
+      .tourCard.in { opacity: 1; transform: none; }
+      .tourCard h3 { margin: 0 0 6px; font-size: 14px; }
+      .tourCard p { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+      .tourFoot { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); }
+      .tourFoot span { margin-right: auto; }
+      .tourFoot button {
+        border: 1px solid var(--line); background: var(--raise); color: var(--text);
+        border-radius: 6px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+      }
+      .tourFoot button.go { background: var(--live); border-color: var(--live); color: #11161d; }
+      /* --- file preview: an overlay pinned to one pane, not a popup or a
+         view of its own -- left/top/width/height are pushed by
+         positionPreviewOverlay() to track that pane's own rect, so a split
+         layout keeps every other pane visible underneath it. */
+      /* A file open in a pane, laid over the pane's slot from outside the pane
+         tree (see positionFileOverlays in main.ts), and hidden along with the
+         terminal panel when another view is up. */
+      .fileOverlay {
+        position: absolute; z-index: 4; display: flex; flex-direction: column;
+        background: var(--ground); overflow: hidden;
+      }
+      #terminal[hidden] ~ .fileOverlay { display: none; }
+      .fileOverlay > .note { margin: 14px 16px; display: flex; align-items: center; gap: 10px; }
+      .fileOverlay > .note .railBtn { width: auto; }
+      .fileFrame { flex: 1; min-height: 0; width: 100%; border: 0; background: var(--ground); }
+      .fileFrame.page { background: #fff; }
+      #importDialog { width: min(640px, 92vw); }
+      /* Settings: one tab per setting down the left, the setting on the right. */
+      #settingsDialog { width: min(860px, 92vw); height: min(560px, 86vh); padding: 0; }
+      #settingsDialog[open] { display: flex; flex-direction: column; }
+      #settingsTitle { padding: 16px 22px 10px; margin: 0; border-bottom: 1px solid var(--line); }
+      .settingsBody { flex: 1; min-height: 0; display: flex; }
+      #settingsNav {
+        flex: 0 0 180px; overflow-y: auto; padding: 8px 0;
+        border-right: 1px solid var(--line); display: flex; flex-direction: column;
+      }
+      #settingsNav button {
+        text-align: left; border: 0; border-left: 2px solid transparent; background: none;
+        color: var(--muted); padding: 8px 16px; font-size: 12.5px; cursor: pointer;
+      }
+      #settingsNav button:hover { background: var(--raise); color: var(--text); }
+      #settingsNav button.active { background: var(--raise); border-left-color: var(--live); color: var(--text); }
+      #settingsPanel { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px; font-size: 13px; }
+      #settingsPanel h3 { margin: 0 0 4px; font-size: 14px; }
+      #settingsPanel .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+      /* Each choice is a quiet card; the picked one wears the accent. The
+         radio dot and check mark are drawn here, not by the OS. */
+      #settingsPanel label {
+        display: flex; align-items: center; gap: 10px; max-width: 440px; margin: 6px 0; padding: 9px 12px;
+        border: 1px solid var(--line); border-radius: 8px; background: var(--ground);
+        color: var(--text); font-size: 13px; cursor: pointer; transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+      }
+      #settingsPanel label:hover { border-color: var(--muted); }
+      #settingsPanel label:has(input:checked) { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
+      #settingsPanel label:has(input:focus-visible) { outline: 2px solid var(--live); outline-offset: 2px; }
+      #settingsPanel input:focus-visible { outline: none; }
+      #settingsPanel .setButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      #settingsPanel .setButtons button {
+        padding: 7px 12px; border-radius: 5px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--raise);
+      }
+      #settingsPanel .setButtons button:hover { border-color: var(--muted); }
+      #settingsPanel .setButtons button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      #settingsPanel select {
+        display: block; width: 100%; max-width: 440px; margin: 6px 0; padding: 9px 12px; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--ground); color: var(--text); font-size: 13px; cursor: pointer;
+      }
+      #settingsPanel select:hover { border-color: var(--muted); }
+      #settingsPanel select:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+      #settingsPanel .setStepper { display: flex; align-items: center; gap: 8px; margin: 6px 0 14px; }
+      #settingsPanel .setStepper .setButtons { margin-top: 0; }
+      #settingsPanel .setStepper output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
+      /* The AI accounts tab: PCs as pills wearing their rail lamp, then one
+         card row per AI -- name, state badge, its one button on the right. */
+      #settingsPanel .setChips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+      #settingsPanel .setChips:empty { display: none; }
+      #settingsPanel .setChips button {
+        display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 12.5px;
+      }
+      #settingsPanel .setChips button:hover { border-color: var(--muted); }
+      #settingsPanel .setChips button[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
+      #settingsPanel .setAccount {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 440px; margin: 6px 0; padding: 9px 12px;
+        border: 1px solid var(--line); border-radius: 8px; background: var(--ground);
+      }
+      #settingsPanel .setAccount .setButtons { margin: 0 0 0 auto; }
+      #settingsPanel .setAccount .setMoney { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+      #settingsPanel .setAccount .setButtons button { padding: 5px 12px; }
+      #settingsPanel .setBadge {
+        padding: 2px 8px; border-radius: 999px; font-size: 11px; color: var(--muted);
+        border: 1px solid var(--line); background: var(--panel);
+      }
+      #settingsPanel .setBadge.good { color: var(--go); border-color: color-mix(in srgb, var(--go) 40%, var(--line)); }
+      #settingsPanel .setBadge.bad { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
+      #settingsPanel .setNote { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+      #settingsPanel .setNote.bad { color: var(--stop); }
+      /* 원격 PC 관리: a count line, then one card per PC -- lamp, name and
+         address as one button that opens its details, a switch, and ⋯. */
+      #settingsPanel .setSummary { display: flex; align-items: center; gap: 12px; max-width: 440px; color: var(--muted); font-size: 12px; }
+      #settingsPanel .setLink { border: 0; background: none; padding: 2px 0; color: var(--link); font-size: 12px; cursor: pointer; }
+      #settingsPanel .setSummary .setLink { margin-left: auto; color: var(--muted); }
+      #settingsPanel .setLink:hover { color: var(--text); text-decoration: underline; }
+      #settingsPanel .setRemoteMain {
+        flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px;
+        border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
+      }
+      #settingsPanel .setRemoteMain strong { white-space: nowrap; }
+      #settingsPanel .setMuted { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #settingsPanel .setRemote .setNote p { margin: 6px 0 0; }
+      #settingsPanel .setRemote .setNote .setLink { margin-top: 4px; }
+      #settingsPanel .setSwitch {
+        position: relative; flex: none; width: 34px; height: 20px; padding: 0; border-radius: 999px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--idle); transition: background var(--t-fast) var(--ease);
+      }
+      #settingsPanel .setSwitch::before {
+        content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+        background: var(--ground); transition: transform var(--t-fast) var(--ease);
+      }
+      #settingsPanel .setSwitch[aria-checked="true"] { background: var(--go); border-color: var(--go); }
+      #settingsPanel .setSwitch[aria-checked="true"]::before { transform: translateX(14px); }
+      #settingsPanel .setSpinner {
+        flex: none; width: 14px; height: 14px; border-radius: 50%;
+        border: 2px solid var(--live-dim); border-top-color: var(--live); animation: setSpin .8s linear infinite;
+      }
+      @keyframes setSpin { to { transform: rotate(360deg); } }
+      #settingsPanel .setMore { position: relative; flex: none; }
+      #settingsPanel .setIcon {
+        width: 26px; height: 26px; padding: 0; border-radius: 5px; border: 1px solid transparent;
+        background: none; color: var(--muted); cursor: pointer;
+      }
+      #settingsPanel .setIcon:hover, #settingsPanel .setIcon[aria-expanded="true"] { border-color: var(--line); background: var(--raise); color: var(--text); }
+      #settingsPanel .setMenu {
+        position: absolute; right: 0; top: calc(100% + 4px); z-index: 2; min-width: 140px; padding: 4px;
+        display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px;
+        background: var(--panel); box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
+      }
+      #settingsPanel .setMenu[hidden] { display: none; }
+      #settingsPanel .setMenu button {
+        border: 0; background: none; padding: 7px 10px; border-radius: 5px; text-align: left; font-size: 12.5px; cursor: pointer;
+      }
+      #settingsPanel .setMenu button:hover, #settingsPanel .setMenu button:focus-visible { background: var(--raise); }
+      #settingsPanel .setMenu button.danger { color: var(--stop); border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; }
+      #settingsPanel ul { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+      #importList { max-height: 52vh; overflow-y: auto; overflow-x: hidden; margin: 4px 0 10px; }
+      #importList h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 4px; }
+      .importRow { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 12.5px; cursor: pointer; }
+      .importRow.child { padding-left: 28px; font: 11.5px var(--sans); }
+      .importRow.known { opacity: .5; cursor: default; }
+      .importRow .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .importRow .meta { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+      #importNote { white-space: pre-line; }
+      /* The agent picker and the in-app dialog focus the likely choice by
+         hand; a mouse-opened dialog would otherwise not show which one Enter
+         takes. */
+      #executorDialog .row button:focus, #askDialog .row button:focus { outline: 2px solid var(--live); outline-offset: 2px; }
+      /* Seven choices: wrap the row, never the words inside a button. */
+      #executorDialog .row { flex-wrap: wrap; }
+      #executorDialog .row button { white-space: nowrap; }
+      .resumeOpt { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
+      .resumeOpt[hidden] { display: none; }
+      /* Sits in a muted hint line; it is a control, so it reads like the buttons below it. */
+      #executorPick { color: var(--text); }
+      #pastSearch { width: 100%; box-sizing: border-box; margin: 0 0 8px; }
+      #pastList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+      /* Editing: the CodeMirror view fills the pane (colours come from its
+         own theme in editor.ts); syntax uses the same Dark+/Light+ palette as
+         the read-only code view, via classHighlighter's tok-* classes. */
+      .fileEditor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .fileEditor .cm-editor { flex: 1; min-height: 0; }
+      .fileOverlay > .paneNotice { margin: 8px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .fileOverlay > .paneNotice .railBtn { width: auto; }
+      .paneBtn.text { width: auto; padding: 0 7px; font-size: 11.5px; }
+      .tok-comment { color: #6a9955; font-style: italic; }
+      .tok-keyword, .tok-bool, .tok-atom, .tok-null { color: #569cd6; }
+      .tok-string, .tok-string2, .tok-deleted { color: #ce9178; }
+      .tok-number, .tok-inserted { color: #b5cea8; }
+      .tok-typeName, .tok-className, .tok-namespace { color: #4ec9b0; }
+      .tok-propertyName, .tok-variableName, .tok-labelName { color: #9cdcfe; }
+      .tok-definition, .tok-macroName { color: #dcdcaa; }
+      .tok-meta { color: #c586c0; }
+      .tok-heading { color: #569cd6; font-weight: 600; }
+      .tok-emphasis { font-style: italic; } .tok-strong { font-weight: 600; }
+      .tok-link, .tok-url { color: #4fc1ff; text-decoration: underline; }
+      .tok-invalid { color: #f44747; }
+      [data-theme="light"] .tok-comment { color: #008000; }
+      [data-theme="light"] .tok-keyword, [data-theme="light"] .tok-bool,
+      [data-theme="light"] .tok-atom, [data-theme="light"] .tok-null { color: #0000ff; }
+      [data-theme="light"] .tok-string, [data-theme="light"] .tok-string2,
+      [data-theme="light"] .tok-deleted { color: #a31515; }
+      [data-theme="light"] .tok-number, [data-theme="light"] .tok-inserted { color: #098658; }
+      [data-theme="light"] .tok-typeName, [data-theme="light"] .tok-className,
+      [data-theme="light"] .tok-namespace { color: #267f99; }
+      [data-theme="light"] .tok-propertyName, [data-theme="light"] .tok-variableName,
+      [data-theme="light"] .tok-labelName { color: #0451a5; }
+      [data-theme="light"] .tok-definition, [data-theme="light"] .tok-macroName { color: #795e26; }
+      [data-theme="light"] .tok-meta { color: #af00db; }
+      [data-theme="light"] .tok-heading { color: #0000ff; }
+      [data-theme="light"] .tok-link, [data-theme="light"] .tok-url { color: #0070c1; }
+      /* Code and text: one scroller holding a line-number gutter that stays
+         put sideways, and the code beside it. */
+      .fileCode {
+        flex: 1; min-height: 0; overflow: auto; display: flex; align-items: flex-start;
+        font: var(--code-size, 12.5px)/1.55 var(--code-font, var(--mono)); tab-size: 4;
+      }
+      .fileCode pre { margin: 0; padding: 12px 18px 12px 10px; font: inherit; white-space: pre; }
+      .fileCode .fileGutter {
+        position: sticky; left: 0; flex: 0 0 auto; padding-left: 16px; text-align: right;
+        color: var(--muted); opacity: .55; user-select: none; background: var(--ground);
+      }
+      .fileText { flex: 1 0 auto; color: var(--text); }
+      /* Syntax colours: VS Code's Dark+ and Light+, so code reads the way it
+         does in the editor it was written in. */
+      .hljs-comment, .hljs-quote { color: #6a9955; font-style: italic; }
+      .hljs-keyword, .hljs-literal, .hljs-selector-tag, .hljs-name, .hljs-section { color: #569cd6; }
+      .hljs-string, .hljs-deletion { color: #ce9178; }
+      .hljs-number, .hljs-addition, .hljs-symbol { color: #b5cea8; }
+      .hljs-regexp { color: #d16969; }
+      .hljs-title, .hljs-title.function_ { color: #dcdcaa; }
+      .hljs-title.class_, .hljs-type, .hljs-built_in { color: #4ec9b0; }
+      .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-params, .hljs-property,
+      .hljs-template-variable { color: #9cdcfe; }
+      .hljs-meta, .hljs-meta .hljs-keyword { color: #c586c0; }
+      .hljs-selector-class, .hljs-selector-id { color: #d7ba7d; }
+      .hljs-bullet { color: #6796e6; }
+      .hljs-emphasis { font-style: italic; } .hljs-strong { font-weight: 600; }
+      [data-theme="light"] .hljs-comment, [data-theme="light"] .hljs-quote { color: #008000; }
+      [data-theme="light"] .hljs-keyword, [data-theme="light"] .hljs-literal,
+      [data-theme="light"] .hljs-selector-tag { color: #0000ff; }
+      [data-theme="light"] .hljs-name, [data-theme="light"] .hljs-section { color: #800000; }
+      [data-theme="light"] .hljs-string, [data-theme="light"] .hljs-deletion { color: #a31515; }
+      [data-theme="light"] .hljs-number, [data-theme="light"] .hljs-addition,
+      [data-theme="light"] .hljs-symbol { color: #098658; }
+      [data-theme="light"] .hljs-regexp { color: #811f3f; }
+      [data-theme="light"] .hljs-title, [data-theme="light"] .hljs-title.function_ { color: #795e26; }
+      [data-theme="light"] .hljs-title.class_, [data-theme="light"] .hljs-type,
+      [data-theme="light"] .hljs-built_in { color: #267f99; }
+      [data-theme="light"] .hljs-attr, [data-theme="light"] .hljs-attribute,
+      [data-theme="light"] .hljs-variable, [data-theme="light"] .hljs-params,
+      [data-theme="light"] .hljs-property, [data-theme="light"] .hljs-template-variable { color: #0451a5; }
+      [data-theme="light"] .hljs-meta, [data-theme="light"] .hljs-meta .hljs-keyword { color: #af00db; }
+      [data-theme="light"] .hljs-selector-class, [data-theme="light"] .hljs-selector-id { color: #800000; }
+      .fileImage {
+        flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+        overflow: auto; padding: 12px;
+      }
+      .fileImage img { max-width: 100%; max-height: 100%; }
+      .splitIcon { display: block; }
+      dialog h2 { margin: 0 0 4px; font-size: 15px; }
+      dialog .sub { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+      /* Details carry paragraphs and raw error text. */
+      #askDetail { white-space: pre-line; overflow-wrap: anywhere; max-height: 50vh; overflow-y: auto; }
+      #askDetail:empty { display: none; }
+      .loginCode { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; }
+      .loginCode[hidden], #loginInput[hidden], #loginOk[hidden] { display: none; }
+      .loginCode output { font: 600 26px var(--mono); letter-spacing: 2px; user-select: all; }
+      #loginInput { margin: 0 0 14px; }
+      #askDialog[data-type="error"] h2, #askDialog[data-type="warning"] h2 { color: var(--stop); }
+      /* --- shared controls --------------------------------------------- *
+         New UI uses these: write a bare <button>, <input>, <textarea> or
+         <select> and it already looks like Lepons. .go marks the main action,
+         .listRow is a pickable row in a list. Add a rule only for what differs.
+         :where() weighs nothing, so any existing rule for a button still wins;
+         a button with a class is left to that class. */
+      :where(button:not([class]), button.go) {
+        padding: 6px 12px; border-radius: 5px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--raise);
+      }
+      :where(button:not([class]):hover) { border-color: var(--muted); }
+      :where(button.go) { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      .listRow {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+        padding: 7px 10px; border: 1px solid transparent; border-radius: 5px;
+        background: none; text-align: left; overflow-wrap: anywhere; cursor: pointer;
+      }
+      .listRow:hover { background: var(--raise); border-color: var(--line); }
+      .listRow[hidden] { display: none; }
+      .listRow .sub { margin: 0; font-size: 11px; color: var(--muted); }
+      input[type="radio"], input[type="checkbox"] {
+        appearance: none; flex: none; width: 16px; height: 16px; margin: 0; display: grid; place-content: center;
+        border: 1.5px solid var(--muted); background: var(--panel); cursor: pointer; transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+      }
+      input[type="radio"] { border-radius: 50%; }
+      input[type="radio"]::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--live); transform: scale(0); transition: transform var(--t-fast) var(--ease); }
+      input[type="radio"]:checked { border-color: var(--live); }
+      input[type="radio"]:checked::before { transform: scale(1); }
+      input[type="checkbox"] { border-radius: 4px; }
+      input[type="checkbox"]::before {
+        content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--panel); border-width: 0 2px 2px 0;
+        transform: rotate(45deg) scale(0); transition: transform var(--t-fast) var(--ease);
+      }
+      input[type="checkbox"]:checked { border-color: var(--live); background: var(--live); }
+      input[type="checkbox"]:checked::before { transform: rotate(45deg) scale(1); }
+      label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 11.5px; }
+      input:not([type]), input[type="text"], input[type="password"], input[type="search"], textarea, select {
+        width: 100%; padding: 8px 10px; background: var(--ground); color: var(--text);
+        border: 1px solid var(--line); border-radius: 5px; font: 13px var(--sans);
+      }
+      textarea { display: block; resize: vertical; }
+      /* The browser's own clear mark is a bright blue cross in every theme. */
+      input[type="search"]::-webkit-search-cancel-button {
+        appearance: none; width: 14px; height: 14px; cursor: pointer;
+        background:
+          linear-gradient(45deg, transparent 44%, var(--muted) 44% 56%, transparent 56%) center / 10px no-repeat,
+          linear-gradient(-45deg, transparent 44%, var(--muted) 44% 56%, transparent 56%) center / 10px no-repeat;
+      }
+      input:focus, textarea:focus, select:focus { border-color: var(--live); outline: none; }
+      .pick { display: flex; gap: 16px; margin-top: 2px; }
+      .pick label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text); font-size: 12.5px; }
+      .row { display: flex; gap: 8px; margin-top: 18px; }
+      .row button {
+        flex: 1; padding: 8px; border-radius: 5px; cursor: pointer;
+        border: 1px solid var(--line); background: var(--raise);
+      }
+      .row button:hover { border-color: var(--muted); }
+      .row button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      /* pre-line: a note may list several failed protections, one per line. */
+      .note { margin-top: 12px; font-size: 12px; min-height: 17px; white-space: pre-line; }
+      .note.bad { color: var(--stop); }
+      .note.good { color: var(--live); }
+
+      /* --- folder browser --------------------------------------------- */
+      #browsePath {
+        font-family: var(--sans); font-size: 11px; color: var(--muted);
+        word-break: break-all; margin: 4px 0 8px;
+      }
+      #browseList {
+        height: 300px; overflow-y: auto; border: 1px solid var(--line);
+        border-radius: 6px; background: var(--ground);
+      }
+      .entry {
+        display: flex; gap: 8px; width: 100%; padding: 6px 11px; border: 0;
+        background: none; text-align: left; cursor: pointer; font: 12px var(--sans);
+      }
+      .entry:hover { background: var(--raise); }
+      .entry.file { color: var(--dim); cursor: default; }
+
+      /* --- create-file dialog ------------------------------------------ */
+      #fileTree {
+        height: 160px; overflow-y: auto; border: 1px solid var(--line);
+        border-radius: 6px; background: var(--ground); margin-bottom: 10px;
+      }
+      .treeRow {
+        display: block; width: 100%; text-align: left; border: 0; background: none;
+        color: var(--text); padding: 5px 11px; cursor: pointer; font: 12px var(--sans);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .treeRow:hover { background: var(--raise); }
+      .treeRow.on { color: var(--live); }
+      .treeRow.file { color: var(--dim); cursor: default; }
+      #fileName { margin-bottom: 8px; }
+      #fileBody {
+        width: 100%; padding: 8px 10px; background: var(--ground); color: var(--text);
+        border: 1px solid var(--line); border-radius: 5px; font: 12px var(--mono); resize: vertical;
+      }
+      #fileBody:focus { border-color: var(--live); outline: none; }
+
+      /* --- map -------------------------------------------------------- */
+      .mapPad { padding: 26px 28px; }
+      .mapEmpty { color: var(--muted); padding: 26px 28px; }
+      .mapLines { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+      .mapEdge {
+        fill: none; stroke: var(--muted); stroke-width: 1.75; opacity: .8;
+        pointer-events: stroke; cursor: pointer; stroke-linecap: round;
+        transition: opacity var(--t-fast) var(--ease), stroke-width var(--t-fast) var(--ease);
+      }
+      /* Head swapped with the line so a hovered edge is one colour end to end. */
+      .mapEdge:hover { stroke: var(--live); stroke-width: 3; opacity: 1; marker-end: url(#mapArrowHot); }
+      /* Not a share yet: dashed until a click makes it one. */
+      .mapEdge.suggested { stroke-dasharray: 6 5; opacity: .55; }
+      /* Pinned to the view's bottom-left while the board scrolls under it; no
+         height of its own, so the board's geometry is unchanged. The line is
+         lifted above that zero height, inside the view. */
+      .mapLegend { position: sticky; bottom: 0; left: 0; height: 0; z-index: 3; pointer-events: none; }
+      .mapLegend span {
+        display: inline-block; margin: 0 0 0 10px; padding: 2px 7px; transform: translateY(calc(-100% - 8px));
+        border-radius: 4px; font-size: 10.5px; line-height: 1.4; color: var(--muted); white-space: nowrap;
+        background: color-mix(in srgb, var(--panel) 80%, transparent);
+      }
+      /* Only an edge that already carries a start head gets its start head
+         recoloured -- setting the property outright would grow a second
+         arrowhead on every one-way edge the moment it is hovered. */
+      .mapEdge[marker-start]:hover { marker-start: url(#mapArrowHot); }
+      /* A faint dot grid is the one signal every freely-positionable canvas
+         (Miro, FigJam, dbdiagram.io) shares -- it's what tells the eye "this
+         can be rearranged" before a hand ever touches a card. */
+      .mapBoard {
+        position: relative;
+        background-image: radial-gradient(var(--grid) 1.4px, transparent 1.4px);
+        background-size: 24px 24px;
+      }
+      .mapCard {
+        position: absolute; left: 0; top: 0; width: 224px;
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 9px; padding: 12px;
+        box-shadow: 0 8px 20px -6px rgba(0, 0, 0, .45);
+        z-index: 0;
+      }
+      .mapCard.dropTarget { border-color: var(--live); }
+      .mapCard.dragging { box-shadow: 0 14px 34px -8px rgba(0, 0, 0, .6); z-index: 10; }
+      .mapCardHead {
+        display: flex; align-items: center; gap: 8px; margin-bottom: 9px;
+        border-bottom: 1px solid var(--line); padding-bottom: 8px; cursor: grab;
+      }
+      .mapCardHead .name {
+        font-family: var(--sans); font-size: 11.5px; flex: 1;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .kindTag {
+        font: 10px var(--sans); color: var(--muted); border: 1px solid var(--line);
+        border-radius: 3px; padding: 2px 6px;
+      }
+      /* Which agent a session is: Claude in the live amber, Codex in the link
+         teal, Grok in plain text, Antigravity muted, Cursor dim, so they read apart on one board without a legend. */
+      .agentTag {
+        flex: 0 0 auto; align-self: flex-start; font: 600 9.5px var(--sans); letter-spacing: .04em;
+        border-radius: 3px; padding: 1px 5px; border: 1px solid currentColor; opacity: .9;
+      }
+      .agentTag.claude { color: var(--live); }
+      .agentTag.codex { color: var(--link); }
+      .agentTag.grok { color: var(--text); }
+      .agentTag.agy { color: var(--muted); }
+      .agentTag.agent { color: var(--dim); }
+      .mapAgents { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; font-size: 10.5px; color: var(--muted); }
+      .mapAgents .agentTag { cursor: pointer; background: none; }
+      .mapAgents .agentTag.off { opacity: .45; border-style: dashed; color: var(--muted); }
+      .mapApplying { font-size: 10.5px; color: var(--muted); margin: 0 0 6px; animation: lampBreathe 1.4s ease-in-out infinite; }
+      button.mapApplyFailed { display: block; border: 0; background: none; padding: 0 0 6px; text-align: left; font: inherit; font-size: 10.5px; cursor: pointer; }
+      button.mapApplyFailed:hover { text-decoration: underline; }
+      body.mapDragging { cursor: grabbing; }
+      .mapGroupHead {
+        font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--muted); margin: 10px 0 4px;
+      }
+      .mapGroupHead:first-of-type { margin-top: 2px; }
+      .mapRepo {
+        background: var(--ground); border: 1px solid var(--line);
+        border-radius: 6px; padding: 6px 9px; margin-top: 6px; cursor: grab; font: 12px var(--sans);
+      }
+      .mapRepo:hover { border-color: var(--muted); }
+      .mapRepo.dragging { opacity: .35; }
+      /* Agent session data is not a folder the operator picked, so it reads as
+         a different kind of chip at a glance. */
+      .mapRepo-agentData { border-style: dashed; color: var(--muted); }
+      .mapNoRepo { color: var(--muted); font-size: 11px; }
+      .notifyBadge {
+        display: inline-block; margin-left: 6px; min-width: 15px; padding: 0 5px;
+        border-radius: 8px; background: var(--live); color: #21160a;
+        font-size: 10px; line-height: 15px; text-align: center; font-weight: 600;
+      }
+      #workflowBadge[hidden] { display: none; }
+      /* The session detail's vertical timeline, newest step lit amber. */
+      .wfSteps {
+        list-style: none; margin: 2px 0 0 9px; padding: 0 0 0 13px;
+        border-left: 1px solid var(--line);
+      }
+      .wfStep {
+        position: relative; padding: 3px 0 3px 2px; display: flex; gap: 7px;
+        color: var(--muted); font-size: 11px;
+      }
+      .wfStep::before {
+        content: ""; position: absolute; left: -16.5px; top: 8px;
+        width: 6px; height: 6px; border-radius: 50%; background: var(--line);
+      }
+      .wfStep.now { color: var(--text); }
+      .wfStep.now::before { background: var(--live); }
+      .wfStep .t { flex: 0 0 auto; font-family: var(--sans); font-variant-numeric: tabular-nums; font-size: 10px; padding-top: 1px; color: var(--muted); }
+      /* min-width:0 so the clamped text ellipsizes instead of blowing out the card. */
+      .wfStep .x {
+        flex: 1; min-width: 0; overflow: hidden; word-break: break-word;
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+      }
+      .wfNote { color: var(--muted); font-size: 12px; }
+      /* The human's own prompts stand out from the assistant's narration. */
+      .wfStep.prompt .x { color: var(--text); }
+      /* Pooled tool calls ("Edit map.ts · Bash npm test") read as machinery. */
+      .wfStep.act .x { font-family: var(--sans); font-size: 10px; }
+      /* A dispatched subagent renders as a branch card off the timeline:
+         amber spine while it matches the "live" convention, link-blue while
+         still running. */
+      .wfStepAgent { align-items: flex-start; }
+      .wfBranch {
+        flex: 1; min-width: 0; border-left: 2px solid var(--live);
+        background: var(--raise); border-radius: 6px; padding: 7px 10px; margin: 2px 0;
+      }
+      .wfBranch.running { border-left-color: var(--go); }
+      .wfBranchHead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+      .runTag { font: 10px var(--sans); color: var(--link); }
+      .wfTranslate {
+        margin-left: auto; border: 1px solid var(--line); background: none; color: var(--muted);
+        font: 10px var(--sans); padding: 1px 6px; border-radius: 3px; cursor: pointer;
+      }
+      .wfTranslate:hover { color: var(--text); border-color: var(--muted); }
+      .wfTranslate:disabled { cursor: progress; opacity: .7; }
+      .wfNotice { font-size: 11px; color: var(--muted); margin: 0 0 10px; }
+      .wfBranch .line {
+        color: var(--muted); font-size: 11px; margin-top: 4px;
+        white-space: pre-wrap; word-break: break-word;
+      }
+
+      /* --- guide ------------------------------------------------------ */
+      .guide { max-width: 720px; padding: 32px 34px 64px; }
+      .guide h1 { font-size: 21px; margin: 0 0 6px; letter-spacing: -.015em; }
+      .guideLead { color: var(--muted); margin: 0 0 30px; max-width: 58ch; }
+      .guideSection { margin-bottom: 32px; }
+      .guideSection h2 { font-size: 13px; margin: 0 0 11px; display: flex; align-items: baseline; gap: 10px; }
+      .guideMarker {
+        font: 10px var(--sans); letter-spacing: .06em; color: var(--muted);
+        border: 1px solid var(--line); border-radius: 3px; padding: 2px 6px; white-space: nowrap;
+      }
+      .guideStatus { display: flex; align-items: baseline; gap: 8px; margin: 7px 0; font-size: 12.5px; }
+      .guideMark { font: 600 12px var(--sans); width: 14px; text-align: center; }
+      .guideStatus.ok .guideMark { color: var(--go); }
+      .guideStatus.todo .guideMark { color: var(--stop); }
+      .guideCode { margin: 10px 0 4px; }
+      .guideCode code, .shareBox code {
+        display: block; white-space: pre-wrap; word-break: break-all;
+        background: var(--ground); border: 1px solid var(--line); border-radius: 7px;
+        padding: 11px 13px; font: 11.5px/1.7 var(--mono); color: var(--text); cursor: pointer;
+      }
+      .shareBox code:hover { border-color: var(--live); }
+      /* The guide's commands: where to run it above, the copy button beside. */
+      .guideWhere { color: var(--muted); font-size: 12px; margin-bottom: 5px; max-width: 62ch; }
+      .guideLine { display: flex; gap: 8px; align-items: flex-start; }
+      .guideLine code { flex: 1; min-width: 0; cursor: text; user-select: text; }
+      .guideCopy, .guideButton {
+        flex: none; border: 1px solid var(--line); background: var(--raise); color: var(--text);
+        border-radius: 6px; padding: 6px 11px; font-size: 12px; cursor: pointer;
+      }
+      .guideCopy:hover, .guideButton:hover { border-color: var(--live); }
+      .guideButton { margin-top: 10px; }
+      .guideSub { font-size: 12.5px; font-weight: 600; margin: 18px 0 2px; }
+      .guideWarn {
+        font-size: 12px; margin: 14px 0 0; padding: 9px 12px; max-width: 62ch;
+        border-left: 3px solid var(--live); background: var(--ground); border-radius: 0 6px 6px 0;
+      }
+      .guideHint { color: var(--muted); font-size: 12px; margin: 6px 0 0; max-width: 60ch; }
+      .guideList { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; }
+      .guideList li { margin: 7px 0; max-width: 62ch; }
+
+      /* --- share panel ------------------------------------------------ */
+      .shareBox { padding: 2px 18px 10px; }
+      .shareHint { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+      /* The folder's contents, off by default -- the rail lists sessions
+         first, and an always-open tree would bury the next machine. */
+      .treeToggle {
+        border: 0; background: none; color: var(--muted);
+        font-size: 18px; line-height: 1; padding: 4px 6px; cursor: pointer;
+        flex: 0 0 auto; border-radius: 4px;
+      }
+      .treeToggle:hover, .treeToggle.on { color: var(--live); }
+      /* Chevrons drawn as a line, VS Code's, not a filled triangle: two
+         borders of a square, turned. Down by default; .right and .up turn it. */
+      .chev::before {
+        content: ""; display: inline-block; width: 6px; height: 6px;
+        border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+        transform: translateY(-2px) rotate(45deg);
+      }
+      .chev.right::before { transform: rotate(-45deg); }
+      .chev.up::before { transform: translateY(1px) rotate(-135deg); }
+      .treeToggle.chev { font-size: 0; padding: 7px 6px; margin: 0 -6px 0 -8px; }
+      /* Sizes step down with depth: machine 6px, folder 5px, file tree 4px. */
+      .treeToggle.chev::before { width: 5px; height: 5px; }
+      .foldToggle { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 4px; flex: 0 0 auto; }
+      .foldToggle:hover { color: var(--text); }
+      .fileTree { padding-right: 10px; }
+      .fileTree .fileTree { padding-right: 0; }
+      .treeBar { display: flex; justify-content: flex-end; gap: 2px; padding: 2px 14px 2px 18px; }
+      .treeBar .iconBtn { display: inline-flex; padding: 3px; border-radius: 4px; }
+      .fileRow {
+        display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;
+        border: 0; background: none; color: var(--muted); font: 11px var(--sans);
+        padding: 2px 0; cursor: pointer;
+      }
+      .fileRow:hover { color: var(--text); }
+      .fileChevron { flex: 0 0 9px; font-size: 10px; text-align: center; }
+      .fileChevron.chev::before { width: 4px; height: 4px; }
+      .fileIcon { flex: 0 0 16px; width: 16px; height: 16px; }
+      .fileName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .forwardChip { display: inline-flex; align-items: center; }
+      #broadcastText {
+        width: 100%; box-sizing: border-box; resize: vertical; margin: 4px 0 10px;
+        background: var(--raise); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+        padding: 8px 10px; font: inherit; font-size: 12.5px;
+      }
+      #broadcastList { max-height: 220px; overflow: auto; margin: 0 0 6px 18px; }
+      #browseMakeRow { gap: 6px; margin-top: 10px; }
+      #browseNewName { flex: 1; }
+      #browseMakeRow button { flex: 0 0 auto; }
+      .fileNote { color: var(--muted); font-size: 10.5px; padding: 2px 0; }
+      .warn { color: var(--stop); font-size: 11px; padding: 0 18px 6px; }
+      .warn button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
+      button.shareDown {
+        display: block; width: 100%; border: 0; background: none; text-align: left;
+        font: inherit; font-size: 11px; cursor: pointer;
+      }
+      button.shareDown:hover { text-decoration: underline; }
+      /* Filled, so it stands out among the head's plain icons. */
+      .paneBtn.attention { color: var(--live); background: color-mix(in srgb, var(--live) 16%, transparent); padding: 2px 6px; }
+      /* The app's own tooltip, replacing the browser's native title bubble. */
+      #hoverTip {
+        position: fixed; z-index: 99; max-width: 380px; pointer-events: none;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+        padding: 7px 10px; font-size: 11px; color: var(--text); line-height: 1.5;
+        white-space: pre-wrap; word-break: break-word;
+        box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .55);
+      }
+      #hoverTip[hidden] { display: none; }
+      @media (prefers-reduced-motion: reduce) {
+        *, ::before, ::after, ::backdrop { transition: none !important; animation: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <aside id="rail">
+      <!-- App-wide controls on top, the machines filling the middle, and at
+           the foot the one thing a new operator does first -- add a machine
+           -- with the two views to switch to under it. -->
+      <div class="railHead">
+        <!-- Settings first, in the corner, then the phone page (its state in
+             the icon's colour, a menu on click). -->
+        <button class="railIconBtn" id="settingsButton"></button>
+        <button class="railIconBtn" id="phoneButton"></button>
+        <span class="railDrag"></span>
+        <button id="railToggle">«</button>
+      </div>
+      <div id="workspaces"></div>
+      <div class="railFoot">
+        <!-- Plan usage, while a session is open; hidden with its own switch. -->
+        <div id="usageBar" hidden>
+          <button type="button" id="usageToggle" class="iconBtn"></button>
+          <span id="usageText"></span>
+        </div>
+        <button class="railBtn" id="openBroadcast" data-i18n="broadcast.open" hidden></button>
+        <button class="railBtn primary" id="addMachine" data-i18n="rail.addMachine"></button>
+        <div class="railTabs">
+          <button class="railBtn" id="openMap" data-i18n="rail.map"></button>
+          <button class="railBtn" id="openWorkflow">
+            <span data-i18n="workflow.toggle"></span>
+            <span id="workflowBadge" class="notifyBadge" hidden></span>
+          </button>
+        </div>
+      </div>
+      <div id="railEdge"></div>
+    </aside>
+
+    <main>
+      <div id="titleBar"><span class="titleDrag"></span><button class="wmPill" id="waitingPill" type="button" hidden></button><button class="paneBtn" id="splitRight" data-direction="row"></button><button class="paneBtn" id="splitDown" data-direction="column"></button><div id="winControls"><button id="winMin">─</button><button id="winMax">□</button><button id="winClose">✕</button></div></div>
+      <div id="contentRow">
+        <div id="terminal"></div>
+        <div id="map" hidden></div>
+        <div id="guide" hidden></div>
+        <div id="workflow" hidden></div>
+        <div id="zoomBar" hidden>
+          <button id="zoomOut" type="button" title="−">−</button>
+          <span id="zoomPct">100%</span>
+          <button id="zoomIn" type="button" title="+">+</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="phoneToast" role="status" popover="manual" hidden></div>
+
+    <dialog id="settingsDialog" aria-labelledby="settingsTitle">
+      <h2 id="settingsTitle" data-i18n="settings.title"></h2>
+      <div class="settingsBody">
+        <nav id="settingsNav"></nav>
+        <section id="settingsPanel"></section>
+      </div>
+    </dialog>
+
+    <dialog id="stopDialog" aria-labelledby="stopTitle">
+      <form method="dialog">
+        <h2 id="stopTitle" data-i18n="session.stop"></h2>
+        <p class="sub" id="stopText"></p>
+        <div class="row">
+          <button value="stop" data-i18n="session.stopConfirmYes"></button>
+          <button value="" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="broadcastDialog" aria-labelledby="broadcastTitle">
+      <h2 id="broadcastTitle" data-i18n="broadcast.title"></h2>
+      <p class="sub" data-i18n="broadcast.sub"></p>
+      <textarea id="broadcastText" rows="5"></textarea>
+      <label class="resumeOpt"><input type="checkbox" id="broadcastAll" /> <span data-i18n="broadcast.all"></span></label>
+      <div id="broadcastList"></div>
+      <label class="resumeOpt"><input type="checkbox" id="broadcastEnter" checked /> <span data-i18n="broadcast.enter"></span></label>
+      <div class="row">
+        <button type="button" class="go" id="broadcastSend" data-i18n="broadcast.send"></button>
+        <button type="button" id="broadcastCancel" data-i18n="common.cancel"></button>
+      </div>
+    </dialog>
+
+    <dialog id="restoreDialog" aria-labelledby="restoreTitle">
+      <form method="dialog">
+        <h2 id="restoreTitle" data-i18n="restore.title"></h2>
+        <p class="sub" id="restoreText" style="white-space: pre-line"></p>
+        <label class="resumeOpt" id="restoreAlwaysRow"><input type="checkbox" id="restoreAlways" /> <span data-i18n="restore.always"></span></label>
+        <div class="row">
+          <button value="restore" class="go" id="restoreYes" data-i18n="restore.yes"></button>
+          <button value="" id="restoreNo" data-i18n="restore.no"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="importDialog" aria-labelledby="importTitle">
+      <h2 id="importTitle" data-i18n="import.title"></h2>
+      <p class="sub" data-i18n="import.sub"></p>
+      <div id="importList"></div>
+      <div class="note" id="importNote"></div>
+      <div class="row">
+        <button type="button" class="go" id="importRun" data-i18n="import.run"></button>
+        <button type="button" id="importClose" data-i18n="common.close"></button>
+      </div>
+    </dialog>
+
+    <dialog id="installDialog" aria-labelledby="installTitle">
+      <form method="dialog">
+        <h2 id="installTitle"></h2>
+        <p class="sub" id="installText" style="white-space: pre-line"></p>
+        <div class="row">
+          <button value="install" class="go" data-i18n="install.run"></button>
+          <button value="" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="executorDialog" aria-labelledby="executorTitle">
+      <form method="dialog">
+        <h2 id="executorTitle" data-i18n="session.executor"></h2>
+        <p class="sub" data-i18n="session.executorHint"></p>
+        <label class="resumeOpt" id="executorResumeRow"><input type="checkbox" id="executorResume" /> <span data-i18n="session.resume"></span></label>
+        <p class="sub"><button type="button" id="executorPick" data-i18n="past.pick"></button></p>
+        <label class="resumeOpt"><input type="checkbox" id="executorBypass" /> <span data-i18n="session.bypass"></span></label>
+        <p class="sub" data-i18n="session.bypassHint"></p>
+        <div class="row">
+          <button value="claude">Claude Code</button>
+          <button value="codex">Codex</button>
+          <button value="grok">Grok</button>
+          <button value="agy">Antigravity</button>
+          <button value="agent">Cursor</button>
+          <button value="shell" data-i18n="session.shell"></button>
+          <button value="" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="pastDialog" aria-labelledby="pastTitle">
+      <h2 id="pastTitle" data-i18n="past.title"></h2>
+      <p class="sub" data-i18n="past.hint"></p>
+      <input type="search" id="pastSearch" />
+      <p class="sub" id="pastStatus"></p>
+      <div id="pastList"></div>
+      <div class="row"><button type="button" id="pastCancel" data-i18n="common.cancel"></button></div>
+    </dialog>
+
+    <dialog id="addDialog">
+      <h2 data-i18n="add.title"></h2>
+      <p class="sub" data-i18n="add.sub"></p>
+      <div class="row">
+        <button type="button" id="addChooseLocal" data-i18n="rail.addLocal"></button>
+        <button type="button" id="addChooseRemote" data-i18n="rail.addRemote"></button>
+      </div>
+      <!-- The two things only a newcomer needs, beside the action they lead to. -->
+      <div class="row">
+        <button type="button" id="openImport" data-i18n="rail.import"></button>
+        <button type="button" id="openGuide" data-i18n="rail.guide"></button>
+      </div>
+      <div class="row">
+        <button type="button" id="addCancel" data-i18n="common.cancel"></button>
+      </div>
+    </dialog>
+
+    <dialog id="remoteDialog">
+      <form id="remoteForm">
+        <h2 data-i18n="remote.title"></h2>
+        <p class="sub" data-i18n="remote.sub"></p>
+        <label for="remoteDest" data-i18n="remote.address"></label>
+        <input id="remoteDest" name="destination" type="text" placeholder="user@203.0.113.10" autofocus />
+        <label data-i18n="remote.agent"></label>
+        <div class="pick">
+          <label><input type="radio" name="agent" value="claude" checked /> Claude Code</label>
+          <label><input type="radio" name="agent" value="codex" /> Codex</label>
+          <label><input type="radio" name="agent" value="grok" /> Grok</label>
+          <label><input type="radio" name="agent" value="agy" /> Antigravity</label>
+          <label><input type="radio" name="agent" value="agent" /> Cursor</label>
+        </div>
+        <p class="guideHint" data-i18n="remote.agentHint"></p>
+        <div id="remotePasswordBox" hidden>
+          <label for="remotePassword" data-i18n="auth.passwordLabel"></label>
+          <input id="remotePassword" type="password" autocomplete="off" />
+          <p class="guideHint" data-i18n="auth.passwordHint"></p>
+        </div>
+        <div class="note" id="remoteNote"></div>
+        <div class="row">
+          <button type="submit" class="go" data-i18n="remote.connect"></button>
+          <button type="button" id="remoteCancel" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="browseDialog">
+      <h2 id="browseTitle"></h2>
+      <p class="sub" data-i18n="browse.sub"></p>
+      <div id="browsePath"></div>
+      <div id="browseList"></div>
+      <div class="note bad" id="browseError"></div>
+      <!-- A folder to work in often does not exist yet at the moment it is
+           being chosen, and leaving to make one loses the place. -->
+      <div class="row" id="browseMakeRow">
+        <input id="browseNewName" type="text" autocomplete="off" />
+        <button type="button" id="browseMake" data-i18n="browse.make"></button>
+      </div>
+      <div class="row">
+        <button type="button" id="browseUp" data-i18n="browse.up"></button>
+        <button type="button" class="go" id="browseChoose" data-i18n="browse.choose"></button>
+        <button type="button" id="browseCancel" data-i18n="common.cancel"></button>
+      </div>
+    </dialog>
+
+    <dialog id="fileDialog">
+      <h2 data-i18n="browse.newFile"></h2>
+      <p class="sub" data-i18n="browse.fileSub"></p>
+      <div id="fileTree"></div>
+      <p class="sub" id="fileTargetPath"></p>
+      <input id="fileName" type="text" autocomplete="off" />
+      <textarea id="fileBody" rows="10"></textarea>
+      <div class="note" id="fileNote"></div>
+      <div class="row">
+        <button type="button" class="go" id="fileCreate" data-i18n="browse.createFile"></button>
+        <button type="button" id="fileCancel" data-i18n="common.cancel"></button>
+      </div>
+    </dialog>
+
+    <dialog id="nameDialog">
+      <form id="nameForm">
+        <h2 id="nameTitle"></h2>
+        <input id="nameInput" type="text" autocomplete="off" autofocus />
+        <div class="note" id="nameNote"></div>
+        <div class="row">
+          <button type="submit" class="go" data-i18n="common.confirm"></button>
+          <button type="button" id="nameCancel" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="renameDialog">
+      <form id="renameForm">
+        <h2 id="renameTitle" data-i18n="rename.title"></h2>
+        <p class="sub" id="renameSub" data-i18n="rename.sub"></p>
+        <input id="renameInput" name="label" type="text" autocomplete="off" autofocus />
+        <div class="note" id="renameNote"></div>
+        <div class="row">
+          <button type="submit" class="go" data-i18n="common.confirm"></button>
+          <button type="button" id="renameCancel" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- The phone once it is set up: the switch, and the way to change its sign-in.
+         From the phone icon's menu; setting it up is the dialog below. -->
+    <dialog id="phoneDialog" aria-labelledby="phoneTitle">
+      <h2 id="phoneTitle"><span class="lucide"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg></span><span data-i18n="phone.title"></span></h2>
+      <p class="sub" data-i18n="phone.sub"></p>
+      <label class="resumeOpt"><input type="checkbox" id="phoneAllowed" /> <span data-i18n="phone.allowed"></span></label>
+      <p class="guideHint" data-i18n="phone.step2Body"></p>
+      <p class="guideHint" id="phoneSleepHint"></p>
+      <div class="note" id="phoneStatus"></div>
+      <div class="phoneLine">
+        <button type="button" id="phonePasswordChange" data-i18n="settings.phone.changePassword"></button>
+        <button type="button" id="phoneKeyShow" data-i18n="settings.phone.totpShow"></button>
+        <button type="button" id="phoneKeyRenew" data-i18n="settings.phone.totpRenew"></button>
+      </div>
+      <div class="row">
+        <button type="button" id="phoneDrop" data-i18n="phone.drop" hidden></button>
+        <button type="button" id="phoneClose" data-i18n="common.close"></button>
+      </div>
+    </dialog>
+
+    <!-- Setting the phone up, one step on a page (phone-setup.ts has the order):
+         password, authenticator app, the phone app, the QR. Also each step on its
+         own from settings: a new password, a new key, another phone. -->
+    <dialog id="relayDialog" aria-labelledby="relayTitle">
+      <h2 id="relayTitle"><span class="lucide"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg></span><span data-i18n="phone.title"></span><span id="setupProgress"></span></h2>
+      <div id="setupTrack" hidden><i id="setupFill"></i></div>
+
+      <section class="phoneStep" data-setup="password" hidden>
+        <h3 data-i18n="setup.passwordHead"></h3>
+        <p class="guideHint" data-i18n="setup.passwordBody"></p>
+        <p class="guideHint" id="setupPasswordKept" data-i18n="setup.passwordKept" hidden></p>
+        <label for="setupPassword" data-i18n="setup.password"></label>
+        <input id="setupPassword" type="password" autocomplete="new-password" />
+        <label for="setupPasswordAgain" data-i18n="setup.passwordAgain"></label>
+        <input id="setupPasswordAgain" type="password" autocomplete="new-password" />
+      </section>
+
+      <section class="phoneStep" data-setup="totp" hidden>
+        <h3 data-i18n="setup.totpHead"></h3>
+        <p class="note good" id="setupTotpDone" data-i18n="setup.totpDone" hidden></p>
+        <div id="setupTotpBox">
+          <p class="guideHint" data-i18n="setup.totpGet"></p>
+          <div class="phoneQr">
+            <img id="setupTotpQr" alt="" />
+            <div>
+              <p class="guideHint" data-i18n="setup.totpScan"></p>
+              <p class="guideHint" data-i18n="setup.totpKey"></p>
+              <code id="setupTotpKey"></code>
+            </div>
+          </div>
+          <label for="setupCode" data-i18n="setup.code"></label>
+          <input id="setupCode" type="text" inputmode="numeric" maxlength="7" autocomplete="off" />
+        </div>
+      </section>
+
+      <section class="phoneStep" data-setup="app" hidden>
+        <h3 data-i18n="setup.appHead"></h3>
+        <div class="phoneQr">
+          <img id="setupAppQr" alt="" />
+          <div>
+            <p class="guideHint"><strong>Android</strong></p>
+            <p class="guideHint" data-i18n="setup.appAndroid"></p>
+            <p class="guideHint" data-i18n="setup.appQr"></p>
+          </div>
+        </div>
+        <button type="button" class="listRow" id="setupAppOpen"><span data-i18n="setup.appOpen"></span><span class="sub" id="setupAppUrl"></span></button>
+        <p class="guideHint"><strong>Google Play</strong></p>
+        <p class="guideHint" data-i18n="setup.appPlay"></p>
+        <p class="guideHint"><strong>iPhone</strong></p>
+        <p class="guideHint" data-i18n="setup.appIos"></p>
+      </section>
+
+      <!-- The QR, then the six digits both screens show. -->
+      <section class="phoneStep" data-setup="pair">
+        <h3 data-i18n="setup.pairHead"></h3>
+        <div class="phoneQr" id="relayScan">
+          <img id="relayQr" alt="" />
+          <p class="guideHint" data-i18n="relay.scan"></p>
+        </div>
+        <section id="relayConfirm" hidden>
+          <p class="sub" id="relayFrom"></p>
+          <output id="relayCode"></output>
+          <p data-i18n="relay.same"></p>
+        </section>
+        <div class="note" id="relayNote"></div>
+      </section>
+
+      <section class="phoneStep" data-setup="done" hidden>
+        <h3><svg class="setupCheck" viewBox="0 0 24 24" aria-hidden="true"><path pathLength="1" d="M5 13l4 4L19 7"/></svg><span data-i18n="setup.doneHead"></span></h3>
+        <p class="guideHint" data-i18n="setup.doneBody"></p>
+        <p class="guideHint" id="setupSleepHint"></p>
+      </section>
+
+      <div class="note" id="setupNote"></div>
+      <div class="row">
+        <button type="button" id="setupBack" data-i18n="setup.back" hidden></button>
+        <button type="button" class="go" id="setupNext" hidden></button>
+        <button type="button" class="go" id="relayYes" data-i18n="relay.yes" hidden></button>
+        <button type="button" id="relayNo" data-i18n="relay.no" hidden></button>
+        <button type="button" class="go" id="relayAgain" data-i18n="relay.again" hidden></button>
+        <button type="button" id="relayClose" data-i18n="common.close"></button>
+      </div>
+    </dialog>
+
+    <dialog id="passphraseDialog">
+      <form id="passphraseForm">
+        <h2 id="passphraseTitle" data-i18n="passphrase.title"></h2>
+        <p class="sub" id="passphraseKey"></p>
+        <div class="note bad" id="passphraseRetry"></div>
+        <label for="passphraseInput" data-i18n="passphrase.label"></label>
+        <input id="passphraseInput" name="passphrase" type="password" autocomplete="off" autofocus />
+        <p class="guideHint" id="passphraseNote" data-i18n="passphrase.note"></p>
+        <div class="row">
+          <button type="submit" class="go" data-i18n="common.confirm"></button>
+          <button type="button" id="passphraseCancel" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="loginDialog" aria-labelledby="loginTitle">
+      <form id="loginForm">
+        <h2 id="loginTitle"></h2>
+        <p class="sub" id="loginText"></p>
+        <div class="loginCode" id="loginCodeRow">
+          <output id="loginCode"></output>
+          <button type="button" id="loginCopy" data-i18n="settings.login.copy"></button>
+        </div>
+        <input id="loginInput" type="text" autocomplete="off" spellcheck="false" />
+        <div class="row">
+          <button type="submit" class="go" id="loginOk" data-i18n="common.confirm"></button>
+          <button type="button" id="loginTerminal" data-i18n="settings.login.terminal"></button>
+          <button type="button" id="loginCancel" data-i18n="common.cancel"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="askDialog" aria-labelledby="askMessage" aria-describedby="askDetail">
+      <form method="dialog">
+        <h2 id="askMessage"></h2>
+        <p class="sub" id="askDetail"></p>
+        <div class="row" id="askButtons"></div>
+      </form>
+    </dialog>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

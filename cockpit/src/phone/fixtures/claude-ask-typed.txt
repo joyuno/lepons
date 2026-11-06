@@ -1,0 +1,24 @@
+ ▐▛███▛█   Claude Code v2.1.308
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   ~\work\scratch
+
+
+❯ Use the AskUserQuestion tool exactly once to ask me which color I like, with the options Red,
+  Green and Blue. After I answer, reply with only the word ANSWER: followed by my answer, nothing
+  else.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Color
+
+Which color do you like?
+
+  1. Red
+     Choose red
+  2. Green
+     Choose green
+  3. Blue
+     Choose blue
+❯ 4. purple
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Notepad · Esc to cancel

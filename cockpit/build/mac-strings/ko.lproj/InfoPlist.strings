@@ -1,0 +1,4 @@
+"NSLocalNetworkUsageDescription" = "같은 네트워크(공유기)에 있는 PC에 SSH로 연결하려면 필요해요.";
+"NSDocumentsFolderUsageDescription" = "문서 폴더 안의 프로젝트를 열고 에이전트가 파일을 고칠 수 있게 하려면 필요해요.";
+"NSDesktopFolderUsageDescription" = "데스크탑 폴더 안의 프로젝트를 열고 에이전트가 파일을 고칠 수 있게 하려면 필요해요.";
+"NSDownloadsFolderUsageDescription" = "다운로드 폴더 안의 프로젝트를 열고 에이전트가 파일을 고칠 수 있게 하려면 필요해요.";

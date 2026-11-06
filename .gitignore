@@ -1,0 +1,64 @@
+# Go
+/bin/
+*.exe
+*.test
+*.out
+vendor/
+
+# 런타임 DB (방어적으로 무시)
+*.db
+*.db-wal
+*.db-shm
+/store/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 편집기
+.idea/
+.vscode/
+*.swp
+
+# Node (조종석)
+node_modules/
+
+# 로컬 Codex 작업 상태
+/.worktrees/
+/MEMORY.md
+/artifacts/m0/
+/.superpowers/
+
+# 조종석 빌드 산출물
+cockpit/dist/
+cockpit/release/
+
+# 에이전트 도구가 만드는 로컬 상태 (머신마다 다르고 공유할 것이 없음)
+.claude/
+.serena/
+.codebase-memory/
+.playwright-mcp/
+.qa-sweep-report.md
+
+# UI 확인용으로 찍은 스크린샷 -- 그때 화면의 기록이지 소스가 아니다
+/*.png
+/docs/image.png
+
+# Cloudflare 터널 토큰. 저장소에 들어가면 안 된다.
+/relay/.env
+
+# wrangler local cache (account info)
+.wrangler/
+/.codex-context/
+
+# 로컬 디자인 도구 상태·자료
+/.agents/
+/.taste-skill/
+/skills-lock.json
+/.local-assets/
+/.playwright-mcp/
+
+# 스토어 그래픽·초안 (로컬 보관)
+/mobile/store-assets/
+/mobile/store-shots-draft/
+/.local-assets/

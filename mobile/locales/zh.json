@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "扫描电脑屏幕上的二维码进行连接"
+  }
+}

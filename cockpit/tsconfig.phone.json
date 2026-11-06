@@ -1,0 +1,13 @@
+{
+  // The phone's readers, held to phone/contract.ts on this side too. Its own
+  // pass because under nodenext the app's files, in a package with no "type",
+  // would count as CommonJS. No file here may need mobile/node_modules: CI's
+  // cockpit job does not install them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler"
+  },
+  "include": [],
+  "files": ["../mobile/src/phone/types-match.ts"]
+}

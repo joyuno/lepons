@@ -1,0 +1,62 @@
+# Walks the app in demo mode (no PC, no network) and screenshots every main screen.
+appId: app.lepons.mobile
+---
+- launchApp:
+    clearState: true
+- tapOn: "Try the demo"
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd
+- takeScreenshot: 01-home
+- tapOn: "Sessions.*"
+- waitForAnimationToEnd
+- takeScreenshot: 02-sessions-by-pane
+- tapOn: "shop-web.*"
+- waitForAnimationToEnd
+- takeScreenshot: 03-session-chat
+- tapOn: "Stop"
+- takeScreenshot: 04-stop-armed
+- tapOn: "Tap again"
+- tapOn: "Workflow.*"
+- waitForAnimationToEnd
+- takeScreenshot: 05-session-workflow
+- tapOn: "Files.*"
+- waitForAnimationToEnd
+- takeScreenshot: 06-session-files
+- back
+- tapOn: "Map.*"
+- extendedWaitUntil:
+    visible: "Tap a session for its summary.*"
+    timeout: 15000
+    optional: true
+# The map is a web view: its first open starts Chromium, seconds on the emulator, and a blank web view
+# looks "settled" to waitForAnimationToEnd. Wait for the map to report a drawn frame (testID map-drawn).
+# No swipe: a pan stops the map fitting itself.
+- extendedWaitUntil:
+    visible:
+      id: "map-drawn"
+    timeout: 30000
+- takeScreenshot: 07-map
+# Canvas text is not in the accessibility tree; each session has an invisible button named after its folder.
+- tapOn: "shop-web"
+- extendedWaitUntil:
+    visible: "Open chat"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: 07b-map-sheet
+# The sheet's close button is an icon, found by its accessibility label.
+- tapOn: "Close"
+- waitForAnimationToEnd
+- tapOn: "Home.*"
+- tapOn: "Settings"
+- waitForAnimationToEnd
+- takeScreenshot: 08-settings
+- scrollUntilVisible:
+    element: "AI accounts"
+    optional: true
+- tapOn:
+    text: "AI accounts"
+    optional: true
+- waitForAnimationToEnd
+- takeScreenshot: 09-accounts

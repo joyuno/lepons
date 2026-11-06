@@ -1,0 +1,155 @@
+# Store screenshots of the phone app in demo mode, English and Korean:
+# Android 1080x1920 (pixel_2 emulator) and iOS 6.9" (Pro Max simulator).
+# Runs on a push to ci/mobile-screens. "[skip-ios]" / "[skip-android]" in the commit message skips a job
+# (the macOS job bills 10x).
+name: Mobile store shots
+
+on:
+  push:
+    branches: [ci/mobile-screens]
+  # A manual run has no head commit to read "[skip-ios]" from, hence the input.
+  workflow_dispatch:
+    inputs:
+      skip_ios:
+        type: boolean
+        default: false
+
+jobs:
+  android:
+    if: ${{ !contains(github.event.head_commit.message, '[skip-android]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      # The gradle build and the emulator's disk image do not both fit on the stock runner.
+      - name: Free disk space
+        working-directory: /
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/local/lib/node_modules
+          sudo docker image prune --all --force > /dev/null
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install
+        run: npm ci
+
+      - name: Build APK
+        run: |
+          npx expo prebuild --platform android --no-install
+          cd android && ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=x86_64
+          cp app/build/outputs/apk/release/app-release.apk ../app-release.apk
+          cd .. && rm -rf android ~/.gradle/caches
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Shoot
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          working-directory: mobile
+          script: |
+            adb install app-release.apk
+            bash maestro/store-shots-android.sh
+
+      - name: Check sizes
+        run: python3 maestro/png-size.py 1080x1920 store-shots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: store-shots-android
+          path: |
+            mobile/store-shots
+            mobile/out-*
+          if-no-files-found: warn
+
+  ios:
+    if: ${{ !contains(github.event.head_commit.message, '[skip-ios]') && !inputs.skip_ios }}
+    runs-on: macos-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      MAESTRO_DRIVER_STARTUP_TIMEOUT: "180000"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Pick the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)"
+          xcodebuild -version
+          xcrun simctl list runtimes
+
+      - name: Install
+        run: npm ci
+
+      # Release build for the simulator, signed "to run locally" (no team): Xcode then embeds the simulated
+      # entitlements SecureStore needs for the keychain. Fully unsigned, every keychain read failed with -34018;
+      # re-signing by hand made the simulator refuse to launch it.
+      - name: Build app
+        run: |
+          npx expo prebuild --platform ios
+          xcodebuild -workspace ios/Lepons.xcworkspace -scheme Lepons -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= -quiet
+          cp -R build/Build/Products/Release-iphonesimulator/Lepons.app .
+          codesign -d --entitlements - Lepons.app || true
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Shoot
+        run: bash maestro/store-shots-ios.sh
+
+      - name: Check sizes
+        run: python3 maestro/png-size.py 1320x2868,1290x2796,1242x2688,1284x2778 store-shots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: store-shots-ios
+          path: |
+            mobile/store-shots
+            mobile/out-*
+          if-no-files-found: warn

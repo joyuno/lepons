@@ -1,0 +1,205 @@
+import { clipboard, contextBridge, ipcRenderer } from "electron";
+
+import { channels } from "../shared/ipc.ts";
+import type { EntryAction } from "../browse/entry-ops.ts";
+import type {
+  AgentKind,
+  Executor,
+  BrowseResult,
+  CockpitApi,
+  DialogRequest,
+  EditedText,
+  NodeConfig,
+  PassphraseRequest,
+  RepoAction,
+  SessionState,
+  SettingsAction,
+} from "../shared/ipc.ts";
+
+/**
+ * The whole surface the renderer gets. Nothing here hands out a file path, a
+ * key, or an ipcRenderer handle; every call is a named operation on main.
+ */
+const api: CockpitApi = {
+  frameless: process.argv.includes("--frameless"),
+  trafficLights: process.argv.includes("--traffic-lights"),
+  firstLocale: process.argv.find((arg) => arg.startsWith("--first-locale="))?.slice("--first-locale=".length) ?? "",
+  onFullScreen: (handler: (on: boolean) => void) => {
+    ipcRenderer.on(channels.fullScreen, (_event, on: boolean) => handler(on));
+  },
+  setTheme: (theme: "dark" | "light" | "system") => ipcRenderer.send(channels.setTheme, theme),
+  translate: (text: string, locale: string) => ipcRenderer.invoke(channels.translate, text, locale),
+  settingsInfo: () => ipcRenderer.invoke(channels.settingsInfo),
+  agentAccounts: (nodeId: string) => ipcRenderer.invoke(channels.agentAccounts, nodeId),
+  agentLogin: (nodeId: string, kind: AgentKind) => ipcRenderer.invoke(channels.agentLogin, nodeId, kind),
+  agentLoginDone: () => ipcRenderer.invoke(channels.agentLoginDone),
+  agentLoginInput: (text: string | null) => ipcRenderer.send(channels.agentLoginInput, text),
+  settingsAction: (action: SettingsAction, value?: string) => ipcRenderer.send(channels.settingsAction, action, value),
+  petShow: (on: boolean) => ipcRenderer.send(channels.petShow, on),
+  petMood: (mood: string, label: string) => ipcRenderer.send(channels.petMood, mood, label),
+  onPetClicked: (handler: () => void) => {
+    ipcRenderer.on(channels.petClick, () => handler());
+  },
+  onPetMood: (handler: (mood: string, label: string) => void) => {
+    ipcRenderer.on(channels.petMood, (_event, mood: string, label: string) => handler(mood, label));
+  },
+  petMove: (dx: number, dy: number) => ipcRenderer.send(channels.petMove, dx, dy),
+  petClick: () => ipcRenderer.send(channels.petClick),
+  toFront: () => ipcRenderer.send(channels.toFront),
+  petReset: () => ipcRenderer.send(channels.petReset),
+  onPetTheme: (handler) => {
+    ipcRenderer.on(channels.petTheme, (_event, theme) => handler(theme));
+  },
+  onPowerAction: (handler: (action: string, value?: string) => void) => {
+    ipcRenderer.on(channels.powerAction, (_event, action: string, value?: string) => handler(action, value));
+  },
+  toggleMaximize: () => ipcRenderer.send(channels.toggleMaximize),
+  windowControl: (action: "minimize" | "maximize" | "close") => ipcRenderer.send(channels.windowControl, action),
+  shareSuggestions: () => ipcRenderer.invoke(channels.shareSuggestions),
+  openLink: (nodeId: string, url: string) => ipcRenderer.invoke(channels.openLink, nodeId, url),
+  closeForward: (nodeId: string, port: number) => ipcRenderer.send(channels.closeForward, nodeId, port),
+  saveLayout: (layout: string) => ipcRenderer.send(channels.saveLayout, layout),
+  lastLayout: () => ipcRenderer.invoke(channels.lastLayout),
+  moveWindow: (dx: number, dy: number, start: boolean) => ipcRenderer.send(channels.moveWindow, dx, dy, start),
+  listNodes: () => ipcRenderer.invoke(channels.listNodes),
+  addLocalFolder: () => ipcRenderer.invoke(channels.addLocalFolder),
+  addRemote: (destination: string, agent: AgentKind, password?: string) =>
+    ipcRenderer.invoke(channels.addRemote, destination, agent, password),
+  addRemoteFolder: (nodeId: string, path: string) =>
+    ipcRenderer.invoke(channels.addRemoteFolder, nodeId, path),
+  removeNode: (id: string) => ipcRenderer.invoke(channels.removeNode, id),
+  removeRepos: (nodeId: string, repoIds: string[]) => ipcRenderer.invoke(channels.removeRepos, nodeId, repoIds),
+  setLocale: (locale: string) => ipcRenderer.send(channels.setLocale, locale),
+  renameRepo: (nodeId: string, repoId: string, label: string) =>
+    ipcRenderer.invoke(channels.renameRepo, nodeId, repoId, label),
+  renameNode: (nodeId: string, name: string) => ipcRenderer.invoke(channels.renameNode, nodeId, name),
+  retargetNode: (nodeId: string, destination: string) => ipcRenderer.invoke(channels.retargetNode, nodeId, destination),
+  setAutoConnect: (nodeId: string, on: boolean) => ipcRenderer.invoke(channels.setAutoConnect, nodeId, on),
+  reorderNodes: (ids: string[]) => ipcRenderer.invoke(channels.reorderNodes, ids),
+  reorderRepos: (nodeId: string, repoIds: string[]) => ipcRenderer.invoke(channels.reorderRepos, nodeId, repoIds),
+  browse: (node: NodeConfig, path: string): Promise<BrowseResult> =>
+    ipcRenderer.invoke(channels.browse, node, path),
+  setupInfo: () => ipcRenderer.invoke(channels.setupInfo),
+  mapState: () => ipcRenderer.invoke(channels.mapState),
+  setGrant: (nodeId: string, repoWireId: string, allowed: boolean) =>
+    ipcRenderer.invoke(channels.setGrant, nodeId, repoWireId, allowed),
+  shareStatus: (nodeId: string) => ipcRenderer.invoke(channels.shareStatus, nodeId),
+  retryShare: (nodeId: string) => ipcRenderer.send(channels.retryShare, nodeId),
+  recheckTmux: (nodeId: string) => ipcRenderer.invoke(channels.recheckTmux, nodeId),
+  installTmux: (nodeId: string) => ipcRenderer.invoke(channels.installTmux, nodeId),
+  openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean) =>
+    ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal),
+  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean) =>
+    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal),
+  writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
+  resizeSession: (key: string, cols: number, rows: number) =>
+    ipcRenderer.send(channels.resizeSession, key, cols, rows),
+  stopSession: (nodeId: string, repoId: string | null) =>
+    ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
+  sessionWorkflow: (nodeId: string, repoId: string) =>
+    ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId),
+  sessionTurn: (nodeId: string, repoId: string, workedMs: number) =>
+    ipcRenderer.invoke(channels.sessionTurn, nodeId, repoId, workedMs),
+  restartAgent: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.restartAgent, nodeId, repoId),
+  pastConversations: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.pastConversations, nodeId, repoId),
+  listDelegations: () => ipcRenderer.invoke(channels.listDelegations),
+  downloadFile: (nodeId: string, path: string) => ipcRenderer.invoke(channels.downloadFile, nodeId, path),
+  repoMenu: (nodeId: string, repoId: string, x: number, y: number) =>
+    ipcRenderer.send(channels.repoMenu, nodeId, repoId, x, y),
+  onRepoAction: (handler: (action: RepoAction, nodeId: string, repoId: string) => void) => {
+    ipcRenderer.on(channels.repoAction, (_event, action: RepoAction, nodeId: string, repoId: string) =>
+      handler(action, nodeId, repoId),
+    );
+  },
+  terminalMenu: (key: string, canCopy: boolean) => ipcRenderer.send(channels.terminalMenu, key, canCopy),
+  onTerminalAction: (handler: (action: "copy" | "paste", key: string) => void) => {
+    ipcRenderer.on(channels.terminalAction, (_event, action: "copy" | "paste", key: string) => handler(action, key));
+  },
+  fileMenu: (nodeId: string, path: string, isDirectory: boolean, canPaste: boolean, pinned?: boolean) =>
+    ipcRenderer.invoke(channels.fileMenu, nodeId, path, isDirectory, canPaste, pinned),
+  onFileAction: (handler: (action: EntryAction, nodeId: string, path: string, isDirectory: boolean) => void) => {
+    ipcRenderer.on(channels.fileAction, (_event, action: EntryAction, nodeId: string, path: string, isDirectory: boolean) =>
+      handler(action, nodeId, path, isDirectory),
+    );
+  },
+  deleteEntry: (nodeId: string, path: string) => ipcRenderer.invoke(channels.deleteEntry, nodeId, path),
+  moveEntry: (nodeId: string, from: string, to: string) => ipcRenderer.invoke(channels.moveEntry, nodeId, from, to),
+  copyEntry: (nodeId: string, from: string, to: string) => ipcRenderer.invoke(channels.copyEntry, nodeId, from, to),
+  openForEdit: (nodeId: string, path: string) => ipcRenderer.invoke(channels.openForEdit, nodeId, path),
+  scanImports: () => ipcRenderer.invoke(channels.scanImports),
+  importLocalFolder: (path: string) => ipcRenderer.invoke(channels.importLocalFolder, path),
+  saveEdited: (nodeId: string, path: string, edit: EditedText, force: boolean) =>
+    ipcRenderer.invoke(channels.saveEdited, nodeId, path, edit, force),
+  readText: (nodeId: string, path: string) => ipcRenderer.invoke(channels.readText, nodeId, path),
+  readBinary: (nodeId: string, path: string) => ipcRenderer.invoke(channels.readBinary, nodeId, path),
+  makeFolder: (nodeId: string, parent: string, name: string) =>
+    ipcRenderer.invoke(channels.makeFolder, nodeId, parent, name),
+  makeFile: (nodeId: string, directory: string, name: string, contents: string) =>
+    ipcRenderer.invoke(channels.makeFile, nodeId, directory, name, contents),
+  // Electron's own clipboard, not navigator.clipboard: the renderer is a
+  // file:// origin, which Chromium does not treat as a secure context, so
+  // the web clipboard API is unavailable exactly where the terminal needs it.
+  readClipboard: () => clipboard.readText(),
+  writeClipboard: (text: string) => clipboard.writeText(text),
+  clipboardHasImage: () => !clipboard.readImage().isEmpty(),
+  pasteImage: (nodeId: string) => ipcRenderer.invoke(channels.pasteImage, nodeId),
+  usage: (only?: string) => ipcRenderer.invoke(channels.usage, only),
+  tokenStats: () => ipcRenderer.invoke(channels.tokenStats),
+  onUsage: (handler: (usage: import("../agent/usage.ts").Usage) => void) => {
+    ipcRenderer.on(channels.usageChanged, (_event, usage: import("../agent/usage.ts").Usage) => handler(usage));
+  },
+  setMcpAgents: (nodeId: string, agents: AgentKind[]) => ipcRenderer.invoke(channels.setMcpAgents, nodeId, agents),
+  onData: (handler: (key: string, chunk: string) => void) => {
+    ipcRenderer.on(channels.data, (_event, key: string, chunk: string) => handler(key, chunk));
+  },
+  onAgentGone: (handler: (key: string, gone: boolean) => void) => {
+    ipcRenderer.on(channels.agentGone, (_event, key: string, gone: boolean) => handler(key, gone));
+  },
+  onState: (handler: (key: string, state: SessionState) => void) => {
+    ipcRenderer.on(channels.state, (_event, key: string, state: SessionState) => handler(key, state));
+  },
+  onNodes: (handler: (nodes: NodeConfig[]) => void) => {
+    ipcRenderer.on(channels.nodesChanged, (_event, list: NodeConfig[]) => handler(list));
+  },
+  onShareChanged: (handler: (nodeId: string, nudge: string[], restart: string[]) => void) => {
+    ipcRenderer.on(channels.shareChanged, (_event, nodeId: string, nudge: string[], restart: string[] = []) =>
+      handler(nodeId, nudge, restart));
+  },
+  watchTranscripts: (on: boolean) => ipcRenderer.send(channels.watchTranscripts, on),
+  onTranscript: (handler: (nodeId: string, repoId: string) => void) => {
+    ipcRenderer.on(channels.transcriptChanged, (_event, nodeId: string, repoId: string) =>
+      handler(nodeId, repoId),
+    );
+  },
+  onPassphraseRequest: (handler: (request: PassphraseRequest) => void) => {
+    ipcRenderer.on(channels.passphraseRequest, (_event, request: PassphraseRequest) =>
+      handler(request),
+    );
+  },
+  replyPassphrase: (requestId: string, passphrase: string | null) =>
+    ipcRenderer.send(channels.passphraseReply, requestId, passphrase),
+  onDialogRequest: (handler: (request: DialogRequest) => void) => {
+    ipcRenderer.on(channels.dialogRequest, (_event, request: DialogRequest) => handler(request));
+  },
+  replyDialog: (requestId: string, response: number) => ipcRenderer.send(channels.dialogReply, requestId, response),
+  phoneSnapshot: (sessions) => ipcRenderer.send(channels.phoneSnapshot, sessions),
+  phoneSettings: () => ipcRenderer.invoke(channels.phoneSettings),
+  setPhoneAllowed: (on) => ipcRenderer.invoke(channels.setPhoneAllowed, on),
+  setPhonePassword: (password) => ipcRenderer.invoke(channels.setPhonePassword, password),
+  phoneTotp: (renew) => ipcRenderer.invoke(channels.phoneTotp, renew),
+  phoneTotpCheck: (code) => ipcRenderer.invoke(channels.phoneTotpCheck, code),
+  dropPhones: () => ipcRenderer.send(channels.dropPhones),
+  phoneQr: (text) => ipcRenderer.invoke(channels.phoneQr, text),
+  relayAction: (action, value) => ipcRenderer.invoke(channels.relayAction, action, value),
+  onPhoneInput: (handler) => {
+    ipcRenderer.on(channels.phoneInput, (_event, key: string) => handler(key));
+  },
+  onPhoneReconnect: (handler) => {
+    ipcRenderer.on(channels.phoneReconnect, (_event, nodeId: string) => handler(nodeId));
+  },
+  onPhoneChanged: (handler) => {
+    ipcRenderer.on(channels.phoneChanged, (_event, view) => handler(view));
+  },
+};
+
+contextBridge.exposeInMainWorld("cockpit", api);

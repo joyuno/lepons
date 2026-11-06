@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lepons.dev/schema/read-envelope.schema.json",
+  "title": "Lepons read protocol v1",
+  "$defs": {
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "version"],
+      "properties": {
+        "type": { "const": "hello" },
+        "version": { "const": 1 }
+      }
+    },
+    "read_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "repo", "path"],
+      "properties": {
+        "type": { "const": "read" },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]+$"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3072
+        }
+      }
+    },
+    "as_of": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content_hash"],
+      "properties": {
+        "content_hash": { "type": "string" }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "fidelity", "content_base64", "as_of"],
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "fidelity": { "type": "string" },
+        "content_base64": { "type": "string" },
+        "as_of": { "$ref": "#/$defs/as_of" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "unknown_repo",
+            "invalid_path",
+            "symlink_metadata_only",
+            "handshake_required",
+            "protocol_mismatch",
+            "node_offline",
+            "timeout",
+            "read_failed"
+          ]
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "read_response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "entry": { "$ref": "#/$defs/entry" },
+        "error": { "$ref": "#/$defs/error" }
+      },
+      "oneOf": [
+        { "required": ["entry"] },
+        { "required": ["error"] }
+      ]
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/read_request" },
+    { "$ref": "#/$defs/read_response" }
+  ]
+}

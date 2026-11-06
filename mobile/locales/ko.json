@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "NSCameraUsageDescription": "PC 화면의 QR을 찍어 연결해요"
+  }
+}

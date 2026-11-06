@@ -1,0 +1,22 @@
+# Lepons
+
+> Lepons is a free desktop app (Windows, macOS) that puts the AI coding agents on all your PCs on one screen: Claude Code, Codex, Grok, Antigravity and Cursor, on this PC and on any VM or server it reaches over SSH. It shares codebases between computers, draws all the work on one workflow map, splits the screen into panes with tabs, and has a phone app to carry on while away.
+
+- Home (Korean): https://lepons.app/
+- Home (English): https://lepons.app/en/
+- Download (Windows .exe, macOS .dmg): https://github.com/joyuno/lepons/releases/latest
+- Android APK: https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk
+- Guide (Korean): https://github.com/joyuno/lepons/blob/main/README.md
+- Guide (English): https://github.com/joyuno/lepons/blob/main/README.en.md
+- Privacy: https://lepons.app/privacy
+- Terms: https://lepons.app/terms
+- Support: https://lepons.app/support
+
+## Key facts
+- Sharing map: drag a folder onto another computer and its agents read and search it over MCP (read-only, values that look like secrets are masked). Work can be delegated to the computer that owns the folder; delegated work runs without permission prompts, so share only between computers you trust.
+- Workflow map (Ctrl/Cmd+Shift+M): each computer branches into folders, sessions and subagents, with always-visible summaries and a Goal / Progress / Now / Result card per session. "Needs you N" steps through waiting sessions. The map is for watching; answers go in the session's pane.
+- Panes: up to eight on screen. A pane holds one project's AI sessions, terminals and files as tabs. Files on this PC or a remote machine can be viewed and edited in place.
+- Remote machines need only SSH; nothing from Lepons is installed there. With tmux, sessions survive dropped connections. If tmux is missing, Lepons installs it in one click (a sudo password is asked in its own dialog and never saved).
+- AI sign-ins: see each computer's AI install and sign-in state, install what is missing, and sign in on remote machines.
+- Phone app: Android as a direct APK (Google Play is a closed test); iPhone is not on the App Store yet. Pairs by QR plus a six-digit check, signs in with a password and an authenticator (TOTP) code, connects through a relay (relay.lepons.app) with end-to-end encryption the relay cannot read. Notifications come when an AI puts up a choice, plus one silent notice when all work has finished (it can be turned off). They show at most the PC's name. The phone can answer and stop (Esc) but never quit an agent. One PC connects to one phone.
+- Free, no Lepons account, no ads. The PC app needs each AI tool's own account.

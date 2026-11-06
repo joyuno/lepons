@@ -1,0 +1,57 @@
+# Store screenshots: the app in demo mode, in whatever language the device is set to (English or Korean).
+# Android and iOS run the same flow, so it never uses `back` (Android only); settings comes from a fresh launch.
+# No clearState: demo mode saves nothing, and on iOS clearState reinstalls the app, which the simulator then refused to launch.
+appId: app.lepons.mobile
+---
+- launchApp
+# After the Android locale restart the emulator can show "System isn't responding" over the app (as in video-flows.yaml).
+- tapOn:
+    text: "Wait|대기|기다리기"
+    optional: true
+- tapOn: "Try the demo|데모 둘러보기"
+- tapOn:
+    text: "Allow|허용"
+    optional: true
+- waitForAnimationToEnd
+- takeScreenshot: 01-home
+- tapOn: "(.*, )?(Sessions|세션)(, .*)?"
+- waitForAnimationToEnd
+- takeScreenshot: 02-sessions
+- tapOn: "(.*, )?(Map|지도)(, .*)?"
+# The map is a web view; wait for its drawn frame (testID map-drawn), not for animations.
+- extendedWaitUntil:
+    visible:
+      id: "map-drawn"
+    timeout: 30000
+# A frame on the canvas is not yet a frame on screen (the web view composites later): a moment for it to show. The map never stops moving, so this waits the timeout out.
+- waitForAnimationToEnd:
+    timeout: 3000
+- takeScreenshot: 03-map
+- tapOn: "shop-web"
+- extendedWaitUntil:
+    visible: "Open chat|대화 열기"
+    timeout: 10000
+- waitForAnimationToEnd
+- takeScreenshot: 04-map-summary
+- tapOn: "Open chat|대화 열기"
+# shop-web waits on a numbered menu (1. Yes ...).
+- extendedWaitUntil:
+    visible: ".*Yes.*"
+    timeout: 10000
+    optional: true
+- waitForAnimationToEnd
+- takeScreenshot: 05-session-chat
+- tapOn: "(.*, )?(Files|파일)(, .*)?"
+- waitForAnimationToEnd
+- takeScreenshot: 06-session-files
+- launchApp
+- tapOn:
+    text: "Wait|대기|기다리기"
+    optional: true
+- tapOn: "Try the demo|데모 둘러보기"
+- tapOn:
+    text: "Allow|허용"
+    optional: true
+- tapOn: "Settings|설정"
+- waitForAnimationToEnd
+- takeScreenshot: 07-settings

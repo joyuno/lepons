@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' file: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <!-- produck's own window: transparent, on top of everything, so the duck
+         can sit on the desktop as well as over Lepons. The page only draws;
+         which mood to show is decided by the cockpit window (pet.ts). -->
+    <style>
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none; }
+      #stage { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 10px; cursor: grab; }
+      #stage.dragging { cursor: grabbing; }
+      /* Still, but for how a turn ends: a small hop when it went well, a droop
+         that stays when it failed. From the feet, so it stands on the same spot. */
+      :root { --ease: cubic-bezier(0.2, 0, 0, 1); }
+      #duck { transform-origin: 50% 100%; }
+      #duck { display: flex; align-items: flex-end; justify-content: center; filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.18)); }
+      #art { width: 96px; height: 96px; object-fit: contain; object-position: 50% 100%; display: block; }
+      /* A Codex Pet's cell is 192x208; drawn at half size, feet on the floor. */
+      #sprite { width: 96px; height: 104px; display: none; image-rendering: auto; }
+      .codex #art { display: none; }
+      .codex #sprite { display: block; }
+      #shadow { position: absolute; bottom: 6px; left: 50%; width: 56px; height: 8px; margin-left: -28px;
+        border-radius: 50%; background: rgb(0 0 0 / 0.16); filter: blur(1.5px); }
+      .done #duck { animation: hop 360ms var(--ease); }
+      .done #shadow { animation: hopShadow 360ms var(--ease); }
+      @keyframes hop { 40% { transform: translateY(-8px); } }
+      @keyframes hopShadow { 40% { transform: scaleX(0.8); opacity: 0.6; } }
+
+      .error #duck { animation: droop 360ms var(--ease) both; }
+      @keyframes droop { to { transform: translateY(2px) rotate(-4deg) scale(1.02, 0.95); } }
+
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div id="stage" class="idle">
+      <div id="shadow"></div>
+      <div id="duck"><img id="art" src="pet/idle.webp" alt="" draggable="false" /><canvas id="sprite" width="192" height="208"></canvas></div>
+    </div>
+    <script>
+      const stage = document.getElementById("stage");
+      const art = document.getElementById("art");
+      const sprite = document.getElementById("sprite");
+      let mood = "idle";
+      let dragged = false;
+      // produck unless a character was chosen: either one image per mood, or
+      // a Codex Pet's spritesheet, one row per animation.
+      let theme = null;
+      // Codex rows: 0 idle, 1 run right, 3 waving, 4 jumping, 5 failed, 6 waiting, 7 running.
+      const ROW = { idle: 0, working: 7, waiting: 6, connecting: 3, done: 4, error: 5, sleeping: 0, delegate: 1 };
+      let sheet = null;
+      let frames = [];
+      let frame = 0;
+      const paint = () => {
+        stage.className = `${mood}${theme?.kind === "codex" ? " codex" : ""}`;
+        if (theme?.kind === "codex") return;
+        art.src = theme?.kind === "files" ? (theme.urls[mood] ?? theme.urls.idle) : `pet/${mood}.webp`;
+      };
+      // How many frames each row really has: consecutive cells from the left
+      // with anything drawn in them, as Codex plays them.
+      const countFrames = (image) => {
+        const probe = document.createElement("canvas");
+        probe.width = 192;
+        probe.height = 208;
+        const context = probe.getContext("2d", { willReadFrequently: true });
+        return Array.from({ length: theme.rows }, (_, row) => {
+          let count = 0;
+          for (let col = 0; col < 8; col += 1) {
+            context.clearRect(0, 0, 192, 208);
+            context.drawImage(image, col * 192, row * 208, 192, 208, 0, 0, 192, 208);
+            if (!context.getImageData(0, 0, 192, 208).data.some((value, i) => i % 4 === 3 && value > 0)) break;
+            count += 1;
+          }
+          return Math.max(count, 1);
+        });
+      };
+      // Still as well: a turn's end plays its row once and rests on the last frame, anything else holds its first.
+      const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+      let drawn = "";
+      setInterval(() => {
+        if (theme?.kind !== "codex" || !sheet) return;
+        const row = ROW[mood] ?? 0;
+        frame = (mood === "done" || mood === "error") && !reduced.matches ? Math.min(frame + 1, frames[row] - 1) : 0;
+        if (drawn === `${row}/${frame}`) return;
+        drawn = `${row}/${frame}`;
+        const context = sprite.getContext("2d");
+        context.clearRect(0, 0, 192, 208);
+        context.drawImage(sheet, frame * 192, row * 208, 192, 208, 0, 0, 192, 208);
+      }, 150);
+      cockpit.onPetTheme((next) => {
+        theme = next;
+        sheet = null;
+        drawn = "";
+        if (theme?.kind === "codex") {
+          const image = new Image();
+          image.onload = () => {
+            frames = countFrames(image);
+            sheet = image;
+          };
+          image.src = theme.sheet;
+        }
+        paint();
+      });
+      cockpit.onPetMood((next, label) => {
+        stage.title = label;
+        if (next === mood) return;
+        mood = next;
+        frame = 0;
+        paint();
+      });
+      // Moved by hand rather than as a drag region: a drag region swallows
+      // the click that opens the session.
+      stage.addEventListener("pointerdown", (event) => {
+        let last = { x: event.screenX, y: event.screenY };
+        let moved = false;
+        stage.setPointerCapture(event.pointerId);
+        const move = (e) => {
+          if (!moved && Math.hypot(e.screenX - event.screenX, e.screenY - event.screenY) < 4) return;
+          moved = true;
+          stage.classList.add("dragging");
+          cockpit.petMove(e.screenX - last.x, e.screenY - last.y);
+          last = { x: e.screenX, y: e.screenY };
+        };
+        stage.addEventListener("pointermove", move);
+        stage.addEventListener("pointerup", () => {
+          stage.removeEventListener("pointermove", move);
+          stage.classList.remove("dragging");
+          dragged = moved;
+          if (!moved) cockpit.petClick();
+        }, { once: true });
+      });
+      // A drag that starts and ends on the same spot of the duck reads as a
+      // second click: only a real double-click sends it home.
+      stage.addEventListener("dblclick", () => {
+        if (!dragged) cockpit.petReset();
+      });
+    </script>
+  </body>
+</html>

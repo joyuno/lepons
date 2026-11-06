@@ -133,7 +133,7 @@ Ten hours. The phone cannot reach a PC that is asleep, so turn off sleep in the 
 Remote-SSH installs VS Code Server on the remote machine to build a dev environment there. Lepons installs nothing remotely, puts agent sessions from many machines in one window, and shows what they are doing on the map and on your phone.
 
 **Is it free?**
-Yes. Lepons is offered free and non-commercially. A license will be settled when the source is published.
+Yes. Lepons is an open-source project under the MIT License, and its source code is in this repository.
 
 ## Support
 
