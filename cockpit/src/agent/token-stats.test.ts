@@ -251,7 +251,8 @@ test("on a Mac, runs in /private/var/folders (the real path of the temp folder) 
   }
 });
 
-test("on a Mac, a session's scratch space under /private/tmp/claude-<uid> counts toward that session's project", async () => {
+// Where the temp folder is /tmp itself (Linux CI), the test's home lands inside it, and /tmp rightly stops counting as temp.
+test("on a Mac, a session's scratch space under /private/tmp/claude-<uid> counts toward that session's project", { skip: tmpdir().startsWith("/tmp") && "the test home would sit in /tmp" }, async () => {
   const box = await mkdtemp(join(tmpdir(), "lepons-token-"));
   const home = join(box, "home"), saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
   try {
