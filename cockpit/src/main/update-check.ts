@@ -91,13 +91,17 @@ export async function checkForUpdate(
     }
     const latest = tag.replace(/^v/, "");
     if (!isNewer(latest, current)) return { kind: "current", latest };
-    // The app-only patch made for this exact runtime, if the release has
-    // one; and on Windows the full installer, for when it does not. The Mac
-    // build is not signed, so it cannot reinstall itself; without a patch,
-    // the page is offered there instead.
-    const patchName = target && patchAssetName(latest, target.platform, target.arch, target.fingerprint);
+    // Windows: the app-only patch made for this exact runtime, if the release
+    // has one, and the full installer for when it does not. A Mac never takes
+    // the patch: the app there is signed and notarized, rewriting its archive
+    // from inside breaks that signature, and macOS then takes it for a new app
+    // and drops every folder permission it was given. It gets the signed DMG
+    // for its architecture instead, opened for the operator to drag over.
+    const patchName = target && platform !== "darwin" && patchAssetName(latest, target.platform, target.arch, target.fingerprint);
     const patch = patchName ? verifiedAsset(release?.assets, (name) => name === patchName) : undefined;
-    const installer = platform === "win32" ? verifiedAsset(release?.assets, (name) => name.endsWith(".exe")) : undefined;
+    const installer = platform === "win32" ? verifiedAsset(release?.assets, (name) => name.endsWith(".exe"))
+      : platform === "darwin" ? verifiedAsset(release?.assets, (name) => name.endsWith(".dmg") && (!target || name.includes(`-${target.arch}.`)))
+      : undefined;
     return { kind: "newer", latest, url, ...(installer ? { installer } : {}), ...(patch ? { patch } : {}) };
   } catch (error) {
     return { kind: "failed", detail: error instanceof Error ? error.message : String(error) };

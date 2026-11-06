@@ -73,9 +73,18 @@ test("an app-only patch is offered only for the runtime it was built for", async
   const patch = { ...exe, name: "Lepons-Cockpit-1.6.4-darwin-arm64-0123456789ab.asar.gz", browser_download_url: exe.browser_download_url.replace(/[^/]+$/, "Lepons-Cockpit-1.6.4-darwin-arm64-0123456789ab.asar.gz"), size: 13_000_000 };
   const other = { ...patch, name: patch.name.replace("0123456789ab", "ffffffffffff"), browser_download_url: patch.browser_download_url.replace("0123456789ab", "ffffffffffff") };
 
-  const mac = await checkForUpdate("1.6.3", withAssets([other, patch]), "darwin", target);
-  assert.deepEqual(mac.kind === "newer" && mac.patch, { name: patch.name, url: patch.browser_download_url, sha256: sha, size: 13_000_000 });
-  assert.ok(mac.kind === "newer" && !mac.installer, "no installer on a Mac");
+  // A Mac never takes the patch (it would break the app's signature and with it
+  // the folder permissions); it gets the signed DMG for its architecture.
+  const dmg = { ...exe, name: "Lepons.Cockpit-1.6.4-arm64.dmg", browser_download_url: exe.browser_download_url.replace(/[^/]+$/, "Lepons.Cockpit-1.6.4-arm64.dmg") };
+  const intelDmg = { ...dmg, name: "Lepons.Cockpit-1.6.4-x64.dmg", browser_download_url: dmg.browser_download_url.replace("arm64", "x64") };
+  const mac = await checkForUpdate("1.6.3", withAssets([other, patch, intelDmg, dmg]), "darwin", target);
+  assert.ok(mac.kind === "newer" && !mac.patch, "no patch on a Mac");
+  assert.equal(mac.kind === "newer" && mac.installer?.name, dmg.name, "the DMG for this Mac's architecture");
+  const macNoDmg = await checkForUpdate("1.6.3", withAssets([patch]), "darwin", target);
+  assert.ok(macNoDmg.kind === "newer" && !macNoDmg.patch && !macNoDmg.installer, "no DMG yet: the page instead");
+  const winPatch = { ...patch, name: patch.name.replace("darwin-arm64", "win32-x64"), browser_download_url: patch.browser_download_url.replace("darwin-arm64", "win32-x64") };
+  const win = await checkForUpdate("1.6.3", withAssets([winPatch, exe]), "win32", { ...target, platform: "win32", arch: "x64" });
+  assert.equal(win.kind === "newer" && win.patch?.name, winPatch.name, "Windows keeps its patch");
 
   const changedRuntime = await checkForUpdate("1.6.3", withAssets([other, exe]), "win32", { ...target, platform: "win32", arch: "x64" });
   assert.ok(changedRuntime.kind === "newer" && !changedRuntime.patch && changedRuntime.installer, "another runtime: the installer instead");

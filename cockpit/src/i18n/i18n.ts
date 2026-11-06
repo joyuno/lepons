@@ -290,6 +290,8 @@ const ko: Dictionary = {
   "update.ready": "Lepons {latest} 설치 준비가 끝났습니다",
   "update.readyDetail": "지금 다시 시작하면 이 PC의 터미널은 닫히고, 원격 PC의 tmux 작업은 그대로 계속됩니다. 나중에 하면 Lepons를 닫을 때 설치됩니다.",
   "update.restartNow": "지금 다시 시작",
+  "update.readyDetailMac": "Lepons를 닫으면 설치 파일이 열립니다. 새 Lepons를 응용 프로그램 폴더로 끌어다 놓아 기존 앱을 바꿔 주세요. 이 PC의 터미널은 닫히고, 원격 PC의 tmux 작업은 그대로 계속됩니다.",
+  "update.restartNowMac": "지금 닫고 설치",
   "update.onQuit": "닫을 때 설치",
 
   "workflow.toggle": "워크플로우",
@@ -1064,6 +1066,8 @@ const en: Dictionary = {
   "update.ready": "Lepons {latest} is ready to install",
   "update.readyDetail": "Restarting now closes the terminals on this computer; work in tmux on remote machines carries on. Choose later, and it installs when you close Lepons.",
   "update.restartNow": "Restart now",
+  "update.readyDetailMac": "Closing Lepons opens the installer. Drag the new Lepons into Applications to replace the old one. Terminals on this computer close; work in tmux on remote machines carries on.",
+  "update.restartNowMac": "Quit and install",
   "update.onQuit": "Install when I close",
 
   "workflow.toggle": "Workflow",
@@ -1839,6 +1843,8 @@ const zh: Dictionary = {
   "update.ready": "Lepons {latest} 已可以安装",
   "update.readyDetail": "立即重启会关闭本机的终端，远程机器上 tmux 中的工作会继续。选择稍后，则在关闭 Lepons 时安装。",
   "update.restartNow": "立即重启",
+  "update.readyDetailMac": "关闭 Lepons 后会打开安装文件。请把新的 Lepons 拖到“应用程序”文件夹替换旧版本。本机的终端会关闭，远程机器上 tmux 中的工作会继续。",
+  "update.restartNowMac": "立即关闭并安装",
   "update.onQuit": "关闭时安装",
 
   "workflow.toggle": "工作流",

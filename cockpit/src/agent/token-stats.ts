@@ -109,7 +109,8 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
   const ids = new Set<string>();
   let totalBytes = 0;
   let scanned = 0;
-  const tidy = (path: string) => path.replaceAll("\\", "/").replace(/\/+$/, "") || "/";
+  // macOS records the real path (/private/var/folders/...) while tmpdir() says /var/folders/...: one place, one spelling.
+  const tidy = (path: string) => path.replaceAll("\\", "/").replace(/\/+$/, "").replace(/^\/private(?=\/(?:var|tmp)\/)/, "") || "/";
   const keyOf = (path: string) => (process.platform === "win32" ? path.toLowerCase() : path);
   const registered = roots.map((root) => ({ key: keyOf(tidy(root.path)), path: tidy(root.path), label: root.label }))
     .sort((a, b) => b.key.length - a.key.length);
@@ -118,9 +119,10 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
    * Throwaway runs in the temp folder (tests, probes, a tool's scratch space) are one bucket, not a project each.
    * Not when the home itself is in there (a test's, a sandbox's): its work is real there.
    */
-  const tempKey = keyOf(tidy(tmpdir()));
+  // tmpdir(), and /tmp, where Claude Code keeps its scratch space on a Mac (/private/tmp/claude-<uid>/...).
   const homeKey = keyOf(tidy(home));
-  const temp = homeKey === tempKey || homeKey.startsWith(`${tempKey}/`) ? undefined : tempKey;
+  const temps = [keyOf(tidy(tmpdir())), "/tmp"].filter((temp) => homeKey !== temp && !homeKey.startsWith(`${temp}/`));
+  const tempOf = (key: string) => temps.find((temp) => key === temp || key.startsWith(`${temp}/`));
   /**
    * The project a folder belongs to: the registered folder holding it, else the git repository it is in,
    * else the folder itself. Work moves through subfolders (an agent's `cd`) and stays one project.
@@ -162,16 +164,18 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
   const project = (cwd: unknown): string => {
     if (typeof cwd !== "string" || !cwd.trim()) { result.incomplete = true; projects.set("unknown", "Unknown"); return "unknown"; }
     let folder = tidy(cwd);
-    // Claude Code's scratch space (`<temp>/claude/<…>/<session>/scratchpad`) is that session's: its probes and helpers
-    // count toward the project the session works on. A few hops, for a helper started from a helper's scratch space.
-    for (let hop = 0; hop < 3 && temp !== undefined; hop++) {
+    // Claude Code's scratch space (`<temp>/claude/<…>/<session>/scratchpad`, on a Mac `/tmp/claude-<uid>/…`) is that
+    // session's: its probes and helpers count toward the project the session works on. A few hops, for a helper
+    // started from a helper's scratch space.
+    for (let hop = 0; hop < 3; hop++) {
       const key = keyOf(folder);
-      const session = key.startsWith(`${temp}/`) ? /^\/claude\/[^/]+\/([0-9a-f-]{36})\/scratchpad(?:\/|$)/.exec(key.slice(temp.length))?.[1] : undefined;
+      const base = tempOf(key);
+      const session = base !== undefined ? /^\/claude(?:-\d+)?\/[^/]+\/([0-9a-f-]{36})\/scratchpad(?:\/|$)/.exec(key.slice(base.length))?.[1] : undefined;
       const parent = session === undefined ? undefined : startOf(session);
       if (parent === undefined) break;
       folder = tidy(parent);
     }
-    const root = temp !== undefined && (keyOf(folder) === temp || keyOf(folder).startsWith(`${temp}/`)) ? { path: tidy(tmpdir()), label: "Temp" } : rootOf(folder);
+    const root = tempOf(keyOf(folder)) !== undefined ? { path: tidy(tmpdir()), label: "Temp" } : rootOf(folder);
     const id = createHash("sha256").update(keyOf(root.path)).digest("hex").slice(0, 24);
     projects.set(id, root.label ?? (basename(root.path) || root.path.split("/").at(-1) || "Project"));
     return id;

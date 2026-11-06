@@ -232,3 +232,45 @@ test("a Claude session's scratch-space runs count toward the project that sessio
   }
 });
 
+test("on a Mac, runs in /private/var/folders (the real path of the temp folder) are Temp too, not a project each", async () => {
+  const box = await mkdtemp(join(tmpdir(), "lepons-token-"));
+  const home = join(box, "home"), saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
+  try {
+    const projectsDir = join(home, ".claude", "projects", "eval");
+    await mkdir(projectsDir, { recursive: true });
+    const date = new Date().toISOString();
+    const at = (id: string, cwd: string) => line({ type: "assistant", cwd, timestamp: date, message: { id, model: "claude-opus-5-5", usage: { input_tokens: 10, output_tokens: 5 } } });
+    await writeFile(join(projectsDir, "a.jsonl"), at("a1", "/private/var/folders/g7/xyz/T/mt-freelancer-with-abc123"));
+    await writeFile(join(projectsDir, "b.jsonl"), at("b1", "/private/var/folders/g7/xyz/T/mt-freelancer-with-def456"));
+    process.env.TEMP = process.env.TMP = process.env.TMPDIR = "/var/folders/g7/xyz/T";
+    const stats = await collectTokenStats(home);
+    assert.deepEqual(stats.projects.map((p) => p.label), ["Temp"]);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    await rm(box, { recursive: true, force: true });
+  }
+});
+
+test("on a Mac, a session's scratch space under /private/tmp/claude-<uid> counts toward that session's project", async () => {
+  const box = await mkdtemp(join(tmpdir(), "lepons-token-"));
+  const home = join(box, "home"), saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
+  try {
+    const repo = join(home, "work", "riff");
+    await mkdir(join(repo, ".git"), { recursive: true });
+    const parentId = "22222222-3333-4444-5555-666666666666";
+    const dir = join(home, ".claude", "projects");
+    await mkdir(join(dir, "riff"), { recursive: true });
+    await mkdir(join(dir, "probe"), { recursive: true });
+    const date = new Date().toISOString();
+    const at = (id: string, cwd: string) => line({ type: "assistant", cwd, timestamp: date, message: { id, model: "claude-opus-5-5", usage: { input_tokens: 10, output_tokens: 5 } } });
+    await writeFile(join(dir, "riff", `${parentId}.jsonl`), at("p1", repo));
+    await writeFile(join(dir, "probe", "child.jsonl"), at("c1", `/private/tmp/claude-502/-Users-admin-riff/${parentId}/scratchpad/iso`));
+    process.env.TEMP = process.env.TMP = process.env.TMPDIR = "/var/folders/g7/xyz/T";
+    const stats = await collectTokenStats(home);
+    assert.deepEqual(stats.projects.map((p) => p.label), ["riff"]);
+    assert.equal(stats.days.reduce((sum, day) => sum + day.output, 0), 10);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    await rm(box, { recursive: true, force: true });
+  }
+});

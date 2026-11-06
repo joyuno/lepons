@@ -2899,7 +2899,12 @@ app.whenReady().then(() => {
         await mkdir(dir, { recursive: true });
         const dest = join(dir, release.installer.name);
         await downloadVerified(release.installer, dest, progress);
-        apply = (restart) => spawn(dest, installerArgs(restart), { detached: true, stdio: "ignore" }).unref();
+        // A Mac's installer is the DMG: opened once Lepons has quit, for the
+        // new app to be dragged over the old one -- same signature, so macOS
+        // keeps the folder permissions it gave.
+        apply = (restart) => (process.platform === "darwin"
+          ? spawn("open", [dest], { detached: true, stdio: "ignore" })
+          : spawn(dest, installerArgs(restart), { detached: true, stdio: "ignore" })).unref();
       } catch (error) {
         failure = error;
       }
@@ -2969,8 +2974,9 @@ app.whenReady().then(() => {
     const { response } = await appDialog(window, {
       type: "info",
       message: t("update.ready", { latest: update.latest }),
-      detail: t("update.readyDetail"),
-      buttons: [t("update.restartNow"), t("update.onQuit")],
+      // A Mac installs by its DMG, opened when Lepons quits (see installUpdate).
+      detail: t(process.platform === "darwin" ? "update.readyDetailMac" : "update.readyDetail"),
+      buttons: [t(process.platform === "darwin" ? "update.restartNowMac" : "update.restartNow"), t("update.onQuit")],
       defaultId: 0,
       cancelId: 1,
     });
