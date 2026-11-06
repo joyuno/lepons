@@ -143,3 +143,18 @@ test("off Windows, a local terminal starts as a login shell, the way a Mac termi
   assert.deepEqual(defaultShellArgs("linux"), ["-l"]);
   assert.deepEqual(defaultShellArgs("win32"), []);
 });
+
+test("off Windows a command too long for a Mac's terminal is typed as `. file`; Windows and short ones go as they are", async () => {
+  const { typedCommand } = await import("./local.ts");
+  const { readFileSync, existsSync } = await import("node:fs");
+  const long = `claude --name '${"x".repeat(1200)}'`;
+  const typed = typedCommand(long, true, "darwin");
+  const path = /^\. '(.+)'$/.exec(typed)?.[1];
+  assert.ok(path, typed);
+  assert.equal(readFileSync(path, "utf8"), `rm -f '${path}'\n${long}\n`);
+  assert.equal(typedCommand(long, true, "win32"), long);
+  assert.equal(typedCommand(long, false, "darwin"), long, "a shell Lepons did not choose is left alone");
+  assert.equal(typedCommand("claude", true, "darwin"), "claude");
+  (await import("node:fs")).rmSync(path);
+  assert.equal(existsSync(path), false);
+});

@@ -152,9 +152,10 @@ export const remoteLoginScript = Object.values(agents).flatMap((agent) => {
     // In its own process group (set -m), so the kill reaches a node an npm shim started too.
     // zsh refuses set -m in a subshell and drops the whole subshell for trying -- every
     // Mac's sign-in read as unknown -- so it is tried in a throwaway one first; without
-    // it the kill takes the command's children (pkill -P) and then the command. KILL,
-    // not TERM: npm's codex.js catches TERM and exits 0, which read as signed in.
-    `(set -m) 2>/dev/null && set -m; ${command} >"$f" 2>&1 </dev/null & p=$!; (sleep 5; kill -9 -- -$p || { pkill -9 -P $p; kill -9 $p; }) >/dev/null 2>&1 & k=$!; wait $p; r=$?; kill $k 2>/dev/null; ` +
+    // it the kill takes the command's children (pkill -P) and then the command, frozen
+    // first (STOP) so it cannot exit 0 in between once its child is gone. KILL, not
+    // TERM: npm's codex.js catches TERM and exits 0, which read as signed in.
+    `(set -m) 2>/dev/null && set -m; ${command} >"$f" 2>&1 </dev/null & p=$!; (sleep 5; kill -9 -- -$p || { kill -STOP $p; pkill -9 -P $p; kill -9 $p; }) >/dev/null 2>&1 & k=$!; wait $p; r=$?; kill $k 2>/dev/null; ` +
     `echo "${agent.kind}-login:$(tr '\\r\\n' '  ' <"$f") rc:$r"; rm -f "$f" )`,
   ];
 }).join("; ");

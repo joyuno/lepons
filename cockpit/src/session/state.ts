@@ -53,6 +53,20 @@ export function startupLine(cwd: string | undefined, command: string | undefined
   return parts.length === 0 ? undefined : parts.join(" && ");
 }
 
+/**
+ * A line typed into a terminal before its shell has started reading is held by the
+ * terminal driver, which keeps at most MAX_CANON bytes of it: 1024 on macOS (4096 on
+ * Linux). Lepons types its start line the moment the shell opens, so a longer one lost
+ * its end on a Mac and the shell waited on an open quote. Past this, the line goes into
+ * a file and only a short `. file` is typed.
+ */
+export const TYPED_LINE_MAX = 1000;
+
+/** The file a long start line goes in (`quotedPath` already quoted for the shell): it removes itself first, then runs the line in the shell that sources it. */
+export function startupScript(quotedPath: string, line: string): string {
+  return `rm -f ${quotedPath}\n${line}\n`;
+}
+
 export function posixQuote(value: string): string {
   return "'" + value.replaceAll("'", `'\\''`) + "'";
 }

@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
-import { statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { spawn, type IPty } from "node-pty";
 
-import { defaultTerm, type Session, type SessionCloseReason, type SessionState } from "./state.ts";
+import { defaultTerm, posixQuote, startupScript, TYPED_LINE_MAX, type Session, type SessionCloseReason, type SessionState } from "./state.ts";
 
 export interface LocalSessionOptions {
   /** The shell to run. Defaults to the platform's interactive shell. */
@@ -18,6 +21,22 @@ export interface LocalSessionOptions {
 function defaultShell(): string {
   if (process.platform === "win32") return process.env["COMSPEC"] ?? "cmd.exe";
   return process.env["SHELL"] ?? "/bin/sh";
+}
+
+/**
+ * What to type into a fresh POSIX shell off Windows: the command, or past TYPED_LINE_MAX
+ * (macOS keeps only 1024 bytes of a line typed before the shell reads it) `. file` with
+ * the command in that file. Windows' consoles take far longer lines; a custom shell is left alone.
+ */
+export function typedCommand(command: string, posixShell: boolean, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32" || !posixShell || Buffer.byteLength(command) <= TYPED_LINE_MAX) return command;
+  const path = join(tmpdir(), `lepons-start-${randomBytes(6).toString("hex")}.sh`);
+  try {
+    writeFileSync(path, startupScript(posixQuote(path), command), { mode: 0o600 });
+    return `. ${posixQuote(path)}`;
+  } catch {
+    return command;
+  }
 }
 
 /**
@@ -110,7 +129,7 @@ export class LocalSession extends EventEmitter implements Session {
       child.onData((chunk: string) => this.emit("data", Buffer.from(chunk, "utf8")));
       child.onExit(() => this.#close("node_ended"));
       if (options.command) {
-        child.write(options.command + "\r\n");
+        child.write(typedCommand(options.command, options.shell === undefined) + "\r\n");
       }
       this.#transition({ kind: "ready" });
     } catch (error) {

@@ -1,10 +1,13 @@
 import { EventEmitter } from "node:events";
-import type { ClientChannel } from "ssh2";
+import { randomBytes } from "node:crypto";
+import type { Client, ClientChannel } from "ssh2";
 
 import { connect, type ConnectOptions, type NodeAuth } from "./connect.ts";
 import {
   defaultTerm,
   startupLine,
+  startupScript,
+  TYPED_LINE_MAX,
   type Session,
   type SessionCloseReason,
   type SessionState,
@@ -25,6 +28,25 @@ export interface NodeSessionOptions extends ConnectOptions {
  *
  * Events: `data` (Buffer from the node), `state` (SessionState).
  */
+/**
+ * What to type to start: the line itself, or, past TYPED_LINE_MAX, `. file` after the
+ * line is written to that file over a separate exec channel (no terminal, no limit).
+ * A node where that fails (no `cat`, a shell that is not POSIX) gets the line as before.
+ */
+function typedLine(client: Client, line: string | undefined): Promise<string | undefined> {
+  if (line === undefined || Buffer.byteLength(line) <= TYPED_LINE_MAX) return Promise.resolve(line);
+  const path = `"$HOME/.lepons-start-${randomBytes(6).toString("hex")}.sh"`;
+  return new Promise((resolve) => {
+    client.exec(`umask 077 && cat > ${path}`, (error, channel) => {
+      if (error) { resolve(line); return; }
+      channel.on("data", () => {});
+      channel.stderr.on("data", () => {});
+      channel.on("close", (code: number | null) => resolve(code === 0 ? `. ${path}` : line));
+      channel.end(startupScript(path, line));
+    });
+  });
+}
+
 export class NodeSession extends EventEmitter implements Session {
   readonly #options: NodeSessionOptions;
   #state: SessionState = { kind: "connecting" };
@@ -56,6 +78,7 @@ export class NodeSession extends EventEmitter implements Session {
     client.on("close", () => this.#close(failure() ?? "connection_lost"));
     client.on("error", () => this.#close(failure() ?? "connection_lost"));
 
+    const startup = await typedLine(client, startupLine(options.cwd, options.command));
     return new Promise<SessionState>((resolve) => {
       client.shell(
         { term: term.name, cols: term.cols, rows: term.rows },
@@ -75,7 +98,6 @@ export class NodeSession extends EventEmitter implements Session {
           });
           // One line so the shell lands in the repository before the command
           // runs; a failed cd must not leave the command running elsewhere.
-          const startup = startupLine(options.cwd, options.command);
           if (startup !== undefined) {
             channel.write(startup + "\n");
           }

@@ -193,7 +193,9 @@ export function renderMap(
       const label = document.createElement("span");
       label.textContent = t("map.mcpFor");
       row.append(label);
-      for (const agent of Object.keys(agents) as AgentKind[]) {
+      // Only the agents that are on: all five did not fit a card and stood one letter per line.
+      // The rest wait behind "+", which turns into them in place.
+      const switchFor = (agent: AgentKind): HTMLButtonElement => {
         const on = node.mcpAgents.includes(agent);
         const toggle = document.createElement("button");
         toggle.type = "button";
@@ -205,7 +207,20 @@ export function renderMap(
           const next = on ? node.mcpAgents.filter((other) => other !== agent) : [...node.mcpAgents, agent];
           void actions.setMcpAgents(node.id, next);
         });
-        row.append(toggle);
+        return toggle;
+      };
+      const all = Object.keys(agents) as AgentKind[];
+      for (const agent of all.filter((kind) => node.mcpAgents.includes(kind))) row.append(switchFor(agent));
+      const off = all.filter((kind) => !node.mcpAgents.includes(kind));
+      if (off.length) {
+        const more = document.createElement("button");
+        more.type = "button";
+        more.className = "agentTag more";
+        more.textContent = "+";
+        attachHover(more, () => t("map.mcpMore"));
+        more.addEventListener("pointerdown", (event) => event.stopPropagation());
+        more.addEventListener("click", () => more.replaceWith(...off.map(switchFor)));
+        row.append(more);
       }
       card.append(row);
     }

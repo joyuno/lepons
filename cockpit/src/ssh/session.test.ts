@@ -183,3 +183,26 @@ async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void
   }
   throw new Error("condition not met within " + timeoutMs + "ms");
 }
+
+test("a start line too long for a Mac's terminal goes into a file, and only a short line is typed", async () => {
+  const long = `claude --name '${"x".repeat(1200)}'`;
+  const session = sessionTo({ knownHosts: await trustingStore(), cwd: "/srv/app", command: long });
+  const execsBefore = node.execCommands.length;
+  await session.open();
+  await waitFor(() => node.received().includes(".lepons-start-"));
+  session.close();
+  // Earlier tests' keystrokes share this node's input; only the last line is this session's.
+  const typed = node.received().split(/[\r\n]/).filter(Boolean).at(-1) ?? "";
+  assert.match(typed, /^\. "\$HOME\/\.lepons-start-[0-9a-f]{12}\.sh"$/);
+  assert.ok(!node.received().includes("x".repeat(1200)), "the long line itself was never typed");
+  assert.match(node.execCommands.slice(execsBefore).join("\n"), /^umask 077 && cat > "\$HOME\/\.lepons-start-[0-9a-f]{12}\.sh"$/m);
+});
+
+test("a short start line is typed as it is, with no file", async () => {
+  const session = sessionTo({ knownHosts: await trustingStore(), cwd: "/srv/app", command: "claude" });
+  const execsBefore = node.execCommands.length;
+  await session.open();
+  await waitFor(() => node.received().includes("cd '/srv/app' && claude"));
+  session.close();
+  assert.equal(node.execCommands.length, execsBefore);
+});
