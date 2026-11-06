@@ -6,7 +6,7 @@
 
 <p align="center"><a href="README.md">한국어</a> · <b>English</b> · <a href="README.zh-CN.md">中文</a></p>
 
-<p align="center"><b>AI coding on your PC and remote servers, in one window</b></p>
+<p align="center"><b>One screen for the AI agents on all your PCs</b></p>
 
 <p align="center">Split the screen for AI sessions, terminals and files, and share code between computers. Manage remote PCs and AI sign-ins, then check and answer sessions from your phone when away.</p>
 
@@ -133,7 +133,7 @@ Ten hours. The phone cannot reach a PC that is asleep, so turn off sleep in the 
 Remote-SSH installs VS Code Server on the remote machine to build a dev environment there. Lepons installs nothing remotely, puts agent sessions from many machines in one window, and shows what they are doing on the map and on your phone.
 
 **Is it free?**
-Yes. A license will be settled when the source is published.
+Yes. Lepons is offered free and non-commercially. A license will be settled when the source is published.
 
 ## Support
 
