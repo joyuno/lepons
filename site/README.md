@@ -4,11 +4,11 @@ Lepons의 공개 홈이에요. 소개(`index.html`, 영어는 `en/index.html`)·
 
 ## 올리기 (Cloudflare Workers 정적 자산)
 
-최신 wrangler는 Pages 명령을 Workers로 넘기므로 Worker `lepons`로 올려요. `site/`를 통째로 복사하고 README만 빼서 올려요. 파일이나 폴더를 더해도 이 명령은 그대로예요.
+최신 wrangler는 Pages 명령을 Workers로 넘기므로 Worker `lepons`로 올려요. `site/`를 통째로 복사하고 README와 `og.py`만 빼서 올려요. 파일이나 폴더를 더해도 이 명령은 그대로예요.
 
 ```sh
 npx wrangler login            # 처음 한 번
-rm -rf /tmp/site-out && mkdir -p /tmp/site-out && cp -r site/. /tmp/site-out/ && rm /tmp/site-out/README.md
+rm -rf /tmp/site-out && mkdir -p /tmp/site-out && cp -r site/. /tmp/site-out/ && rm /tmp/site-out/README.md /tmp/site-out/og.py
 npx wrangler deploy --name lepons --assets /tmp/site-out --compatibility-date 2026-10-30 --domain lepons.app
 ```
 
@@ -23,6 +23,7 @@ npx wrangler deploy --name lepons --assets /tmp/site-out --compatibility-date 20
 
 - **iPhone 상태**: `index.html`과 `en/index.html`의 내려받기 구역에 있는 주석 바로 아래 한 줄만 바꾸면 돼요. App Store 승인 전에는 "App Store에서 받기"라고 적지 않아요. Google Play 문구도 공개 출시 뒤에 고쳐요.
 - **그림**: 첫 화면의 지도와 폰은 HTML 안의 SVG이고, 상태가 바뀌는 시간표는 `style.css`의 `t1w`, `t1a` 같은 keyframes예요. 움직임을 끄면 입력 대기, 작업 중, 끝남이 함께 보이는 멈춘 그림이 나와요.
+- **공유 카드**: 링크를 붙여 넣으면 나오는 카드는 `og.png`(한국어)와 `og-en.png`(영어)예요. 헤드라인을 바꾸면 `python site/og.py`로 다시 만들어요.
 - **글꼴**: `fonts/lepons-sans.woff2`는 Pretendard에서 사이트에 쓰는 글자만 추린 파일이에요(라이선스 `fonts/LICENSE.txt`). 새 글자를 쓰면 그 글자만 시스템 글꼴로 보이니, 문구를 많이 고쳤다면 다시 만들어요.
 
   ```sh
