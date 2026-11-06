@@ -1,10 +1,11 @@
 # Lepons
 
-> Lepons is a free desktop app (Windows, macOS) that puts the AI coding agents on all your PCs on one screen: Claude Code, Codex, Grok, Antigravity and Cursor, on this PC and on any VM or server it reaches over SSH. It shares codebases between computers, draws all the work on one workflow map, splits the screen into panes with tabs, and has a phone app to carry on while away.
+> Lepons is a free, open-source (MIT) desktop app (Windows, macOS) that puts the AI coding agents on all your PCs on one screen: Claude Code, Codex, Grok, Antigravity and Cursor, on this PC and on any VM or server it reaches over SSH. It shares codebases between computers, draws all the work on one workflow map, splits the screen into panes with tabs, and has a phone app to carry on while away.
 
 - Home (Korean): https://lepons.app/
 - Home (English): https://lepons.app/en/
 - Download (Windows .exe, macOS .dmg): https://github.com/joyuno/lepons/releases/latest
+- Source code (MIT License): https://github.com/joyuno/lepons
 - Android APK: https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk
 - Guide (Korean): https://github.com/joyuno/lepons/blob/main/README.md
 - Guide (English): https://github.com/joyuno/lepons/blob/main/README.en.md
