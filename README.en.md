@@ -29,12 +29,7 @@
 ### Install
 
 - **Windows**: run the `.exe`. The installer can be shown in Korean, English or Chinese. If "Windows protected your PC" appears, choose **More info → Run anyway**; the app has no code-signing certificate, which is what triggers the warning. If your browser blocks the download, choose **Keep**.
-- **macOS**: open the `.dmg` and drag Lepons Cockpit into Applications. If the first launch warns that "Apple could not verify 'Lepons Cockpit' is free of malware", go to **System Settings → Privacy & Security** and press **Open Anyway** near the bottom. If it still will not open, run this once in Terminal and open it again:
-
-  ```sh
-  xattr -dr com.apple.quarantine "/Applications/Lepons Cockpit.app"
-  ```
-
+- **macOS**: open the `.dmg` and drag Lepons Cockpit into Applications. The app is signed and notarized by Apple, so it opens without a warning. From 1.9.6 the in-app update opens the new `.dmg`; drag the new app over the old one and its folder permissions stay.
 - **Android**: on the phone, download the `.apk` from the release page and open it. If Android asks you to allow installs from this source, allow it and install. The file's SHA-256 is listed on the release page.
 
 ## What it does
