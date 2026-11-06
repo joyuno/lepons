@@ -14,6 +14,10 @@ appId: app.lepons.mobile
     optional: true
 - waitForAnimationToEnd
 - takeScreenshot: 01-home
+# The emulator's "isn't responding" dialog can come up any time, not only at launch.
+- tapOn:
+    text: "Wait|대기|기다리기"
+    optional: true
 # The rest of home (usage chart, remaining usage, PCs) is below the fold: a second shot from the bottom.
 # Two scrolls put the usage chart whole on Android's shorter screen; iOS takes a third to reach the bottom.
 - scroll
@@ -25,6 +29,9 @@ appId: app.lepons.mobile
       - scroll
 - waitForAnimationToEnd
 - takeScreenshot: 01b-home-more
+- tapOn:
+    text: "Wait|대기|기다리기"
+    optional: true
 - tapOn: "(.*, )?(Sessions|세션)(, .*)?"
 - waitForAnimationToEnd
 - takeScreenshot: 02-sessions
