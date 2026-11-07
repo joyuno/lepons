@@ -3349,7 +3349,9 @@ app.whenReady().then(() => {
       return;
     }
     choosePet(imported.id);
-    if (!petWindow) event.sender.send(channels.powerAction, "pet", "on");
+    // Always: besides showing the pet (a no-op when it is already out), this
+    // redraws the settings window, whose pet list was read before the import.
+    event.sender.send(channels.powerAction, "pet", "on");
   };
 
   // Lepons writes no log of its own; this is where Electron's would go.
