@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { canRenderMarkdown, documentKind } from "./document-kind.ts";
 
 test("PDF and common image formats use the native viewer while Markdown stays in the app", () => {
-  for (const name of ["a.pdf", "a.PNG", "a.webp", "a.heic", "a.avif", "a.tiff", "a.svg", "a.raw"]) {
+  for (const name of ["a.pdf", "a.PNG", "a.webp", "a.heic", "a.avif", "a.tiff", "a.raw"]) {
     assert.equal(documentKind(name), "native", name);
   }
   assert.equal(documentKind("README.md"), "markdown");
-  assert.equal(documentKind("script.html"), "native");
+  for (const name of ["script.html", "a.HTM", "a.svg"]) assert.equal(documentKind(name), "text", `${name}: source, never run`);
   assert.equal(documentKind("main.ts"), "text");
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "lepons-cockpit",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -21,7 +21,7 @@
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",
     "@lezer/highlight": "^1.2.5",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "codemirror": "^6.0.2",
@@ -31,17 +31,20 @@
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
     "ssh2": "^1.17.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/qrcode": "^1.5.6",
     "@types/ssh2": "^1.15.5",
-    "electron": "^43.2.0",
+    "electron": "^43.8.7",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "material-icon-theme": "^5.39.0",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "^11.0.5"
   },
   "main": "dist/main.cjs",
   "build": {

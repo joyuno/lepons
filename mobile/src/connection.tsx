@@ -8,6 +8,7 @@ import { t } from "./i18n";
 import { waitUntil } from "./phone/outbox.ts";
 import type { PhoneState } from "./phone/types.ts";
 import { stateOf } from "./phone/validate.ts";
+import { forgetOpened } from "./open-file.ts";
 import { expoPushToken } from "./push.ts";
 import { RelayClient, type RelaySocket, type RelayStatus, type Reply } from "./relay/client.ts";
 import { DEFAULT_SERVER, type QrPayload } from "./relay/protocol.ts";
@@ -118,6 +119,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setToken(undefined);
     setPhone(undefined);
     store.chats.clear();
+    forgetOpened();
     void store.saveToken("");
   };
 

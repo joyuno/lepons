@@ -20,6 +20,8 @@ func reset() {
 	rooms = map[string]*room{}
 	perIP = map[string]int{}
 	conns = 0
+	full = map[string]time.Time{}
+	lastSweep = time.Time{}
 }
 
 const id = "0123456789abcdef0123456789abcdef"
@@ -106,6 +108,90 @@ func TestCaps(t *testing.T) {
 	mu.Unlock()
 	if admit("9.9.9.9") {
 		t.Fatal("전체 한도를 넘었는데 받아들였다")
+	}
+}
+
+// IPv6는 /64 하나를 한 곳으로 센다. 주소마다 세면 회선 하나가 주소를 바꿔 가며 200개를 모두 차지한다.
+func TestClientKeyGroupsIPv6By64(t *testing.T) {
+	key := func(cf, remote string) string {
+		r := httptest.NewRequest("GET", "/ws", nil)
+		r.RemoteAddr = remote
+		if cf != "" {
+			r.Header.Set("CF-Connecting-IP", cf)
+		}
+		return clientKey(r)
+	}
+	a, b := key("2001:db8:1:2:aaaa::1", ""), key("2001:db8:1:2:ffff:ffff:ffff:ffff", "")
+	if a != b || a != "2001:db8:1:2::" {
+		t.Fatalf("같은 /64는 같은 키여야 한다: %q %q", a, b)
+	}
+	if c := key("2001:db8:1:3::1", ""); c == a {
+		t.Fatalf("다른 /64는 다른 키여야 한다: %q", c)
+	}
+	if k := key("1.2.3.4", ""); k != "1.2.3.4" {
+		t.Fatalf("IPv4는 주소 그대로: %q", k)
+	}
+	if k := key("::ffff:1.2.3.4", ""); k != "1.2.3.4" {
+		t.Fatalf("IPv4-mapped 주소는 IPv4로 센다: %q", k)
+	}
+	if k := key("not an ip", "[2001:db8::5]:443"); k != "2001:db8::" {
+		t.Fatalf("헤더가 없거나 틀리면 접속 주소를 /64로 센다: %q", k)
+	}
+}
+
+// 새 연결은 한꺼번에 newBurst개까지, 그 뒤로는 newEvery마다 하나만 받는다. 키마다 따로 센다.
+func TestNewConnRate(t *testing.T) {
+	reset()
+	now := time.Date(2026, 11, 7, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < newBurst; i++ {
+		if !allow("1.2.3.4", now) {
+			t.Fatalf("%d번째 연결은 한꺼번에 받아야 한다", i+1)
+		}
+	}
+	if allow("1.2.3.4", now) {
+		t.Fatal("한꺼번에 받는 수를 넘었는데 받아들였다")
+	}
+	if !allow("2001:db8::", now) {
+		t.Fatal("다른 키는 영향을 받지 않아야 한다")
+	}
+	if allow("1.2.3.4", now.Add(newEvery-time.Millisecond)) {
+		t.Fatal("newEvery가 지나기 전에 토큰이 생겼다")
+	}
+	if !allow("1.2.3.4", now.Add(newEvery)) || allow("1.2.3.4", now.Add(newEvery)) {
+		t.Fatal("newEvery마다 하나씩만 생겨야 한다")
+	}
+
+	// 가득 찬 버킷은 1분마다 지운다. 대역을 돌려 쓰는 쪽이 맵을 키우지 못하게 하기 위해서다.
+	later := now.Add(time.Hour)
+	allow("9.9.9.9", later)
+	mu.Lock()
+	n := len(full)
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("다시 가득 찬 키는 지워져야 한다: %d개 남음", n)
+	}
+}
+
+// 업그레이드 전에 429로 거절하고, 거절된 연결은 자리를 차지하지 않는다.
+func TestServeRejectsFastReconnects(t *testing.T) {
+	reset()
+	srv := httptest.NewServer(http.HandlerFunc(serveWS))
+	t.Cleanup(srv.Close)
+	mu.Lock()
+	full["127.0.0.1"] = time.Now().Add(newBurst * newEvery) // 토큰을 다 썼다.
+	mu.Unlock()
+	res, err := http.Get(srv.URL + "/ws?room=" + id + "&role=pc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("429여야 한다: %d", res.StatusCode)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if conns != 0 || len(perIP) != 0 {
+		t.Fatalf("거절한 연결이 자리를 차지했다: conns=%d perIP=%v", conns, perIP)
 	}
 }
 
@@ -290,6 +376,11 @@ func TestPruneDropsLogsOlderThan14Days(t *testing.T) {
 func TestDailyLogWritesTodaysFile(t *testing.T) {
 	dir := t.TempDir()
 	out := &dailyLog{dir: dir}
+	t.Cleanup(func() { // Windows can't remove an open file
+		if out.f != nil {
+			out.f.Close()
+		}
+	})
 	if _, err := out.Write([]byte("gone room=012345\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +395,11 @@ func TestDailyLogWritesTodaysFile(t *testing.T) {
 func TestDailyLogStopsAtDailyCap(t *testing.T) {
 	dir := t.TempDir()
 	out := &dailyLog{dir: dir}
+	t.Cleanup(func() { // Windows can't remove an open file
+		if out.f != nil {
+			out.f.Close()
+		}
+	})
 	if _, err := out.Write(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -317,5 +413,25 @@ func TestDailyLogStopsAtDailyCap(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	if len(lines) != 2 || lines[0] != "a" || !strings.HasSuffix(lines[1], "log cap reached") {
 		t.Fatalf("상한까지 쓰고 안내 한 줄만 남아야 한다: %q", lines)
+	}
+}
+
+// 상한을 넘어 버린 줄 수는 다음 날 파일 첫 줄에 남는다. 기록을 채운 공격이 기록에서 사라지지 않게.
+func TestDailyLogCountsDroppedLines(t *testing.T) {
+	dir := t.TempDir()
+	out := &dailyLog{dir: dir}
+	if _, err := out.Write(nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { out.f.Close() }) // Windows는 열린 파일을 지우지 못한다.
+	out.n = logPerDay
+	for range 3 {
+		out.Write([]byte("x\n"))
+	}
+	out.day = "2000-01-01" // 날짜가 바뀐 것으로 만든다. 오늘 파일을 새로 연다.
+	out.Write([]byte("next\n"))
+	b, _ := os.ReadFile(filepath.Join(dir, "relay-"+time.Now().UTC().Format(time.DateOnly)+".log"))
+	if !strings.Contains(string(b), "log cap dropped 3 lines on 2000-01-01\n") || !strings.HasSuffix(string(b), "next\n") {
+		t.Fatalf("버린 줄 수가 남아야 한다: %q", b)
 	}
 }

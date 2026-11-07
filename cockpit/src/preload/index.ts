@@ -203,3 +203,15 @@ const api: CockpitApi = {
 };
 
 contextBridge.exposeInMainWorld("cockpit", api);
+
+// A file dragged in from the desktop lands nowhere: no drop zone here takes
+// one (the rail, tabs and map move the app's own items, never "Files"), and
+// left alone the window would open it (main refuses that navigation too).
+// Last in the bubble, so a zone that wants a drag has already had it.
+for (const type of ["dragover", "drop"] as const) {
+  window.addEventListener(type, (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "none";
+  });
+}

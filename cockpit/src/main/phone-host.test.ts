@@ -111,6 +111,19 @@ test("a path out of the folder is refused, however it is spelled", async (t) => 
   }
 });
 
+test("hidden and secret-shaped files are neither listed nor read, even when named", async (t) => {
+  const { deps, snapshot, root } = setup(t);
+  mkdirSync(join(root, ".git"));
+  for (const file of [".env", ".git/config", "id_ed25519", "server.pem", "code.ts"]) writeFileSync(join(root, file), "x");
+  snapshot([session("idle")]);
+  const names = (await deps.directory(KEY, ""))?.map((entry) => entry.name).sort();
+  assert.deepEqual(names, ["code.ts", "docs"]);
+  await deps.directory(KEY, ".git");
+  for (const path of [".env", ".git/config", "id_ed25519", "server.pem"]) assert.equal(await deps.docBytes(KEY, path), undefined, path);
+  assert.equal((await deps.docBytes(KEY, "code.ts"))?.toString(), "x");
+  assert.equal((await deps.files(KEY)).includes(".env"), false);
+});
+
 test("a file swapped for a symlink after the listing is not followed", async (t) => {
   const { deps, snapshot, root, outside } = setup(t);
   writeFileSync(join(root, "note.md"), "hello");
@@ -594,4 +607,15 @@ test("a key saved before the check existed stays registered", async (t) => {
   const { handlers } = setup(t, { saved: { totpSecret: "JBSWY3DPEHPK3PXP" } });
   const view = await handlers.get(channels.phoneSettings)!({}) as PhoneSettingsView;
   assert.equal(view.totpReady, true);
+});
+
+test("a key an earlier build kept in the clear is sealed on start, and stays the same key", async (t) => {
+  const safeStorage = { isEncryptionAvailable: () => true, encryptString: (text: string) => Buffer.from(`box:${text}`), decryptString: (data: Buffer) => data.toString().slice(4) };
+  const { handlers, settings } = setup(t, { saved: { totpSecret: "JBSWY3DPEHPK3PXP" }, overrides: { safeStorage } });
+  assert.match(settings().totpSecret, /^safe:/);
+  assert.equal(JSON.stringify(settings()).includes("JBSWY3DPEHPK3PXP"), false);
+  assert.equal((await handlers.get(channels.phoneTotp)!({}, false) as { secret: string }).secret, "JBSWY3DPEHPK3PXP");
+  assert.equal(await handlers.get(channels.phoneTotpCheck)!({}, totpAt("JBSWY3DPEHPK3PXP", stepOf(Date.now()))), true);
+  const renewed = await handlers.get(channels.phoneTotp)!({}, true) as { secret: string };
+  assert.equal(JSON.stringify(settings()).includes(renewed.secret), false, "a new key is sealed too");
 });

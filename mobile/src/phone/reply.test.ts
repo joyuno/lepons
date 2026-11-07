@@ -58,7 +58,29 @@ test("code keeps its lines and drops the blank ones around them; a rule is a rul
 
 test("a link reads as its words", () => {
   assert.deepEqual(replyRuns("see [the docs](https://x.dev) and **this**"), [
-    { kind: "text", text: "see " }, { kind: "link", text: "the docs" }, { kind: "text", text: " and " }, { kind: "bold", text: "this" },
+    { kind: "text", text: "see " }, { kind: "link", text: "the docs", url: "https://x.dev", host: "x.dev" }, { kind: "text", text: " and " }, { kind: "bold", text: "this" },
+  ]);
+  assert.deepEqual(replyRuns("[notes](./notes.md)"), [{ kind: "link", text: "notes" }], "not the web: words only");
+});
+
+test("words that are not the address show the host it really opens", () => {
+  const host = (text: string) => replyRuns(text)[0]!.host;
+  assert.equal(host("[https://github.com/x](https://evil.example/a)"), "evil.example");
+  assert.equal(host("[github.com](https://github.com@Evil.example)"), "evil.example", "past the user@");
+  assert.equal(host("[github](https://evil.example\\@github.com)"), "evil.example", "a backslash ends the host, as in a browser");
+  assert.equal(host("[https://x.dev/a](https://x.dev/a)"), undefined, "the address itself");
+  assert.equal(host("[X.dev](https://x.dev)"), undefined, "the host itself");
+});
+
+test("a bare web address is a link, without the Korean or the period after it", () => {
+  assert.deepEqual(replyRuns("https://lepons.app/en/?v=2에서 받아요."), [
+    { kind: "link", text: "https://lepons.app/en/?v=2", url: "https://lepons.app/en/?v=2" }, { kind: "text", text: "에서 받아요." },
+  ]);
+  assert.deepEqual(replyRuns("열렸어요: http://localhost:3000."), [
+    { kind: "text", text: "열렸어요: " }, { kind: "link", text: "http://localhost:3000", url: "http://localhost:3000" }, { kind: "text", text: "." },
+  ]);
+  assert.deepEqual(replyRuns("`https://x.dev/a` 와 `npm i`"), [
+    { kind: "link", text: "https://x.dev/a", url: "https://x.dev/a" }, { kind: "text", text: " 와 " }, { kind: "code", text: "npm i" },
   ]);
 });
 

@@ -2,6 +2,7 @@ import * as SecureStore from "expo-secure-store";
 import { getRandomBytes } from "expo-crypto";
 import { File, Paths } from "expo-file-system";
 
+import { forgetOpened } from "./open-file.ts";
 import { chatMemory } from "./phone/chat-rows.ts";
 import { draftBook } from "./phone/drafts.ts";
 import { outbox } from "./phone/outbox.ts";
@@ -55,6 +56,7 @@ export async function savePairing(pairing: Pairing): Promise<void> {
 /** Forgets the PC and its sign-in; the phone's own key stays. */
 export async function clearPairing(): Promise<void> {
   await Promise.all([del("pairing"), del("token"), drafts.clear()]);
+  forgetOpened();
   // The project and PC names in it go with the PC, as the privacy page says.
   mapSpots = {};
   try {

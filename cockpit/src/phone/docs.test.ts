@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { posixQuote } from "../session/state.ts";
-import { markdownFiles, parseFindOutput, safeRelative, viewable, viewableFindScript, phoneDirectory, phoneDirectoryScript, parsePhoneDirectory } from "./docs.ts";
+import { markdownFiles, parseFindOutput, phoneMayOpen, safeRelative, viewable, viewableFindScript, phoneDirectory, phoneDirectoryScript, parsePhoneDirectory } from "./docs.ts";
 
 test("lists .md files only, skipping hidden folders, node_modules and symlinks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lepons-docs-"));
@@ -35,6 +35,13 @@ test("only relative .md paths without .. or control characters pass", () => {
   for (const bad of ["", "/etc/passwd.md", "\\\\server\\x.md", "C:/x.md", "c:x.md", "../x.md", "docs/../../x.md", "docs\\..\\x.md",
     "evil\n/etc/x.md", "tab\t.md", "notes.txt"]) {
     assert.equal(safeRelative(bad), false, JSON.stringify(bad));
+  }
+});
+
+test("the phone opens no hidden or secret-shaped file, however deep", () => {
+  for (const ok of ["src/app.ts", "README.md", "docs/a.b.png", "Makefile"]) assert.equal(phoneMayOpen(ok), true, ok);
+  for (const bad of [".env", ".env.production", ".git/config", "a/.ssh/id_rsa", "keys/id_ed25519", "tls/server.pem", "aws/credentials", "../x.ts"]) {
+    assert.equal(phoneMayOpen(bad), false, bad);
   }
 });
 

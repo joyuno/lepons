@@ -95,7 +95,11 @@ export function SelectableText({ style, children }: { style: StyleProp<TextStyle
   if (Platform.OS !== "ios") return <Text style={style} selectable>{children}</Text>;
   return (
     // padding 0: multiline adds 5 on top otherwise. A tap puts the keyboard away, as a tap on a Text does.
-    <TextInput editable={false} multiline scrollEnabled={false} rejectResponderTermination={false} onPress={() => Keyboard.dismiss()} style={[{ padding: 0 }, style]}>
+    // dataDetectorTypes: a web address in it opens in the browser on a tap (it works only read-only and multiline, as here).
+    // Kept though it skips the app's http/https check: it can only be "link" or none, and none leaves iOS no tap on a link at all.
+    // It reads only the words on screen, so it opens what is shown (a link's hidden target never reaches it; reply.ts shows the host).
+    // Whether it takes a written "other-app://" address is not settled in Apple's docs; the app's own lepons://doc does nothing without a press (doc.tsx).
+    <TextInput editable={false} multiline scrollEnabled={false} dataDetectorTypes="link" rejectResponderTermination={false} onPress={() => Keyboard.dismiss()} style={[{ padding: 0 }, style]}>
       <Text>{children}</Text>
     </TextInput>
   );

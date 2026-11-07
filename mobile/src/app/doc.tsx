@@ -19,7 +19,8 @@ type Shown =
 /**
  * Markdown uses the same small text-only parser as chat. Files that need a
  * viewer never open this page from the files tab; one reached any other way
- * still goes to the viewer, and a file too large to draw gets the button.
+ * (a lepons://doc link, say) gets the button, as does a file too large to draw:
+ * nothing leaves for another app without a press.
  */
 export default function Doc() {
   const params = useLocalSearchParams<{ s: string; p: string }>();
@@ -47,7 +48,6 @@ export default function Doc() {
     }
     if (kind === "native") {
       show({ kind: "native" });
-      void openFile(() => live);
       return () => { live = false; };
     }
     void (async () => {
@@ -59,7 +59,6 @@ export default function Doc() {
         try { if (!file.bin.includes(0)) decoded = utf8(file.bin); } catch { /* binary file */ }
         if (kind === "markdown" && decoded !== undefined && !canRenderMarkdown(file.bin.byteLength, decoded)) return show({ kind: "native", largeMarkdown: true });
         show(decoded === undefined ? { kind: "native" } : { kind: "text", text: decoded, markdown: kind === "markdown" });
-        if (decoded === undefined) void openFile(() => live);
       } catch {
         show({ kind: "gone" });
       }
@@ -67,12 +66,10 @@ export default function Doc() {
     return () => { live = false; };
   }, [id, path]);
 
-  /** Opened without a press on arrival, so `still` says whether the reader stayed for it; the button stays for a second look or a failure. */
-  const openFile = async (still: () => boolean = () => true) => {
+  const openFile = async () => {
     setNote(t.loading);
     try {
       const file = await getFile();
-      if (!still()) return;
       if (!file) throw new Error("file");
       const opened = await openInViewer(file, path);
       setNote(opened ? "" : t.openUnavailable);

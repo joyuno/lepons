@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -33,6 +34,13 @@ const (
 	// 한 IP당 동시 연결. 공유기 하나 뒤에서 PC·폰 세 쌍까지 쓸 수 있다.
 	// 한 곳에서 연결 200개를 독차지하지 못하게 한다.
 	maxPerIP = 6
+
+	// 한 IP(IPv6는 /64)가 새로 여는 연결의 속도 한도. 토큰 버킷: 한꺼번에 newBurst개까지,
+	// 그 뒤로는 newEvery마다 하나(10초에 5개). relay가 재시작돼 공유기 뒤의 6개가 한꺼번에
+	// 다시 걸고 한 번 더 실패해도 걸리지 않는다. 넘으면 업그레이드 전에 429로 거절한다.
+	// 연결을 열고 닫기만 반복해 기록을 채우거나 CPU를 쓰는 쪽을 늦춘다.
+	newBurst = 2 * maxPerIP
+	newEvery = 2 * time.Second
 
 	// 30초마다 ping을 보내 Cloudflare를 지나는 연결이 유휴 상태로 끊기지 않게 한다. Cloudflare
 	// 문서에는 WebSocket 유휴 한도가 따로 없어 짧게 잡았다. pong이 10초 안에 오지 않으면 한
@@ -70,7 +78,35 @@ var (
 	rooms = map[string]*room{}
 	conns int
 	perIP = map[string]int{}
+	// full[key]는 그 키의 버킷이 다시 가득 차는 시각이다. 지난 시각이면 가득 찬 것이므로
+	// 지워도 같다. 값 하나로 버킷을 나타내므로 따로 채워 줄 타이머가 없다.
+	full      = map[string]time.Time{}
+	lastSweep time.Time
 )
+
+// allow는 key에게 새 연결을 열 토큰이 있으면 하나 쓰고 true를 돌려준다.
+func allow(key string, now time.Time) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	if now.Sub(lastSweep) > time.Minute {
+		// 키마다 맵 항목이 생기므로, IPv6 대역을 돌려 쓰는 쪽이 맵을 키우지 못하게 1분마다 비운다.
+		for k, t := range full {
+			if !t.After(now) {
+				delete(full, k)
+			}
+		}
+		lastSweep = now
+	}
+	t := full[key]
+	if t.Before(now) {
+		t = now
+	}
+	if t.Sub(now) > (newBurst-1)*newEvery {
+		return false
+	}
+	full[key] = t.Add(newEvery)
+	return true
+}
 
 // admit은 연결 수 한도 안일 때만 받아들인다. WebSocket을 만들기 전에 확인한다.
 func admit(ip string) bool {
@@ -166,18 +202,25 @@ func notify(c *conn, word string) {
 	_ = c.ws.Write(ctx, websocket.MessageText, []byte(word)) // 실패해도 무시한다. 곧바로 연결이 닫힐 수 있다.
 }
 
-// Cloudflare가 넣어 주는 실제 접속 IP. 원래는 위조할 수 있는 헤더지만, relay는 터널로만
-// 접속되므로(호스트에 공개 포트 없음) 믿을 수 있다. 잘못된 값이 맵 키로 쓰이지 않게
-// IP로 파싱한다.
-func clientIP(r *http.Request) string {
-	if ip := net.ParseIP(r.Header.Get("CF-Connecting-IP")); ip != nil {
-		return ip.String()
+// clientKey는 한도를 세는 단위다. IPv4는 주소 하나, IPv6는 /64 하나. IPv6는 회선 하나가 /64를
+// 통째로 받으므로, 주소마다 세면 한 곳이 주소를 바꿔 가며 연결 200개를 모두 차지할 수 있다.
+//
+// IP는 Cloudflare가 넣어 주는 CF-Connecting-IP에서 읽는다. 원래는 위조할 수 있는 헤더지만,
+// relay는 터널로만 접속되므로(compose.yaml: 공개 포트 없음, cloudflared와만 닿는 internal
+// 네트워크) 믿을 수 있다. 잘못된 값이 맵 키로 쓰이지 않게 IP로 파싱한다.
+func clientKey(r *http.Request) string {
+	ip := net.ParseIP(r.Header.Get("CF-Connecting-IP"))
+	if ip == nil {
+		host, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip = net.ParseIP(host)
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
+	if ip == nil {
 		return r.RemoteAddr
 	}
-	return host
+	if ip.To4() == nil {
+		ip = ip.Mask(net.CIDRMask(64, 128))
+	}
+	return ip.String()
 }
 
 // 복사 도중 어느 쪽에서 오류가 났는지 기억한다. 읽기 오류와 상대 쪽 쓰기 오류를
@@ -203,12 +246,17 @@ func serveWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	ip := clientIP(r)
+	ip := clientKey(r)
 	if !admit(ip) {
 		http.Error(w, "busy", http.StatusServiceUnavailable)
 		return
 	}
 	defer release(ip)
+	// 자리가 있을 때만 토큰을 쓴다. 한도에 막혀 다시 거는 동안 토큰까지 바닥나지 않게 한다.
+	if !allow(ip, time.Now()) {
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+		return
+	}
 
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		// Origin은 검사하지 않는다. 비밀은 방 ID 하나뿐이고, 방 ID를 가진 쪽은 브라우저가
@@ -355,11 +403,13 @@ func keepalive(ctx context.Context, c *conn) {
 
 // dailyLog는 기록을 UTC 날짜별 파일(relay-YYYY-MM-DD.log)에 쓴다. 날짜별로 나눠 두어야
 // 오래된 기록을 파일째 지울 수 있다. 하루에 logPerDay까지만 쓰고, 넘으면 안내 한 줄만 남긴다.
-// log.Logger가 Write를 한 번에 하나씩 부르므로 잠금은 없다.
+// 버린 줄 수는 세어 두었다가 다음 날 파일 첫 줄에 남긴다. 그래야 기록을 채운 공격의 크기가
+// 기록에서 사라지지 않는다. log.Logger가 Write를 한 번에 하나씩 부르므로 잠금은 없다.
 type dailyLog struct {
 	dir, day string
 	f        *os.File
 	n        int64 // 오늘 파일의 크기
+	dropped  int64 // 오늘 상한을 넘어 버린 줄 수
 }
 
 func (d *dailyLog) Write(p []byte) (int, error) {
@@ -371,15 +421,22 @@ func (d *dailyLog) Write(p []byte) (int, error) {
 		if d.f != nil {
 			_ = d.f.Close()
 		}
-		d.f, d.day, d.n = f, day, 0
+		prev, dropped := d.day, d.dropped
+		d.f, d.day, d.n, d.dropped = f, day, 0, 0
 		if st, err := f.Stat(); err == nil {
 			d.n = st.Size() // 하루 중간에 다시 시작해도 상한은 하루 기준이다.
+		}
+		if dropped > 0 {
+			line := fmt.Sprintf("%s log cap dropped %d lines on %s\n", time.Now().UTC().Format("2006/01/02 15:04:05"), dropped, prev)
+			d.n += int64(len(line))
+			_, _ = f.WriteString(line)
 		}
 	}
 	if d.n += int64(len(p)); d.n > logPerDay {
 		if d.n-int64(len(p)) <= logPerDay {
 			_, _ = d.f.WriteString(time.Now().UTC().Format("2006/01/02 15:04:05") + " log cap reached\n")
 		}
+		d.dropped++
 		return len(p), nil
 	}
 	return d.f.Write(p)

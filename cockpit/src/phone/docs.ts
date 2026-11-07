@@ -2,6 +2,8 @@ import type { Stats } from "node:fs";
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { isSensitivePath } from "../mask/mask.ts";
+
 /**
  * Files a phone may name in a session's folder: regular files only, never
  * through a symlink, a few levels down at most, skipping hidden, dependency
@@ -24,6 +26,15 @@ export function safePath(path: string): boolean {
     !path.split(/[\\/]/).includes("..");
 }
 
+/**
+ * A file whose bytes the phone may have: nothing under a hidden name (.env,
+ * .git/, .ssh/ when the folder is a home) and nothing the egress mask calls a
+ * secret (keys, credentials). The phone gets the bytes unmasked, so its folder
+ * browser leaves these out and a read refuses them even when named.
+ */
+export const phoneMayOpen = (path: string): boolean =>
+  safePath(path) && !path.split("/").some((part) => part.startsWith(".")) && !isSensitivePath(path);
+
 export const safeRelative = (path: string): boolean => safePath(path) && path.toLowerCase().endsWith(".md");
 
 /** What a find script printed: NUL-separated, `./` first, kept only if `accept` and safePath agree. */
@@ -38,7 +49,7 @@ export async function listFiles(root: string, accept: (name: string) => boolean,
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (found.length >= maxFiles) return;
-      if (entry.isFile() && accept(entry.name)) found.push(prefix + entry.name);
+      if (entry.isFile() && !entry.name.startsWith(".") && accept(entry.name)) found.push(prefix + entry.name);
       else if (entry.isDirectory() && !skipped(entry.name) && depth < maxDepth) {
         await walk(join(dir, entry.name), `${prefix}${entry.name}/`, depth + 1);
       }

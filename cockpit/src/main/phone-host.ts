@@ -9,7 +9,7 @@ import { agents, isAgentKind, type Executor } from "../agent/agents.ts";
 import { t } from "../i18n/i18n.ts";
 import { hashPassword, PhoneAuth } from "../phone/auth.ts";
 import type { Machine } from "../machine/machine.ts";
-import { safePath, viewable } from "../phone/docs.ts";
+import { phoneMayOpen, viewable } from "../phone/docs.ts";
 import { EXPO_PUSH_URL, pushGate, pushTokenGone, snapshotPushes, waitingPush, type Waiting } from "../phone/push.ts";
 import type { OutputRing } from "../phone/screen.ts";
 import { auditLine, createPhoneApi, sessionId, type PhoneApi, type PhoneDeps } from "../phone/server.ts";
@@ -65,6 +65,16 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   // on, but the push goes out whether the window has focus or not: the
   // operator it is for is the one who is not at the desk.
   const phone = new PhoneStore(join(userData, "phone.json"));
+  // The Authenticator key, sealed as the relay key is (sealSecret). One an
+  // earlier build kept in the clear (bare base32, never "safe:"/"plain:") is
+  // sealed on this start, so the phone's existing setup keeps working.
+  const kept = phone.get().totpSecret;
+  if (kept !== undefined && !/^(safe|plain):/.test(kept)) phone.set({ totpSecret: sealSecret(Buffer.from(kept), safeStorage) });
+  /** Undefined when there is none, or it no longer opens (another OS user, a new keyring): set up again then. */
+  const totpSecret = (): string | undefined => {
+    const sealed = phone.get().totpSecret;
+    return sealed === undefined ? undefined : openSecret(sealed, safeStorage)?.toString("utf8");
+  };
   const phoneAuth = new PhoneAuth(phone.get().sessions, (sessions) => phone.set({ sessions }));
   let phoneSessions: PhoneSession[] = [];
   let phoneProblem: PhoneSettingsView["problem"];
@@ -177,7 +187,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
 
   const phoneDeps: PhoneDeps = {
     tokenStats: readTokenStats,
-    credentials: () => phone.get(),
+    credentials: () => ({ passwordHash: phone.get().passwordHash, totpSecret: totpSecret() }),
     sessions: () => phoneSessions.map((session) => {
       const kind = sessionExecutor.get(session.key);
       return {
@@ -252,7 +262,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     },
     docBytes: async (key, relative) => {
       const listed = phoneDocs.get(key);
-      if (!listed?.files.has(relative) || !safePath(relative)) return undefined;
+      if (!listed?.files.has(relative) || !phoneMayOpen(relative)) return undefined;
       const node = nodes.list().find((candidate) => candidate.id === listed.nodeId);
       return node && machineOf(node).readInside(listed.root, relative, 20 * 1024 * 1024);
     },
@@ -275,7 +285,9 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const found = phoneSessionPlace(key);
       if (!found) return undefined;
       const { node, repo } = found;
-      const entries = await machineOf(node).listInside(repo.path, relative);
+      // Left out what a read would refuse anyway: hidden and secret-shaped names.
+      const entries = (await machineOf(node).listInside(repo.path, relative))
+        ?.filter((entry) => phoneMayOpen(relative ? `${relative}/${entry.name}` : entry.name));
       if (!entries) return undefined;
       const previous = phoneDocs.get(key);
       const files = previous?.root === repo.path && previous.nodeId === node.id ? previous.files : new Set<string>();
@@ -444,10 +456,10 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   // The key the Authenticator app scans. Shown again on request, made new
   // on request -- a new one signs every phone out, the old codes being void.
   ipcMain.handle(channels.phoneTotp, async (_event, renew: boolean) => {
-    let secret = phone.get().totpSecret;
+    let secret = totpSecret();
     if (secret === undefined || renew === true) {
       secret = newTotpSecret();
-      phone.set({ totpSecret: secret, totpUnconfirmed: true });
+      phone.set({ totpSecret: sealSecret(Buffer.from(secret), safeStorage), totpUnconfirmed: true });
       api.dropAll();
       void syncPhone();
     }
@@ -457,7 +469,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   // A bad scan is caught here, not at the phone's login. No last-step note: the
   // same code still opens the phone a moment later, its replay check being the login's.
   ipcMain.handle(channels.phoneTotpCheck, (_event, code: unknown) => {
-    const secret = phone.get().totpSecret;
+    const secret = totpSecret();
     if (secret === undefined || typeof code !== "string" || matchTotp(secret, code, Date.now()) === undefined) return false;
     phone.set({ totpUnconfirmed: undefined });
     void syncPhone();

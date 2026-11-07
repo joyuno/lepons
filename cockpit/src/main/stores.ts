@@ -222,7 +222,7 @@ export interface PhoneSettings {
   allowed?: boolean;
   /** scrypt, see phone/auth.ts; never the password. */
   passwordHash?: string;
-  /** Base32, as the Authenticator app holds it -- the same trust as the share tokens beside it. */
+  /** The Authenticator app's base32 key, in sealSecret's form (phone-host seals a bare one from earlier builds). */
   totpSecret?: string;
   /** No code has been typed back for this key yet. Absent on a key from before that check. */
   totpUnconfirmed?: boolean | undefined;
@@ -250,8 +250,8 @@ export interface SecretBox {
 
 /**
  * "safe:" and the bytes sealed by the OS (DPAPI, Keychain, libsecret) where
- * safeStorage works; "plain:" otherwise, the same trust as the TOTP secret
- * beside it -- a PC without a keyring still gets the relay.
+ * safeStorage works; "plain:" otherwise, the same trust as the share tokens
+ * -- a PC without a keyring still gets the relay and the phone login.
  */
 export function sealSecret(raw: Buffer, box: SecretBox): string {
   return box.isEncryptionAvailable()

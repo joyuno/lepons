@@ -16,12 +16,24 @@ export async function fetchFile(request: Connection["request"], session: string,
   return reply.status === 200 && reply.bin ? { bin: reply.bin, type: (reply.type ?? "").toLowerCase() } : undefined;
 }
 
+const openedFolder = () => new Directory(Paths.cache, "opened");
+
+/** The file opened last goes with the PC's sign-in. */
+export function forgetOpened(): void {
+  try {
+    const folder = openedFolder();
+    if (folder.exists) folder.delete();
+  } catch {}
+}
+
 /** Hands a file to the phone's own viewer, else the share sheet; false when neither took it. Only the file opened last stays on the phone. */
 export async function openInViewer(file: FetchedFile, path: string): Promise<boolean> {
   const ext = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
   if (ext === "pdf" && utf8(file.bin.subarray(0, 5)) !== "%PDF-") return false;
+  // A page or an SVG would run its scripts in the viewer or browser; its source shows as text instead (document-kind.ts).
+  if (/^(?:html?|xhtml|svgz?)$/.test(ext) || /html|svg/.test(file.type)) return false;
   const name = path.slice(path.lastIndexOf("/") + 1).replace(/[\/\\\x00-\x1f\x7f]/g, "_") || "file";
-  const folder = new Directory(Paths.cache, "opened");
+  const folder = openedFolder();
   if (folder.exists) folder.delete();
   folder.create();
   const out = new File(folder, name);

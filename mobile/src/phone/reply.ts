@@ -82,17 +82,33 @@ export function replyBlocks(text: string): ReplyBlock[] {
   return out;
 }
 
-export type Run = { kind: "text" | "code" | "bold" | "link"; text: string };
+export type Run = { kind: "text" | "code" | "bold" | "link"; text: string; url?: string; host?: string };
 
-/** inlineRuns, with a [link](url) read as its words. */
+const web = /^https?:\/\//;
+
+/** The host a web address really opens: past any "user@", and a backslash ends it as a slash does in a browser. */
+const hostOf = (url: string) => /^https?:\/\/(?:[^/?#\\]*@)?([^/?#\\]*)/i.exec(url)![1]!.toLowerCase();
+
+/**
+ * inlineRuns, with a [link](url) read as its words and a bare web address as a link; a link to the web carries its url.
+ * Words that are not the address itself carry the host too: "[https://github.com/x](https://evil.example)" must not pass for github.
+ */
 export function replyRuns(text: string): Run[] {
   return inlineRuns(text).flatMap((run): Run[] => {
+    if (run.kind === "code" && /^https?:\/\/\S+$/.test(run.text)) return [{ kind: "link", text: run.text, url: run.text }];
     if (run.kind !== "text") return [run];
-    const parts: Array<{ kind: "text" | "link"; text: string }> = [];
+    const parts: Run[] = [];
     let at = 0;
-    for (const match of run.text.matchAll(/\[([^\]\n]+)\]\([^)\s]+\)/g)) {
+    // ASCII only, so the Korean right after an address ("https://x.dev에서") stays text; a closing period or comma too.
+    for (const match of run.text.matchAll(/\[([^\]\n]+)\]\(([^)\s]+)\)|https?:\/\/[A-Za-z0-9\-._~:/?#@!$&*+,;=%]*[A-Za-z0-9\-_~/#=%&+]/g)) {
       if (match.index > at) parts.push({ kind: "text", text: run.text.slice(at, match.index) });
-      parts.push({ kind: "link", text: match[1]! });
+      const url = match[1] === undefined ? match[0] : match[2]!;
+      const text = match[1] ?? match[0];
+      if (!web.test(url)) parts.push({ kind: "link", text });
+      else {
+        const host = hostOf(url);
+        parts.push({ kind: "link", text, url, ...(text !== url && text.toLowerCase() !== host && { host }) });
+      }
       at = match.index + match[0].length;
     }
     if (at < run.text.length) parts.push({ kind: "text", text: run.text.slice(at) });

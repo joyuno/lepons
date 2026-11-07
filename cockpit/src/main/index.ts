@@ -37,6 +37,7 @@ import { downloadVerified, installerArgs } from "./self-update.ts";
 import { swapArgs, unpackPatch } from "./app-patch.ts";
 import { failedTry, joinRunning, olderThanTunnel, type Outage } from "./share-outage.ts";
 import { dialogRequest, replyIndex } from "./app-dialog.ts";
+import { ALWAYS, ONCE, REFUSE, approveDelegation, instructionsPreview } from "./delegate-approval.ts";
 import { containingRepo, transferProblem, type EntryAction } from "../browse/entry-ops.ts";
 import { openForEdit, saveEdited, type FileStore } from "./edit-file.ts";
 import { folderPath, resolveTarget } from "../browse/target.ts";
@@ -116,6 +117,8 @@ let grants: GrantStore;
 let uncleaned: IdSetStore;
 /** "nodeId fingerprint" of changed host keys the operator said never to ask about. */
 let refusedHostKeys: IdSetStore;
+/** PCs whose delegated tasks run without asking ("항상 허용"); dropped when the PC is removed or moved. */
+let delegationTrust: IdSetStore;
 /** Passphrases for this run only; never written anywhere. */
 const passphrases = new PassphraseCache();
 const pendingPassphrases = new Map<string, (value: string | null) => void>();
@@ -518,6 +521,8 @@ async function retarget(node: Extract<NodeConfig, { kind: "ssh" }>, next: string
   nodes.save(moved);
   // Another address may answer with another key: ask about it afresh.
   refusedHostKeys.dropPrefix(`${node.id} `);
+  // And may be another machine: its delegated tasks are asked about again too.
+  delegationTrust.set(node.id, false);
   return undefined;
 }
 
@@ -1036,6 +1041,27 @@ function sanitizedEnv(): NodeJS.ProcessEnv {
 }
 
 /**
+ * The question for a task another machine hands over, in the app window like
+ * every other one; undefined without a window, which then counts as no answer.
+ */
+function askToDelegate(source: string, target: NodeConfig, folder: string, instructions: string): (() => Promise<number>) | undefined {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return undefined;
+  const buttons: string[] = [];
+  buttons[REFUSE] = t("delegate.askRefuse");
+  buttons[ONCE] = t("delegate.askOnce");
+  buttons[ALWAYS] = t("delegate.askAlways", { source });
+  return () => appDialog(window, {
+    type: "warning",
+    message: t("delegate.askTitle", { source }),
+    detail: t("delegate.askDetail", { target: machineLabel(target), folder, instructions: instructionsPreview(instructions) }),
+    buttons,
+    defaultId: REFUSE,
+    cancelId: REFUSE,
+  }).then(({ response }) => response);
+}
+
+/**
  * Starts a separate task with the selected executor on the repository owner.
  */
 function delegationHub(fromNodeId: string): DelegationHub {
@@ -1060,6 +1086,21 @@ function delegationHub(fromNodeId: string): DelegationHub {
         await machine.checkAgent(target.agent);
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
+      // A task from another machine runs with permission prompts skipped,
+      // here or through this PC's keys on a third one: someone at this PC
+      // says yes first. This PC's own agents are the operator's and need not.
+      const source = nodes.list().find((node) => node.id === fromNodeId);
+      if (source?.kind !== "local") {
+        const answer = await approveDelegation(
+          delegationTrust.has(fromNodeId),
+          askToDelegate(source ? machineLabel(source) : fromNodeId, owner, repo.path, instructions),
+          () => delegationTrust.set(fromNodeId, true),
+        );
+        if (answer === "refused") return { ok: false, error: `refused: the operator on ${hostname()} said no to this task` };
+        if (answer === "unanswered") {
+          return { ok: false, error: `approval_needed: this task needs a yes on ${hostname()} (the Lepons window there), and none came. Ask the operator, then try again.` };
+        }
       }
 
       const record: DelegationInfo = {
@@ -1312,6 +1353,17 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+// Every window (main, pet, any later one) stays on the page it loaded. Its
+// preload hands the page window.cockpit, so a page it navigated to -- an .html
+// file dropped on it, say -- would get this PC's sessions and disk. Reloads
+// and in-page hash changes do not pass will-navigate; no feature opens a
+// window, a link goes out through openLink.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-navigate", (event) => event.preventDefault());
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+});
+
 app.whenReady().then(() => {
   // Main's own dialogs and menus speak the first-start language until the
   // page reports the one it saved (setLocale below), which then wins.
@@ -1358,6 +1410,7 @@ app.whenReady().then(() => {
   mcpAgents = new McpAgentStore(join(userData, "mcp-agents.json"));
   uncleaned = new IdSetStore(join(userData, "unregister-pending.json"));
   refusedHostKeys = new IdSetStore(join(userData, "refused-host-keys.json"));
+  delegationTrust = new IdSetStore(join(userData, "delegation-trust.json"));
   void ownStatusLine().then(async (own) => {
     const path = join(userData, "claude-statusline.json");
     await writeFile(path, statusLineSettings(own));
@@ -2499,6 +2552,7 @@ app.whenReady().then(() => {
   /** A machine leaving: its sessions, its share, and grants on either side. */
   const forgetNode = (id: string): NodeConfig[] => {
     refusedHostKeys.dropPrefix(`${id} `);
+    delegationTrust.set(id, false);
     for (const [key, session] of sessions) {
       if (key === id || key.startsWith(id + "::")) {
         session.close();

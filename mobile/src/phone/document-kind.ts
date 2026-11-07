@@ -1,8 +1,8 @@
-/** The OS handles image/PDF display; Markdown is rendered locally as text. */
+/** The OS handles image/PDF display; Markdown is rendered locally as text. HTML and SVG are text too: a viewer would run their scripts. */
 export function documentKind(path: string): "native" | "markdown" | "text" {
   const ext = /\.([a-z0-9]+)$/i.exec(path)?.[1]?.toLowerCase() ?? "";
   if (ext === "md" || ext === "markdown") return "markdown";
-  if (["html", "htm", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff", "ico", "svg", "raw", "dng", "cr2", "nef", "arw"].includes(ext)) return "native";
+  if (["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff", "ico", "raw", "dng", "cr2", "nef", "arw"].includes(ext)) return "native";
   return "text";
 }
 

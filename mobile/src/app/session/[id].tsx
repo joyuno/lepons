@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/headless";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
-import { ActivityIndicator, Alert, AppState, FlatList, Keyboard, KeyboardAvoidingView, LayoutAnimation, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
+import { ActivityIndicator, Alert, AppState, FlatList, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Connection } from "@/connection";
@@ -516,7 +516,9 @@ function Runs({ text }: { text: string }) {
   return replyRuns(text).map((run, i) =>
     run.kind === "text" ? run.text
     : run.kind === "code" ? <Text key={i} style={{ fontFamily: mono, fontSize: size.footnote, backgroundColor: p.raise }}>{run.text}</Text>
-    : run.kind === "link" ? <Text key={i} style={{ textDecorationLine: "underline" }}>{run.text}</Text>
+    // A web link opens in the browser. In iOS's selectable text a nested press never fires; the text view's own link detection opens it there (SelectableText).
+    // Words that are not the address are followed by the host they open, dimmed: "문서 (evil.example)".
+    : run.kind === "link" ? <Text key={i} style={{ textDecorationLine: "underline", color: run.url ? p.link : undefined }} onPress={run.url ? () => void Linking.openURL(run.url!) : undefined}>{run.text}{run.host ? <Text style={{ color: p.muted, textDecorationLine: "none" }}> ({run.host})</Text> : null}</Text>
     : <Text key={i} style={font.bold}>{run.text}</Text>);
 }
 
