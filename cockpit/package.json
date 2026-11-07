@@ -11,7 +11,7 @@
     "build": "node build.mjs",
     "start": "node build.mjs && electron .",
     "dist:win": "node build.mjs && electron-builder --win && node make-patch.mjs && node prune-release.mjs",
-    "dist:mac": "node build.mjs && electron-builder --mac && node make-patch.mjs && node prune-release.mjs",
+    "dist:mac": "node build.mjs && electron-builder --mac && node make-patch.mjs && node prune-release.mjs && for f in release/*.dmg; do codesign --sign 'Developer ID Application' --timestamp \"$f\" && xcrun notarytool submit \"$f\" --keychain-profile \"$APPLE_KEYCHAIN_PROFILE\" --wait && xcrun stapler staple \"$f\" || exit 1; done",
     "postinstall": "node -e \"for (const arch of ['arm64', 'x64']) try { require('fs').chmodSync('node_modules/node-pty/prebuilds/darwin-' + arch + '/spawn-helper', 0o755) } catch {}\""
   },
   "dependencies": {
