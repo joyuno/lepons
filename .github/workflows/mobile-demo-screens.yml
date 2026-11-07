@@ -53,7 +53,9 @@ jobs:
 
       - name: Install Maestro
         run: |
-          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          # Pinned release zip instead of piping the installer script into bash.
+          curl -fsSL -o /tmp/maestro.zip "https://github.com/mobile-dev-inc/maestro/releases/download/cli-2.12.1/maestro.zip"
+          unzip -q /tmp/maestro.zip -d /tmp && mkdir -p "$HOME/.maestro" && cp -r /tmp/maestro/* "$HOME/.maestro/" && rm -rf /tmp/maestro /tmp/maestro.zip
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       # The emulator needs KVM on the hosted runner.
@@ -64,7 +66,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Walk the demo
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 34
           arch: x86_64
