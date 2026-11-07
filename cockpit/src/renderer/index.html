@@ -130,6 +130,10 @@
       }
       button { font: inherit; color: inherit; }
       :focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+      /* Buttons along the window's top edge (⚙, phone, «, the split and window
+         buttons) sit 2px from the frame: a ring drawn outside them lost its
+         top edge, so theirs is drawn just inside. */
+      .railHead button:focus-visible, #titleBar button:focus-visible { outline-offset: -2px; }
 
       /* Scrollbars, everywhere at once.
          Left unstyled, Chromium draws the platform's own -- which on this
@@ -407,6 +411,8 @@
         padding: 7px 9px; border-radius: 5px; font-size: 13px;
       }
       .railIconBtn:hover { background: var(--raise); color: var(--text); }
+      /* In the 32px head a 34px button touched the frame; 5px top and bottom keeps it, and its focus ring, inside. */
+      body:not(.railCollapsed) .railHead .railIconBtn { padding-top: 5px; padding-bottom: 5px; }
 
       /* --- main ------------------------------------------------------- */
       main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
