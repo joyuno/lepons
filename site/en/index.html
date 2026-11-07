@@ -190,6 +190,6 @@
 </section>
 
 <footer class="foot"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/support">Support</a><a href="mailto:joy981017@gmail.com">Contact</a><a href="https://github.com/joyuno/lepons">Source code (MIT License)</a></footer>
-<script>/* Point the buttons straight at the latest release files; the release page stays the fallback. */fetch("https://api.github.com/repos/joyuno/lepons/releases/latest").then((r) => r.json()).then((r) => {for (const a of document.querySelectorAll("a[data-asset]")) { const f = r.assets.find((x) => x.name.endsWith(a.dataset.asset)); if (f) a.href = f.browser_download_url; }}).catch(() => {});</script>
+<script src="/dl.js" defer></script>
 </body>
 </html>

@@ -192,6 +192,6 @@
 </section>
 
 <footer class="foot"><a href="/privacy">개인정보 처리방침</a><a href="/terms">이용약관</a><a href="/support">지원</a><a href="mailto:joy981017@gmail.com">문의·피드백</a><a href="https://github.com/joyuno/lepons">소스 코드 (MIT 라이선스)</a></footer>
-<script>/* Point the buttons straight at the latest release files; the release page stays the fallback. */fetch("https://api.github.com/repos/joyuno/lepons/releases/latest").then((r) => r.json()).then((r) => {for (const a of document.querySelectorAll("a[data-asset]")) { const f = r.assets.find((x) => x.name.endsWith(a.dataset.asset)); if (f) a.href = f.browser_download_url; }}).catch(() => {});</script>
+<script src="/dl.js" defer></script>
 </body>
 </html>
