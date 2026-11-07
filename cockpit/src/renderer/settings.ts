@@ -799,7 +799,21 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
         })),
       line(t("settings.pet.character")),
       radio("setPetTheme", "produck", worn === undefined, wear(undefined)),
-      ...info.pets.map((pet) => radio("setPetTheme", pet.name, pet.id === worn, wear(pet.id))),
+      ...info.pets.map((pet) => {
+        // An imported pet can go again; produck, built in, cannot.
+        const row = radio("setPetTheme", pet.name, pet.id === worn, wear(pet.id));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "setPetDelete";
+        remove.textContent = t("settings.pet.delete");
+        remove.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          cockpit.settingsAction("petDelete", pet.id);
+        });
+        row.append(remove);
+        return row;
+      }),
       buttons([t("settings.pet.import"), act("petImport")], [t("settings.pet.openFolder"), act("petOpenFolder")], [t("settings.pet.guide"), () => {
         dialog.close();
         openPetGuide();

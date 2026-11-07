@@ -364,7 +364,7 @@ export interface AgentAccount {
 /** Where a sign-in run out of sight got to first: the address it opened (and Codex's code), done already, or back to the terminal. */
 export type AgentLoginStart = { url: string; code?: string } | { done: true } | { fallback: true };
 
-export type SettingsAction = "disconnect" | "disconnectPc" | "checkUpdate" | "allowOn" | "allowOff" | "copyKey" | "petChoose" | "petImport" | "petOpenFolder" | "openLogs" | "phoneMenu";
+export type SettingsAction = "disconnect" | "disconnectPc" | "checkUpdate" | "allowOn" | "allowOff" | "copyKey" | "petChoose" | "petImport" | "petDelete" | "petOpenFolder" | "openLogs" | "phoneMenu";
 
 export interface CockpitApi {
   /** True where the window has no OS frame, so the page supplies its parts. */

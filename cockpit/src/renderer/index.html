@@ -858,6 +858,11 @@
       #settingsPanel label:has(input:focus-visible) { outline: 2px solid var(--live); outline-offset: 2px; }
       #settingsPanel input:focus-visible { outline: none; }
       #settingsPanel .setButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      #settingsPanel .setPetDelete {
+        margin-left: auto; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;
+        border: 1px solid var(--line); background: var(--raise); color: var(--muted);
+      }
+      #settingsPanel .setPetDelete:hover { border-color: var(--muted); color: var(--text); }
       #settingsPanel .setButtons button {
         padding: 7px 12px; border-radius: 5px; cursor: pointer;
         border: 1px solid var(--line); background: var(--raise);

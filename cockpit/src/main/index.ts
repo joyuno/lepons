@@ -3289,10 +3289,15 @@ app.whenReady().then(() => {
       acceptFirstMouse: true,
       webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: false },
     });
+    // Above every other window, other always-on-top ones and full-screen apps
+    // included: the plain always-on-top level sits under those.
+    petWindow.setAlwaysOnTop(true, "screen-saver");
+    if (process.platform === "darwin") petWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     petWindow.loadFile(join(__dirname, "pet.html"));
     petWindow.once("ready-to-show", () => {
       void sendPetTheme().then(() => {
         petWindow?.showInactive();
+        petWindow?.moveTop();
         petWindow?.webContents.send(channels.petMood, ...petMoodNow);
       });
     });
@@ -3352,6 +3357,26 @@ app.whenReady().then(() => {
     // Always: besides showing the pet (a no-op when it is already out), this
     // redraws the settings window, whose pet list was read before the import.
     event.sender.send(channels.powerAction, "pet", "on");
+  };
+
+  // An imported pet, by the id listPets gave it (a folder right under petsDir):
+  // asked first, then its copy goes; the folder it came from is not touched.
+  const deletePet = async (event: Electron.IpcMainEvent, id: string): Promise<void> => {
+    const pet = (await listPets(petsDir).catch(() => [])).find((candidate) => candidate.id === id);
+    if (!pet) return;
+    const { response } = await appDialog(window, {
+      type: "warning",
+      message: t("pet.deleteAsk", { name: pet.name }),
+      detail: t("pet.deleteDetail"),
+      buttons: [t("common.cancel"), t("settings.pet.delete")],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (response !== 1) return;
+    await rm(join(petsDir, pet.id), { recursive: true, force: true });
+    if (petPrefs.theme === pet.id) choosePet(undefined);
+    // Redraws the settings list; the pet stays as shown or hidden as it was.
+    event.sender.send(channels.powerAction, "pet", petWindow ? "on" : "off");
   };
 
   // Lepons writes no log of its own; this is where Electron's would go.
@@ -3449,6 +3474,7 @@ app.whenReady().then(() => {
       }
       case "petChoose": choosePet(value || undefined); break;
       case "petImport": void importPetFolder(event); break;
+      case "petDelete": void deletePet(event, value ?? ""); break;
       case "petOpenFolder": void mkdir(petsDir, { recursive: true }).then(() => shell.openPath(petsDir)); break;
       case "openLogs": void mkdir(logsDir, { recursive: true }).then(() => shell.openPath(logsDir)); break;
     }
