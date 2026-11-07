@@ -59,11 +59,7 @@ Windows 쪽에서 PC·폰 클라이언트를 만들 때 필요한 전부다.
    echo 'TUNNEL_TOKEN=여기에토큰' > relay/.env
    ```
 
-4. 맥이 자면 중계가 끊긴다. 전원 연결 시 잠자기를 끈다.
-
-   ```bash
-   sudo pmset -c sleep 0
-   ```
+4. 호스트가 잠자기에 들어가면 중계가 끊긴다. 호스트의 잠자기를 끈다.
 
 ## 매일
 
@@ -87,7 +83,7 @@ docker run --rm --network lepons-relay_inside busybox \
 node smoke.mjs https://relay.lepons.app
 ```
 
-호스트에 공개된 포트가 없어서(맥의 8787은 다른 프로세스가 쓴다) `curl localhost:8787`은
+호스트에 공개된 포트가 없어서 `curl localhost:8787`은
 안 된다. cloudflared 이미지에는 셸도 `wget`도 없으므로 `docker compose exec`로는 확인할 수 없다.
 
 ## 한도와 알려진 실패
@@ -96,19 +92,18 @@ node smoke.mjs https://relay.lepons.app
 |---|---|
 | 메모리 / CPU | 128 MB / 0.5 코어. 20연결·3 MiB 트래픽 실측 **2 MiB** |
 | 연결 | 전체 200, IP당 6(IPv6는 /64당 6). 넘으면 OOM 대신 503. 새 연결은 IP당 한꺼번에 12개, 그 뒤 2초에 1개(넘으면 429) |
-| 맥이 자면 | 전부 끊긴다. `pmset -c sleep 0` |
-| 맥을 재부팅하면 | FileVault가 로그인 전까지 디스크를 잠그므로 **사람이 로그인할 때까지 안 올라온다** |
-| Docker Desktop 재시작 | `restart: unless-stopped`가 알아서 되살린다 |
+| 호스트가 자면 | 전부 끊긴다. 호스트의 잠자기를 끈다 |
+| 호스트를 재부팅하면 | 디스크 암호화가 로그인 전까지 디스크를 잠그는 호스트에서는 **사람이 로그인할 때까지 안 올라온다** |
+| Docker 재시작 | `restart: unless-stopped`가 알아서 되살린다 |
 | 로그 보관 | `logs` 볼륨에 날짜별 파일. 그날 0시(UTC)부터 14일이 지나면 1분 안에 지운다. 하루 64 MiB까지만 쓴다(넘으면 `log cap reached` 한 줄, 다음 날 첫 줄에 버린 줄 수 `log cap dropped N lines on 날짜`). 터널 상태는 Cloudflare 대시보드(Networks → Tunnels)에서 본다 |
-| 로그 시각 | Docker Desktop VM 시계가 호스트에서 수 초~십수 초 어긋난다(실측 5초, 15초). 초 단위로 믿지 않는다 |
+| 로그 시각 | Docker가 VM 안에서 도는 호스트에서는 VM 시계가 수 초~십수 초 어긋날 수 있다. 초 단위로 믿지 않는다 |
 | 100명 규모 | 같은 동작을 Cloudflare Workers + Durable Objects로 옮긴다 |
 
 ## 왜 이렇게 생겼나
 
-- **호스트 포트를 공개하지 않는다.** 맥의 8787은 이미 다른 프로세스가 쓰고 있고,
-  공개 포트가 없어야 `CF-Connecting-IP`를 믿고 IP당 한도를 걸 수 있다.
-- **맥 폴더를 하나도 연결하지 않는다.** 볼륨은 Docker VM 안의 `logs`(relay 기록) 하나뿐이다.
-  "맥 파일에 접근하지 않는다"가 약속이 아니라 `compose.yaml`에서 확인되는 사실이 된다.
+- **호스트 포트를 공개하지 않는다.** 공개 포트가 없어야 `CF-Connecting-IP`를 믿고 IP당 한도를 걸 수 있다.
+- **호스트 폴더를 하나도 연결하지 않는다.** 볼륨은 Docker의 `logs`(relay 기록) 하나뿐이다.
+  "호스트 파일에 접근하지 않는다"가 약속이 아니라 `compose.yaml`에서 확인되는 사실이 된다.
 - **`FROM scratch`.** 2.4 MB 이미지. 인터넷에 닿는 컨테이너 안에 셸도 패키지 관리자도 없다.
 - **relay는 `internal: true` 네트워크에 있다.** 밖으로 나가는 쪽은 cloudflared뿐이다.
 - **큐가 없다.** 상대 쓰기가 막히면 복사가 멈추고 그 멈춤이 TCP를 타고 보낸 쪽까지 간다.
