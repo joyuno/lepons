@@ -109,6 +109,12 @@ export interface PhoneRoutes {
   "GET /api/docs": { query: "s"; reply: { files: string[] } };
   "GET /api/doc": { query: "s&p"; reply: { text: string } };
   "GET /api/file": { query: "s&p"; reply: Uint8Array };
+  /**
+   * A file the session's agent named outside its folder, `p` as it printed it
+   * ("~/...", "/...", "C:\\..."): only one its record holds, its text masked.
+   * 403 "secret" for a place that keeps keys, 413 "big", else 404. A PC before 1.10.4 answers 404 "not found".
+   */
+  "GET /api/outside": { query: "s&p"; reply: Uint8Array };
   /** token null stops the pushes; prefs.done false stops only the all-done one. */
   "POST /api/push-token": { body: { token: string | null; prefs?: { done?: boolean } }; reply: Ok };
   /** One of key and text. */

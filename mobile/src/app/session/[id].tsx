@@ -4,7 +4,7 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { setStringAsync } from "expo-clipboard";
 import { SymbolView } from "expo-symbols";
 import { createContext, Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement, type ReactNode } from "react";
-import { ActivityIndicator, Alert, AppState, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, useColorScheme, View, type ScrollViewInstance, type TextInputInstance, type ViewInstance } from "react-native";
+import { ActivityIndicator, Alert, AppState, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance, type ViewInstance } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { pick, upload, type Picked } from "@/attach";
@@ -695,28 +695,30 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
 // --- the project's terminal -----------------------------------------------------
 
 /** ANSI's 16 colours: GitHub's, deeper on the light page, softer on the dark one. */
-const ansiLight = ["#24292f", "#cf222e", "#116329", "#9a6700", "#0969da", "#8250df", "#1b7c83", "#6e7781", "#57606a", "#a40e26", "#1a7f37", "#7d4e00", "#218bff", "#a475f9", "#3192aa", "#8c959f"];
 const ansiDark = ["#484f58", "#ff7b72", "#3fb950", "#d29922", "#58a6ff", "#bc8cff", "#39c5cf", "#b1bac4", "#6e7681", "#ffa198", "#56d364", "#e3b341", "#79c0ff", "#d2a8ff", "#56d4dd", "#ffffff"];
+
+/** The PC's own dark terminal (cockpit's xterm theme), in either phone theme: it should read as a terminal, not a text file. */
+const TERM = { bg: "#11161d", bar: "#0b0f14", fg: "#cdd6e0", dim: "#6e7681", line: "#232d38", cursor: "#e8a33d", go: "#3fb950" };
 
 /**
  * The project's plain terminal (the PC's "<node>::<repo>::terminal"), opened on the PC if
  * it is not: its screen replayed as monospace lines, and one line that types into it. Apart
- * from the chat: no keys, no menu, nothing of the agent's.
+ * from the chat: no keys, no menu, nothing of the agent's. What is typed shows at the end of
+ * the screen with a cursor, as in a terminal, but reaches the PC only when it is sent.
  */
 function TerminalView({ id }: { id: string }) {
   const c = useConnection();
   const { c: p, s } = useSessionTheme();
-  const dark = useColorScheme() === "dark";
   /** undefined while asking, null when the PC could not give one. */
   const [termId, setTermId] = useState<string | null>();
   const ready = termId ? c.phone?.sessions.some((one) => one.id === termId) === true : false;
   const [lines, setLines] = useState<TermRun[][]>([]);
   const [text, setText] = useState("");
   const [note, setNote] = useState("");
+  const [typing, setTyping] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
   const atBottom = useRef(true);
-  const colors = useRef({ ansi: ansiLight, fg: p.text, bg: p.card });
-  colors.current = { ansi: dark ? ansiDark : ansiLight, fg: p.text, bg: p.card };
+  const colors = useRef({ ansi: ansiDark, fg: TERM.fg, bg: TERM.bg });
 
   useEffect(() => {
     let live = true;
@@ -793,11 +795,24 @@ function TerminalView({ id }: { id: string }) {
   const follow = () => {
     if (atBottom.current) scroll.current?.scrollToEnd({ animated: false });
   };
+  // Made again only when the screen changes, not on every key typed below it.
+  const screen = useMemo(() => lines.map((runs, i) => (
+    <Fragment key={i}>
+      {i > 0 ? "\n" : ""}
+      {runs.map((one, j) => (one.color || one.background || one.bold
+        ? <Text key={j} style={{ color: one.color, backgroundColor: one.background, fontWeight: one.bold ? "700" : undefined }}>{one.text}</Text>
+        : one.text))}
+    </Fragment>
+  )), [lines]);
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, backgroundColor: TERM.bg }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: TERM.bar, borderBottomWidth: 1, borderBottomColor: TERM.line }}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: ready ? TERM.go : termId === null ? p.stop : TERM.cursor }} />
+        <Text style={{ fontFamily: mono, fontSize: size.caption, color: TERM.dim }} numberOfLines={1}>{t.terminal}</Text>
+      </View>
       <ScrollView
         ref={scroll}
-        style={{ flex: 1, backgroundColor: p.card }}
+        style={{ flex: 1, backgroundColor: TERM.bg }}
         contentContainerStyle={{ padding: space.md }}
         keyboardShouldPersistTaps="handled"
         scrollEventThrottle={100}
@@ -807,36 +822,46 @@ function TerminalView({ id }: { id: string }) {
         onContentSizeChange={follow}
         onLayout={follow}
       >
-        {termId === null ? <Text style={s.empty}>{t.terminalFailed}</Text>
-        : !ready ? <Text style={s.empty}>{t.terminalOpening}</Text>
+        {termId === null ? <Text style={[s.empty, { color: TERM.dim }]}>{t.terminalFailed}</Text>
+        : !ready ? <Text style={[s.empty, { color: TERM.dim }]}>{t.terminalOpening}</Text>
         : (
           // One text for every line: a few hundred rows, drawn again with each burst of output.
-          <Text style={s.mono} selectable>
-            {lines.map((runs, i) => (
-              <Fragment key={i}>
-                {i > 0 ? "\n" : ""}
-                {runs.map((run, j) => (run.color || run.background || run.bold ? <Text key={j} style={{ color: run.color, backgroundColor: run.background, fontWeight: run.bold ? "700" : undefined }}>{run.text}</Text> : run.text))}
-              </Fragment>
-            ))}
-          </Text>
+          // SelectableText, so part of it can be dragged over and copied (on iOS a Text copies only whole).
+          // The line being typed follows the last one, the prompt, with a cursor after it.
+          <SelectableText style={[s.mono, { color: TERM.fg }]}>
+            {screen}
+            {typing || text !== "" ? <Text>{lines.at(-1)?.length ? " " : ""}{text}<Text style={{ color: TERM.bg, backgroundColor: TERM.cursor }}> </Text></Text> : null}
+          </SelectableText>
         )}
       </ScrollView>
-      <View style={{ borderTopWidth: 1, borderTopColor: p.line, backgroundColor: p.bg, paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.xs }}>
-        <TextInput
-          style={[s.input, { minHeight: 44, borderRadius: radius.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, fontFamily: mono, fontSize: size.callout }]}
-          value={text}
-          onChangeText={setText}
-          onSubmitEditing={() => void submit()}
-          submitBehavior="submit"
-          returnKeyType="send"
-          editable={ready}
-          placeholder={t.terminalHint}
-          placeholderTextColor={p.muted}
-          maxLength={MAX_INPUT}
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-        />
+      <View style={{ borderTopWidth: 1, borderTopColor: TERM.line, backgroundColor: TERM.bar, paddingHorizontal: space.md, paddingVertical: space.sm, gap: space.xs }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+          <Text style={{ fontFamily: mono, fontSize: size.callout, color: TERM.cursor }}>{"\u276f"}</Text>
+          <TextInput
+            style={{ flex: 1, minHeight: 44, paddingVertical: space.sm, fontFamily: mono, fontSize: size.callout, color: TERM.fg }}
+            value={text}
+            onChangeText={setText}
+            onFocus={() => { setTyping(true); atBottom.current = true; follow(); }}
+            onBlur={() => setTyping(false)}
+            onSubmitEditing={() => void submit()}
+            submitBehavior="submit"
+            returnKeyType="send"
+            editable={ready}
+            placeholder={t.terminalHint}
+            placeholderTextColor={TERM.dim}
+            selectionColor={TERM.cursor}
+            cursorColor={TERM.cursor}
+            maxLength={MAX_INPUT}
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
+            keyboardAppearance="dark"
+          />
+          <Pressable accessibilityRole="button" accessibilityLabel={t.send} disabled={!ready} onPress={() => void submit()} hitSlop={8}
+            style={({ pressed }) => ({ width: 40, height: 36, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: TERM.cursor, opacity: !ready ? 0.4 : pressed ? 0.7 : 1 })}>
+            <Text style={{ fontFamily: mono, fontSize: size.headline, fontWeight: "700", color: TERM.bar }}>{"\u21b5"}</Text>
+          </Pressable>
+        </View>
         {note ? <Text style={[s.dim, { fontSize: size.caption, color: p.stop }]} accessibilityLiveRegion="polite">{note}</Text> : null}
       </View>
     </View>

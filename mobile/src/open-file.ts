@@ -20,6 +20,18 @@ export async function fetchFile(request: Connection["request"], session: string,
   return reply.status === 200 && reply.bin ? { bin: reply.bin, type: (reply.type ?? "").toLowerCase() } : undefined;
 }
 
+/** Why the PC would not give a file outside the folder: "old" is a PC before 1.10.4, which has no such route. */
+export type OutsideRefusal = "secret" | "big" | "old";
+
+/** A file the agent named outside the session's folder, by the path as it printed it (the PC's GET /api/outside). */
+export async function fetchOutside(request: Connection["request"], session: string, printed: string): Promise<FetchedFile | OutsideRefusal | undefined> {
+  const q = encodeURIComponent;
+  const reply = await request("GET", `/api/outside?s=${q(session)}&p=${q(printed)}`, { timeoutMs: FILE_TIMEOUT });
+  if (reply.status === 200 && reply.bin) return { bin: reply.bin, type: (reply.type ?? "").toLowerCase() };
+  const error = (reply.body as { error?: unknown } | undefined)?.error;
+  return error === "secret" || error === "big" ? error : error === "not found" ? "old" : undefined;
+}
+
 const openedFolder = () => new Directory(Paths.cache, "opened");
 
 /** The file opened last goes with the PC's sign-in. */
@@ -59,11 +71,17 @@ export async function openInViewer(file: FetchedFile, path: string): Promise<boo
  * A file path tapped in the chat, opened as the files tab opens it: the page
  * for what it can draw, the phone's viewer for the rest. Its folder is listed
  * first, as the PC hands over only what a listing named. False when it is not
- * a file there; back from the page is the chat again.
+ * a file there; back from the page is the chat again. One outside the folder
+ * ("~/.codex/...", another absolute path) opens on the page as printed: the PC
+ * decides whether to give it.
  */
 export async function openPrinted(request: Connection["request"], session: string, folder: string | undefined, printed: string): Promise<boolean> {
   const path = relativeToFolder(printed, folder);
-  if (!path) return false;
+  if (!path) {
+    if (!/^(?:~\/|\/|[A-Za-z]:[\\/])/.test(printed)) return false;
+    router.push({ pathname: "/doc", params: { s: session, p: printed, o: "1" } });
+    return true;
+  }
   const q = encodeURIComponent;
   const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
   const name = path.slice(path.lastIndexOf("/") + 1);

@@ -2,6 +2,26 @@ import { inputFor } from "./phone/copied.ts";
 import type { CommandSuggestion, Mood, PcAccounts, PcState, PhoneSubagent, PhoneSummary, StepKind, WorkflowItem } from "./phone/types.ts";
 import type { PhoneEvents, PhoneFailure, PhoneRoute, ReplyOf, Unproven } from "../../cockpit/src/phone/contract.ts";
 import { fmt, locale } from "./i18n.ts";
+
+/** A file to open from the demo's files tab: enough lines to show the code viewer. */
+const demoCart = `import { discountFor } from "./discount";
+
+/* One line of the cart: what, how many, at what price. */
+export interface CartLine {
+  sku: string;
+  quantity: number;
+  unitPrice: number; // in won
+}
+
+export function total(lines: CartLine[], memberSince?: Date): number {
+  const subtotal = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
+  if (subtotal === 0) return 0;
+  const rate = discountFor(subtotal, memberSince);
+  return Math.round(subtotal * (1 - rate));
+}
+
+export const emptyCart: CartLine[] = [];
+`;
 import type { Reply } from "./relay/client.ts";
 
 /** What the pretend PC says, in the app's language: a store shot in English shows no Korean. */
@@ -457,7 +477,7 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       return text === undefined ? fail(404, "doc") : ok(at, { text });
     }
     if (at === "GET /api/file") {
-      const text = session ? (session.docs[p] ?? (p === "src/cart.ts" ? "export const cart = [];" : p === "src/discount.ts" ? "export const discount = 0;" : undefined)) : undefined;
+      const text = session ? (session.docs[p] ?? (p === "src/cart.ts" ? demoCart : p === "src/discount.ts" ? "export const discount = 0;\n" : undefined)) : undefined;
       return text === undefined ? fail(404, "file") : { status: 200, type: p.endsWith(".md") ? "text/markdown; charset=utf-8" : "application/octet-stream", bin: new TextEncoder().encode(text) };
     }
     // Nothing leaves the phone in the demo: a path as the PC would answer, to see it typed in.
@@ -519,6 +539,8 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
       return find(fields.s) ? ok(at, { id: shell.id }) : fail(404, "session");
     }
+    // The pretend PC keeps nothing outside its folders.
+    if (at === "GET /api/outside") return fail(404, "file");
     // The pretend PC has no pushes to send: every route but this one is answered above.
     at satisfies "POST /api/push-token";
     return fail(404, "not found");

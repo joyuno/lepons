@@ -49,6 +49,8 @@ const deps: PhoneDeps = {
   doc: async (_key, relative) => (relative === "README.md" ? "# 안녕" : undefined),
   docBytes: async (_key, relative) =>
     ["shot.png", "chart.svg", "report.pdf", "page.html", "README.md", "code.ts"].includes(relative) ? Buffer.from(`bytes of ${relative}`) : undefined,
+  outside: async (_key, printed) =>
+    printed === "~/.codex/config.toml" ? Buffer.from("model = 1") : printed === "~/.ssh/config" ? "secret" : printed === "/big.mp4" ? "big" : undefined,
   commands: async () => [{ name: "/compact", description: "Free up context" }],
   files: async () => ["src/auth.ts"],
   directory: async (_key, relative) => relative === "missing" ? undefined : [{ name: "src", directory: true }],
@@ -385,6 +387,21 @@ test("the file viewer: exact types, inline PDF, and HTML/SVG only under the no-s
   // Unlisted files, paths outside the folder, and unauthenticated requests fail.
   for (const path of ["other.png", "run.sh", "../../etc/passwd.png", "/abs/x.png", "a\n/x.png"]) assert.equal((await file(path)).status, 404, path);
   assert.equal((await get(`/api/file?s=${web}&p=shot.png`)).status, 401);
+});
+
+test("a file outside the folder: by the path as printed, its refusals told apart", async () => {
+  const token = await signIn();
+  const web = sessionId("local::C:/work/web");
+  const outside = (path: string): Promise<ApiReply> => get(`/api/outside?s=${web}&p=${encodeURIComponent(path)}`, token);
+  const toml = await outside("~/.codex/config.toml");
+  assert.equal(toml.status, 200);
+  assert.equal(toml.bin?.toString(), "model = 1");
+  assert.match(String(toml.headers?.["content-disposition"]), /filename\*=UTF-8''config\.toml$/);
+  assert.deepEqual((await outside("~/.ssh/config")).body, { error: "secret" });
+  assert.equal((await outside("/big.mp4")).status, 413);
+  assert.equal((await outside("/etc/never-printed")).status, 404);
+  assert.equal((await outside("x".repeat(1025))).status, 404);
+  assert.equal((await get(`/api/outside?s=${web}&p=x`)).status, 401);
 });
 
 test("no other route hands back an agent's HTML or SVG as bytes", async () => {

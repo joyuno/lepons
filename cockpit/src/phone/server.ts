@@ -98,6 +98,8 @@ export interface PhoneDeps {
   doc(key: string, relative: string): Promise<string | undefined>;
   /** One of those files' bytes (images, PDF, HTML), 20 MB at most; undefined as for doc(). */
   docBytes(key: string, relative: string): Promise<Buffer | undefined>;
+  /** A file outside the folder, by the path as the agent printed it (outside.ts); why not, or undefined when it is not one to give. */
+  outside(key: string, printed: string): Promise<Buffer | "secret" | "big" | undefined>;
   /** "/" suggestions for the session's agent: built-ins and what its PC has. */
   commands(key: string): Promise<CommandSuggestion[]>;
   /** "@" suggestions: the session folder's files, relative, already path-checked. */
@@ -443,12 +445,15 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
 
     // A file's own bytes, for the viewer: images in an <img>, PDF to the
     // phone's viewer, HTML and SVG only under the sandbox CSP.
-    if (at === "GET /api/file") {
+    if (at === "GET /api/file" || at === "GET /api/outside") {
       const key = keyFor(param(at, "s"));
-      const path = param(at, "p") ?? "";
-      if (key === undefined || !safePath(path)) return fail(404, "file");
-      const bytes = await deps.docBytes(key, path);
+      const asked = param(at, "p") ?? "";
+      if (key === undefined || (at === "GET /api/file" ? !safePath(asked) : asked.length > 1024)) return fail(404, "file");
+      const bytes = at === "GET /api/file" ? await deps.docBytes(key, asked) : await deps.outside(key, asked);
+      if (bytes === "secret") return fail(403, "secret");
+      if (bytes === "big") return fail(413, "big");
       if (bytes === undefined) return fail(404, "file");
+      const path = asked.replace(/\\/g, "/");
       const ext = extensionOf(path);
       const name = encodeURIComponent(path.slice(path.lastIndexOf("/") + 1));
       return {

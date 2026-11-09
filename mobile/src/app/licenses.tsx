@@ -15,6 +15,7 @@ const items: Array<[name: string, license: string, url: string]> = [
   ["react-native-screens © Software Mansion", "MIT", "https://github.com/software-mansion/react-native-screens/blob/main/LICENSE"],
   ["react-native-gesture-handler © Software Mansion", "MIT", "https://github.com/software-mansion/react-native-gesture-handler/blob/main/LICENSE"],
   ["react-native-safe-area-context © Th3rd Wave", "MIT", "https://github.com/AppAndFlow/react-native-safe-area-context/blob/main/LICENSE"],
+  ["react-native-webview © Facebook, Inc.", "MIT", "https://github.com/react-native-webview/react-native-webview/blob/master/LICENSE"],
   ["noble-ciphers © Paul Miller", "MIT", "https://github.com/paulmillr/noble-ciphers/blob/main/LICENSE"],
   ["noble-curves © Paul Miller", "MIT", "https://github.com/paulmillr/noble-curves/blob/main/LICENSE"],
   ["noble-hashes © Paul Miller", "MIT", "https://github.com/paulmillr/noble-hashes/blob/main/LICENSE"],

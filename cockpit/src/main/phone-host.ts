@@ -1,6 +1,6 @@
 import type { BrowserWindow, IpcMain, WebContents } from "electron";
 import { appendFile } from "node:fs/promises";
-import { hostname, tmpdir } from "node:os";
+import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { toDataURL } from "qrcode";
@@ -9,7 +9,9 @@ import { agents, isAgentKind, type Executor } from "../agent/agents.ts";
 import { t } from "../i18n/i18n.ts";
 import { hashPassword, PhoneAuth } from "../phone/auth.ts";
 import type { Machine } from "../machine/machine.ts";
+import { maskForEgress } from "../mask/mask.ts";
 import { phoneMayOpen, viewable } from "../phone/docs.ts";
+import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/outside.ts";
 import { EXPO_PUSH_URL, pushGate, pushTokenGone, snapshotPushes, waitingPush, type Waiting } from "../phone/push.ts";
 import type { OutputRing } from "../phone/screen.ts";
 import { auditLine, createPhoneApi, sessionId, type PhoneApi, type PhoneDeps } from "../phone/server.ts";
@@ -265,6 +267,23 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (!listed?.files.has(relative) || !phoneMayOpen(relative)) return undefined;
       const node = nodes.list().find((candidate) => candidate.id === listed.nodeId);
       return node && machineOf(node).readInside(listed.root, relative, 20 * 1024 * 1024);
+    },
+    // Checked in this order: a place that keeps keys, then the record, then the file's real place.
+    outside: async (key, printed) => {
+      const place = phoneSessionPlace(key);
+      const format = place && recordFormat(key, place.node);
+      if (!place || !format) return undefined;
+      const places = outsidePlaces(printed, place.node.kind === "local" ? homedir() : place.node.home);
+      if (!places) return undefined;
+      if (places.some(outsideSecret)) return "secret";
+      const machine = machineOf(place.node);
+      const record = await machine.record(format, place.repo.path).catch(() => undefined);
+      if (!record || !printedIn(record, printed)) return undefined;
+      const found = await readOutside(machine, places, 20 * 1024 * 1024).catch(() => undefined);
+      if (typeof found !== "object") return found;
+      if (outsideSecret(found.path)) return "secret";
+      const masked = maskForEgress(found.path.replace(/\\/g, "/"), found.bytes, key);
+      return masked.binary ? found.bytes : masked.content;
     },
     // "/" and "@" for the phone's input box, asked once per session view
     // and kept a minute: the phone filters as the operator types.

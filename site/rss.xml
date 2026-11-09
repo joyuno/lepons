@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Mon, 09 Nov 2026 20:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Mon, 09 Nov 2026 23:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.4: 폰에서 프로젝트 밖 파일과 코드를 읽기 쉽게</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.4</guid>
+      <pubDate>Mon, 09 Nov 2026 23:00:00 +0900</pubDate>
+      <description>AI가 대화에 적은 경로가 프로젝트 밖(~/.codex 같은 곳)이어도 폰에서 눌러 읽을 수 있어요. 대화에 나온 경로만 열고, 키나 로그인 파일이 있는 곳은 열지 않아요. 코드 파일은 줄 번호와 색이 있는 뷰어로, HTML은 페이지 모양으로 열리고, 터미널 탭은 터미널처럼 바뀌었어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.3: 원격 PC의 프로젝트를 불러와 바로 열어요</title>
       <link>https://lepons.app/#download</link>
