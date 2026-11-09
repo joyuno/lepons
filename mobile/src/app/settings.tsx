@@ -63,7 +63,7 @@ export default function Settings() {
         {c.demo || (c.pairing && c.signedIn) ? (
           <Group>
             <GroupRow title={t.accounts} onPress={() => router.push("/accounts")} />
-            {!c.demo ? <GroupRow title={t.signOut} onPress={() => void c.signOut().then(toStart)} /> : null}
+            {!c.demo ? <GroupRow title={t.signOut} onPress={() => void c.signOut()} /> : null}
           </Group>
         ) : null}
 

@@ -40,6 +40,9 @@ export interface PhoneSessionView {
   agentName?: string;
   /** The mood says working, but only background work or a workflow runs: the main AI takes input now. */
   mainFree?: boolean;
+  /** A worktree's session: the original folder's name, and the task's. */
+  worktreeOf?: string;
+  worktree?: string;
 }
 
 export interface PhonePc {
@@ -105,6 +108,10 @@ export interface PhoneRoutes {
   "POST /api/push-token": { body: { token: string | null; prefs?: { done?: boolean } }; reply: Ok };
   /** One of key and text. */
   "POST /api/input": { body: { s: string; key?: string; text?: string }; reply: Ok };
+  /** The terminal tab: `s`'s project's plain terminal, asked open on the PC if it is not; its id may reach the list a moment later. */
+  "POST /api/terminal": { body: { s: string }; reply: { id: string } };
+  /** A photo or file for `s`'s AI: the bytes in the message's `bin`, `n` its name on the phone; where the PC saved it. */
+  "POST /api/upload": { query: "s&n"; reply: { path: string } };
   /**
    * Opens the live stream (PhoneEvents); `s` also starts it with that session's
    * screen. `live=1` with it asks for that session's output in batches, and for "flow".
@@ -128,14 +135,16 @@ export type ReplyOf<R extends PhoneRoute> = PhoneRoutes[R]["reply"];
 export type Unproven<R extends PhoneRoute> = PhoneRoutes[R] extends { body: infer B } ? { [K in keyof B]?: unknown } : never;
 
 type QueryOf<R extends PhoneRoute> = PhoneRoutes[R] extends { query: infer Q } ? Q : "";
-type Names<Q> = Q extends "s&p" ? "s" | "p" : Q extends "s" ? "s" : Q extends "s&v" ? "s" | "v" : Q extends "s&v&after" ? "s" | "v" | "after" : Q extends "s&live" ? "s" | "live" : never;
+type Names<Q> = Q extends "s&p" ? "s" | "p" : Q extends "s" ? "s" : Q extends "s&v" ? "s" | "v" : Q extends "s&v&after" ? "s" | "v" | "after" : Q extends "s&live" ? "s" | "live" : Q extends "s&n" ? "s" | "n" : never;
 export type QueryName<R extends PhoneRoute> = Names<QueryOf<R>>;
-type Search<Q> = Q extends "s&p" ? `?s=${string}&p=${string}` : Q extends "s" ? `?s=${string}` : Q extends "s&v" ? `?s=${string}&v=${string}` : Q extends "s&v&after" ? `?s=${string}&v=${string}&after=${string}` : Q extends "s&live" ? `?s=${string}&live=1` : "";
+type Search<Q> = Q extends "s&p" ? `?s=${string}&p=${string}` : Q extends "s" ? `?s=${string}` : Q extends "s&v" ? `?s=${string}&v=${string}` : Q extends "s&v&after" ? `?s=${string}&v=${string}&after=${string}` : Q extends "s&live" ? `?s=${string}&live=1` : Q extends "s&n" ? `?s=${string}&n=${string}` : "";
 /** Every path and query the phone may ask with this method. */
 export type UrlFor<M extends "GET" | "POST"> = { [R in PhoneRoute]: R extends `${M} ${infer P}` ? `${P}${Search<QueryOf<R>>}` : never }[PhoneRoute];
 
 /** The phone's way of asking: only routes declared above, each with its own body. */
 export interface PhoneCaller<Reply> {
   (method: "GET", path: UrlFor<"GET">, opts?: { timeoutMs?: number }): Promise<Reply>;
-  <P extends UrlFor<"POST">>(method: "POST", path: P, opts: { body: PhoneRoutes[`POST ${P}`]["body"]; timeoutMs?: number }): Promise<Reply>;
+  <P extends Exclude<UrlFor<"POST">, `/api/upload?${string}`>>(method: "POST", path: P, opts: { body: PhoneRoutes[`POST ${P}`]["body"]; timeoutMs?: number }): Promise<Reply>;
+  /** The upload's body is its bytes. */
+  (method: "POST", path: Extract<UrlFor<"POST">, `/api/upload?${string}`>, opts: { bin: Uint8Array; timeoutMs?: number }): Promise<Reply>;
 }

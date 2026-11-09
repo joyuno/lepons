@@ -73,12 +73,17 @@ const subagentsOf = (a: unknown): { subagents?: PhoneSubagent[] } => {
   return kept?.length ? { subagents: kept } : {};
 };
 
+/** A worktree's original folder and task name, as the PC sends them: the task only with its folder. */
+const named = (value: unknown): value is string => str(value, 500) && value !== "";
+const worktreeOf = (s: Obj): { worktreeOf?: string; worktree?: string } =>
+  named(s.worktreeOf) ? { worktreeOf: s.worktreeOf, ...(named(s.worktree) ? { worktree: s.worktree } : {}) } : {};
+
 export function stateOf(data: unknown): PhoneState | undefined {
   if (!isObj(data)) return undefined;
   const sessions = list(data.sessions, 500, (s) =>
     isObj(s) && str(s.id, 64) && /^[0-9a-f]+$/.test(s.id) && str(s.pc, 200) && str(s.folder, 500) &&
     (moods as readonly unknown[]).includes(s.mood) && optStr(s.preview, 2000) && typeof s.agent === "boolean"
-      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}) }
+      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s) }
       : undefined);
   const pcs = list(data.pcs, 100, (p) =>
     isObj(p) && str(p.label, 200) && (pcStates as readonly unknown[]).includes(p.state)

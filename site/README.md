@@ -23,7 +23,7 @@ npx wrangler deploy --name lepons --assets /tmp/site-out --compatibility-date 20
 
 - **iPhone 상태**: `index.html`과 `en/index.html`의 내려받기 구역에 있는 주석 바로 아래 한 줄만 바꾸면 돼요. App Store 승인 전에는 "App Store에서 받기"라고 적지 않아요. Google Play 문구도 공개 출시 뒤에 고쳐요.
 - **그림**: 첫 화면의 지도와 폰은 HTML 안의 SVG이고, 상태가 바뀌는 시간표는 `style.css`의 `t1w`, `t1a` 같은 keyframes예요. 움직임을 끄면 입력 대기, 작업 중, 끝남이 함께 보이는 멈춘 그림이 나와요.
-- **공유 카드**: 링크를 붙여 넣으면 나오는 카드는 `og.png`(한국어)와 `og-en.png`(영어)예요. 헤드라인을 바꾸면 `python site/og.py`로 다시 만들어요.
+- **공유 카드**: 링크를 붙여 넣으면 나오는 카드는 `og.png`(한국어)와 `og-en.png`(영어)예요. 헤드라인을 바꾸면 `python site/og.py`로 다시 만들고, 두 페이지의 `og:image` 주소 끝 `?v=` 숫자를 올려요. 카카오톡은 이미지 주소가 같으면 옛 카드를 계속 보여 줘요.
 - **글꼴**: `fonts/lepons-sans.woff2`는 Pretendard에서 사이트에 쓰는 글자만 추린 파일이에요(라이선스 `fonts/LICENSE.txt`). 새 글자를 쓰면 그 글자만 시스템 글꼴로 보이니, 문구를 많이 고쳤다면 다시 만들어요.
 
   ```sh

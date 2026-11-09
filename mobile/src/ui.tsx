@@ -3,6 +3,7 @@ import { Children, useEffect, useMemo, useRef, useState, type ReactElement, type
 import { Animated, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useColorScheme, type DimensionValue, type RefreshControlProps, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { fmt, t } from "./i18n.ts";
 import { curve, ms, Press, useBeat, useLive, useReducedMotion } from "./motion.tsx";
 import { lampLook, period } from "./phone/motion.ts";
 import { lampState, type Mood, type PcState } from "./phone/types.ts";
@@ -242,9 +243,9 @@ export function Segments<K extends string>({ items, value, onChange, role }: { i
   );
 }
 
-/** One session: lamp, folder and PC, what it is doing, its state on the right. `strong` is a waiting card of its own; without it, a row for a group. */
+/** One session: lamp, folder and PC, what it is doing, its state on the right. `strong` is a waiting card of its own; without it, a row for a group. A worktree's: a branch, its task, then its original folder. */
 export function SessionRow(props: {
-  session: { folder: string; pc: string; mood: Mood; agentGone?: boolean; preview?: string; summary?: { now?: { kind: string; text: string } } };
+  session: { folder: string; pc: string; mood: Mood; agentGone?: boolean; preview?: string; summary?: { now?: { kind: string; text: string } }; worktreeOf?: string; worktree?: string };
   moodLabel: string;
   onPress: () => void;
   strong?: boolean;
@@ -261,14 +262,16 @@ export function SessionRow(props: {
   return (
     <Row
       accessibilityRole="button"
-      accessibilityLabel={`${session.folder}, ${props.moodLabel}`}
+      accessibilityLabel={session.worktreeOf ? `${session.worktree ?? session.folder}, ${fmt(t.worktreeOf, { folder: session.worktreeOf })}, ${props.moodLabel}` : `${session.folder}, ${props.moodLabel}`}
       onPress={props.onPress}
       style={({ pressed }) => [props.strong && s.card, props.strong && s.strong, s.row, { paddingHorizontal: space.lg, paddingVertical: space.md, minHeight: 44 }, props.style, pressed && { backgroundColor: c.raise }]}
     >
       <Lamp state={lampState(session)} />
       <View style={{ flex: 1, gap: space.xxs }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: space.sm }}>
-          <Text style={[s.text, font.semibold, { flexShrink: 1 }]} numberOfLines={1}>{session.folder}</Text>
+          {session.worktreeOf ? <SymbolView name={{ ios: "arrow.triangle.branch", android: "fork_right" }} tintColor={c.muted} size={14} style={{ alignSelf: "center" }} /> : null}
+          <Text style={[s.text, font.semibold, { flexShrink: 1 }]} numberOfLines={1}>{session.worktree ?? session.folder}</Text>
+          {session.worktreeOf ? <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.worktreeOf}</Text> : null}
           <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.pc}</Text>
         </View>
         {line ? <Text style={now && now.kind !== "action" ? s.dim : [s.mono, { color: c.muted }]} numberOfLines={1}>{line}</Text> : null}

@@ -1,8 +1,9 @@
-import { Stack } from "expo-router";
+import { router, Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useEffect, useRef } from "react";
 import { Appearance, AppState } from "react-native";
 
-import { ConnectionProvider } from "@/connection";
+import { ConnectionProvider, useConnection } from "@/connection";
 import { t } from "@/i18n";
 import { loadScheme } from "@/store";
 import { font, useTheme } from "@/ui";
@@ -16,10 +17,30 @@ AppState.addEventListener("change", (state) => {
   if (scheme) Appearance.setColorScheme?.(scheme);
 });
 
+/**
+ * A sign-in that ends (expired, withdrawn or signed out) goes straight to the
+ * sign-in page from whatever screen is open, with nothing left under it to
+ * go back to. Unpairing clears the pairing too and goes to the start instead.
+ */
+function ToSignInWhenSignedOut() {
+  const c = useConnection();
+  const signedIn = c.signedIn && !c.demo;
+  const was = useRef(signedIn);
+  useEffect(() => {
+    if (was.current && !signedIn && c.pairing) {
+      if (router.canDismiss()) router.dismissAll();
+      router.replace("/login");
+    }
+    was.current = signedIn;
+  }, [signedIn, c.pairing]);
+  return null;
+}
+
 export default function Layout() {
   const { c } = useTheme();
   return (
     <ConnectionProvider>
+      <ToSignInWhenSignedOut />
       <StatusBar style="auto" />
       <Stack
         screenOptions={{

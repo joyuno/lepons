@@ -168,12 +168,14 @@ export function parseCodexRollout(jsonl: string, full = false): SessionWorkflow 
   let turnStart = 0;
   let unlisted: string[] = [];
 
-  let actions: { at: number; labels: string[] } | null = null;
+  let actions: { at: number; labels: string[]; paths: string[] } | null = null;
   const flushActions = (): void => {
     if (!actions) return;
     const unique = [...new Set(actions.labels)];
     const extra = unique.length > 4 ? `  +${unique.length - 4}` : "";
-    events.push({ kind: "action", at: actions.at, text: unique.slice(0, 4).join("  ·  ") + extra, labels: actions.labels });
+    // As parseTranscript's: whole paths for the PC only.
+    const paths = full ? [] : [...new Set(actions.paths)];
+    events.push({ kind: "action", at: actions.at, text: unique.slice(0, 4).join("  ·  ") + extra, labels: actions.labels, ...(paths.length ? { paths } : {}) });
     actions = null;
   };
 
@@ -257,8 +259,9 @@ export function parseCodexRollout(jsonl: string, full = false): SessionWorkflow 
       default: {
         const labels = actionLabels(item);
         if (labels.length > 0) {
-          actions ??= { at, labels: [] };
+          actions ??= { at, labels: [], paths: [] };
           actions.labels.push(...labels);
+          if (item["type"] === "FileChange") actions.paths.push(...Object.keys((item["changes"] ?? {}) as object));
         } else if (typeof item["type"] === "string" && item["type"] !== "Reasoning" && item["type"] !== "ContextCompaction") {
           unlisted.push(item["type"]);
         }

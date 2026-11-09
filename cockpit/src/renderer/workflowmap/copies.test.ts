@@ -55,7 +55,10 @@ test("inputFor lets through and refuses exactly what the PC does", () => {
     { text: "/exit" }, { text: "/quit now" }, { text: "exit" }, { text: "QUIT" }, { text: ":q!" }, { text: ":wq" },
     { text: "exit the loop" }, { text: "!rm -rf /" }, { text: "x".repeat(2000) }, { text: "x".repeat(2001) }, {}, { text: 5 },
   ];
-  for (const body of cases) assert.deepEqual(inputFor(body), pcInputFor(body), JSON.stringify(body));
+  for (const body of cases) {
+    assert.deepEqual(inputFor(body), pcInputFor(body), JSON.stringify(body));
+    assert.deepEqual(inputFor(body, true), pcInputFor(body, true), `shell ${JSON.stringify(body)}`);
+  }
 });
 
 test("matchFiles and reflow match the cockpit's", () => {

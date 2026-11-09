@@ -48,7 +48,11 @@ export function phoneMap(pc: PhonePc, sessions: readonly PhoneSessionView[], wor
     // Minutes are enough for "오늘": a finer clock would rebuild the map on every render.
     now: Math.floor(now / 60000) * 60000,
     pcs: [{ id: pc.label, label: pc.label, state: pc.state }],
-    folders: folders.map((folder) => ({ id: folder, pc: pc.label, label: folder })),
+    // A worktree's folder names its original, which the map joins to it with a branch.
+    folders: folders.map((folder) => {
+      const of = mine.find((session) => session.folder === folder && session.worktreeOf)?.worktreeOf;
+      return { id: folder, pc: pc.label, label: folder, ...(of ? { worktreeOf: of } : {}) };
+    }),
     sessions: mine.map((session): MapSession => {
       const workflow = workflowOf(session);
       return { id: session.id, folder: session.folder, label: session.agent ? words.agent : words.terminal, mood: session.mood, ...(workflow ? { workflow } : {}) };

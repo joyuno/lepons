@@ -24,12 +24,14 @@ const words = {
     readmeAsk: "README의 설치 순서를 최신으로 맞춰 줘요",
     readmeDone: "README를 고쳤어요.",
     readmeNote: "README를 고쳤어요. 설치가 세 단계로 줄었어요.",
+    loginTask: "로그인 수정", loginAsk: "로그인 실패 문구를 알아듣기 쉽게 바꿔 줘요", loginDone: "로그인 실패 문구를 바꿨어요.",
     docsReadme: "# docs-site\n\n설치는 세 단계예요.\n",
     flickerAsk: "설정 화면으로 넘어갈 때 깜빡이는 걸 없애 줘요",
     flicker: "전환 애니메이션 조사", flickerSubAsk: "깜빡임의 원인을 찾아 줘요", flickerResult: "배경색이 늦게 칠해져요",
     flickerDone: "화면 전환을 다듬었어요.",
     tokensAsk: "디자인 토큰 이름을 한 가지 규칙으로 맞춰 줘요",
     tokensDone: "색 이름을 정리했어요.",
+    shellDemo: "(데모: 명령은 실행되지 않아요)",
     tokensNote: "색 이름 열두 개를 ink·card·line 규칙으로 바꿨어요. 옛 이름은 표로 남겼어요.",
     tokensDoc: "# 색 이름\n\n- ink, card, line\n",
     compact: "대화를 요약해서 짧게 줄여요", review: "바뀐 코드를 검토해요", clear: "대화를 새로 시작해요",
@@ -57,12 +59,14 @@ const words = {
     readmeAsk: "Bring the README's install steps up to date",
     readmeDone: "Updated the README.",
     readmeNote: "Updated the README. Install is down to three steps.",
+    loginTask: "Fix login", loginAsk: "Make the login error message plainer", loginDone: "Changed the login error message.",
     docsReadme: "# docs-site\n\nInstall takes three steps.\n",
     flickerAsk: "Stop the flicker when going to the settings screen",
     flicker: "Look into the transition animation", flickerSubAsk: "Find what causes the flicker", flickerResult: "The background color is painted late",
     flickerDone: "Smoothed the screen transition.",
     tokensAsk: "Name the design tokens by one rule",
     tokensDone: "Tidied up the color names.",
+    shellDemo: "(demo: commands are not run)",
     tokensNote: "Renamed twelve colors to the ink·card·line rule. The old names are kept in a table.",
     tokensDoc: "# Color names\n\n- ink, card, line\n",
     compact: "Summarize the conversation to shorten it", review: "Review the changed code", clear: "Start the conversation over",
@@ -90,12 +94,14 @@ const words = {
     readmeAsk: "把 README 的安装步骤更新到最新",
     readmeDone: "README 已更新。",
     readmeNote: "README 已更新。安装缩减为三步。",
+    loginTask: "修复登录", loginAsk: "把登录失败的提示改得更好懂", loginDone: "已修改登录失败的提示。",
     docsReadme: "# docs-site\n\n安装只需三步。\n",
     flickerAsk: "去掉进入设置页面时的闪烁",
     flicker: "调查切换动画", flickerSubAsk: "找出闪烁的原因", flickerResult: "背景色绘制得太晚",
     flickerDone: "页面切换更顺滑了。",
     tokensAsk: "按同一规则命名设计令牌",
     tokensDone: "整理好了颜色名称。",
+    shellDemo: "（演示：不会执行命令）",
     tokensNote: "把十二个颜色改成 ink·card·line 规则。旧名称留在表格里。",
     tokensDoc: "# 颜色名称\n\n- ink, card, line\n",
     compact: "总结对话以缩短它", review: "审查改动的代码", clear: "重新开始对话",
@@ -129,6 +135,8 @@ interface DemoSession {
   /** What the PC's forPhone() would say of its record, written out: the map and the sheet show it. */
   summary?: PhoneSummary;
   subagents?: PhoneSubagent[];
+  /** A worktree's: its original folder; its folder is the task's name. */
+  worktreeOf?: string;
 }
 
 const progress = (since: number, files: string[], reads: number, commands: number, subagents = 0, running = 0): NonNullable<PhoneSummary["progress"]> =>
@@ -201,6 +209,24 @@ function seed(): DemoSession[] {
         now: { at: minutes(24), kind: "note", text: words.membersNote },
         result: words.membersNote,
         progress: progress(minutes(30), ["members.ts"], 2, 1),
+      },
+      docs: {},
+    },
+    // A second AI in a worktree of shop-web: the sessions tab nests it, the map branches it.
+    {
+      id: "de00000000000009", folder: words.loginTask, worktreeOf: "shop-web", mood: "done", agent: true,
+      preview: words.loginDone, screen: `${words.loginDone}
+`,
+      events: [
+        { kind: "prompt", at: minutes(20), text: words.loginAsk },
+        { kind: "action", at: minutes(19), text: "Edit src/login.ts", labels: ["Edit src/login.ts"] },
+        { kind: "note", at: minutes(18), text: words.loginDone },
+      ],
+      summary: {
+        goal: words.loginAsk,
+        now: { at: minutes(18), kind: "note", text: words.loginDone },
+        result: words.loginDone,
+        progress: progress(minutes(20), ["login.ts"], 0, 0),
       },
       docs: {},
     },
@@ -331,11 +357,12 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
   };
 
   const state = (): ReplyOf<"GET /api/state"> => ({
-    sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents }) => {
+    sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents, worktreeOf }) => {
       const steps = events.flatMap((event): StepKind[] => (event.kind === "note" ? [] : [event.kind])).slice(-5);
       return {
         id, pc: pc ?? words.pc, folder, mood, agent, preview, ...(pane ? { pane } : {}), ...(steps.length ? { steps } : {}),
         ...(summary ? { summary } : {}), ...(subagents ? { subagents } : {}), ...(agent ? { agentName: "Claude Code" } : {}),
+        ...(worktreeOf ? { worktreeOf, worktree: folder } : {}),
       };
     }),
     pcs: pcs.map((pc) => ({ ...pc })),
@@ -344,6 +371,8 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       { name: "Codex", fiveHour: { percent: 12, resetsAt: hours(4) }, week: { percent: 91, resetsAt: hours(30) } },
     ],
   });
+  /** The one plain shell among the pretend sessions, for the terminal tab. */
+  const shell = sessions.find((session) => !session.agent)!;
   const changed = (session: DemoSession, screen?: string) => {
     emit("state", state());
     if (live && watching === session.id) emit("flow", undefined);
@@ -428,11 +457,18 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       const text = session ? (session.docs[p] ?? (p === "src/cart.ts" ? "export const cart = [];" : p === "src/discount.ts" ? "export const discount = 0;" : undefined)) : undefined;
       return text === undefined ? fail(404, "file") : { status: 200, type: p.endsWith(".md") ? "text/markdown; charset=utf-8" : "application/octet-stream", bin: new TextEncoder().encode(text) };
     }
+    // Nothing leaves the phone in the demo: a path as the PC would answer, to see it typed in.
+    if (at === "POST /api/upload") return session ? ok(at, { path: `/tmp/lepons-phone-demo-${url.searchParams.get("n") ?? ""}` }) : fail(404, "session");
     if (at === "POST /api/input") {
       const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
       const target = find(fields.s);
       if (!target) return fail(404, "session");
-      if (!target.agent) return fail(403, "not agent");
+      if (!target.agent) {
+        // The shell: the line and a pretend prompt after it, nothing run.
+        const line = typeof fields.text === "string" ? fields.text.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 200) : "";
+        changed(target, `${target.screen}${line}\r\n${words.shellDemo}\r\n$ `);
+        return ok(at, { ok: true });
+      }
       const pieces = inputFor(fields);
       if (pieces === "bad" || pieces === "long" || pieces === "exit" || pieces === "shell") {
         return fail(pieces === "long" ? 413 : pieces === "exit" ? 422 : pieces === "shell" ? 403 : 400, pieces);
@@ -462,6 +498,11 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
         });
       }
       return ok(at, { ok: true });
+    }
+    // The terminal tab: the pretend laptop's one shell, which echoes what is typed (App Review 2.1: the demo shows every tab working).
+    if (at === "POST /api/terminal") {
+      const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
+      return find(fields.s) ? ok(at, { id: shell.id }) : fail(404, "session");
     }
     // The pretend PC has no pushes to send: every route but this one is answered above.
     at satisfies "POST /api/push-token";

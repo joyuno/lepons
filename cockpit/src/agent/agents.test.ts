@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 
-import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
+import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
 import { startupLine, type Session } from "../session/state.ts";
 
 /** The command that registers the endpoint with an agent that has one. */
@@ -418,6 +418,15 @@ test("a resumed Antigravity is told to fork once its screen settles", () => {
     assert.deepEqual(s2.written, [], "a closed session is not typed into");
     assert.equal(s2.listenerCount("data"), 0);
     assert.equal(s2.listenerCount("state"), 0);
+
+    const s3 = fake();
+    typeWhenSettled(s3 as unknown as Session, "hand over", 1500, startQuestion);
+    s3.emit("data", Buffer.from("Do you \x1b[1mtrust\x1b[0m the files in this folder? 1. Yes"));
+    mock.timers.tick(5000);
+    assert.deepEqual(s3.written, [], "a question on screen is left to the operator");
+    s3.emit("data", Buffer.from("> "));
+    mock.timers.tick(1500);
+    assert.deepEqual(s3.written, ["hand over"], "typed once what follows the answer settles");
   } finally {
     mock.timers.reset();
   }

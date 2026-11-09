@@ -1,4 +1,4 @@
-import { clipboard, contextBridge, ipcRenderer } from "electron";
+import { clipboard, contextBridge, ipcRenderer, webUtils } from "electron";
 
 import { channels } from "../shared/ipc.ts";
 import type { EntryAction } from "../browse/entry-ops.ts";
@@ -87,10 +87,10 @@ const api: CockpitApi = {
   retryShare: (nodeId: string) => ipcRenderer.send(channels.retryShare, nodeId),
   recheckTmux: (nodeId: string) => ipcRenderer.invoke(channels.recheckTmux, nodeId),
   installTmux: (nodeId: string) => ipcRenderer.invoke(channels.installTmux, nodeId),
-  openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean) =>
-    ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal),
-  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean) =>
-    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal),
+  openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string) =>
+    ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt),
+  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string) =>
+    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt),
   writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
   resizeSession: (key: string, cols: number, rows: number) =>
     ipcRenderer.send(channels.resizeSession, key, cols, rows),
@@ -98,14 +98,18 @@ const api: CockpitApi = {
     ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
   sessionWorkflow: (nodeId: string, repoId: string) =>
     ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId),
+  handoffText: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.handoffText, nodeId, repoId),
   sessionTurn: (nodeId: string, repoId: string, workedMs: number) =>
     ipcRenderer.invoke(channels.sessionTurn, nodeId, repoId, workedMs),
   restartAgent: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.restartAgent, nodeId, repoId),
   pastConversations: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.pastConversations, nodeId, repoId),
   listDelegations: () => ipcRenderer.invoke(channels.listDelegations),
   downloadFile: (nodeId: string, path: string) => ipcRenderer.invoke(channels.downloadFile, nodeId, path),
-  repoMenu: (nodeId: string, repoId: string, x: number, y: number) =>
-    ipcRenderer.send(channels.repoMenu, nodeId, repoId, x, y),
+  popupMenu: (items: ReadonlyArray<{ id: string; label: string } | "-">) => ipcRenderer.invoke(channels.popupMenu, items),
+  addWorktree: (nodeId: string, repoId: string, task: string, carry?: AgentKind) => ipcRenderer.invoke(channels.addWorktree, nodeId, repoId, task, carry),
+  mergeWorktree: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.mergeWorktree, nodeId, repoId),
+  removeWorktree: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.removeWorktree, nodeId, repoId),
+  worktreeChanges: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.worktreeChanges, nodeId, repoId),
   onRepoAction: (handler: (action: RepoAction, nodeId: string, repoId: string) => void) => {
     ipcRenderer.on(channels.repoAction, (_event, action: RepoAction, nodeId: string, repoId: string) =>
       handler(action, nodeId, repoId),
@@ -125,6 +129,13 @@ const api: CockpitApi = {
   deleteEntry: (nodeId: string, path: string) => ipcRenderer.invoke(channels.deleteEntry, nodeId, path),
   moveEntry: (nodeId: string, from: string, to: string) => ipcRenderer.invoke(channels.moveEntry, nodeId, from, to),
   copyEntry: (nodeId: string, from: string, to: string) => ipcRenderer.invoke(channels.copyEntry, nodeId, from, to),
+  placeEntries: (toNodeId: string, dir: string, sources: Array<{ nodeId: string; path: string }>, move: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke(channels.placeEntries, toNodeId, dir, sources, move),
+  clipboardFiles: (): Promise<string[]> => ipcRenderer.invoke(channels.clipboardFiles),
+  locateFile: (nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(channels.locateFile, nodeId, path, root),
+  /** Where a file dropped from Explorer or Finder is on this PC, slashes forward. */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file).replace(/\\/g, "/"),
   openForEdit: (nodeId: string, path: string) => ipcRenderer.invoke(channels.openForEdit, nodeId, path),
   scanImports: () => ipcRenderer.invoke(channels.scanImports),
   importLocalFolder: (path: string) => ipcRenderer.invoke(channels.importLocalFolder, path),
@@ -196,6 +207,9 @@ const api: CockpitApi = {
   },
   onPhoneReconnect: (handler) => {
     ipcRenderer.on(channels.phoneReconnect, (_event, nodeId: string) => handler(nodeId));
+  },
+  onPhoneTerminal: (handler) => {
+    ipcRenderer.on(channels.phoneTerminal, (_event, nodeId: string, repoId: string) => handler(nodeId, repoId));
   },
   onPhoneChanged: (handler) => {
     ipcRenderer.on(channels.phoneChanged, (_event, view) => handler(view));

@@ -1,7 +1,7 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Linking, StyleSheet, Text, View } from "react-native";
 
 import { useConnection } from "@/connection";
 import { t } from "@/i18n";
@@ -59,11 +59,15 @@ export default function Pair() {
   }
 
   if (!permission) return <Screen>{null}</Screen>;
+  // App Review 5.1.1(iv): before the system's own question the button only goes on ("계속"), it never asks to allow.
+  // Once refused, iOS asks no more: say so, and the way is the Settings app.
   if (!permission.granted) {
     return (
       <Screen>
-        <Text style={s.text}>{t.cameraNeeded}</Text>
-        <Button title={t.cameraAllow} onPress={() => void requestPermission()} />
+        <Text style={s.text}>{permission.canAskAgain ? t.cameraNeeded : t.cameraOff}</Text>
+        {permission.canAskAgain
+          ? <Button title={t.continue} onPress={() => void requestPermission()} />
+          : <Button title={t.openSettings} onPress={() => void Linking.openSettings()} />}
         <Button title={t.demoStart} kind="plain" onPress={startDemo} />
       </Screen>
     );

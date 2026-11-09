@@ -512,21 +512,33 @@ export function resumeLine(spec: AgentSpec, wrap: (command: string) => string, s
 }
 
 /**
+ * A CLI's own question on a fresh start -- trusting a new folder, accepting
+ * skipped checks -- whose menu typed text and Enter would answer.
+ */
+export const startQuestion = /\btrust\b|Yes, I accept|Do you want/i;
+
+/**
  * Types text, then Enter, once: the first time the session's output has
  * been quiet for quietMs, when the TUI has drawn and waits for input.
  * Enter goes apart, as everywhere text is typed into an agent, so it is
  * not read as part of a paste. Dropped if the session closes first.
  */
-export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, text: string, quietMs = 1500): void {
+export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, text: string, quietMs = 1500, holdWhile?: RegExp): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // What came since the last quiet: a question there holds the text until the operator answers it.
+  let seen = "";
   const stop = () => {
     clearTimeout(timer);
     session.off("data", onData);
     session.off("state", onState);
   };
-  const onData = () => {
+  const onData = (chunk?: Buffer | string) => {
     clearTimeout(timer);
+    if (holdWhile) seen = (seen + String(chunk ?? "")).slice(-8000);
     timer = setTimeout(() => {
+      const asking = holdWhile?.test(seen.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ""));
+      seen = "";
+      if (asking) return;
       stop();
       session.write(text);
       setTimeout(() => session.write("\r"), 150);

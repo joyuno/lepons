@@ -39,7 +39,8 @@ export interface MapInput {
   now: number;
   /** `status`: the PC's state in words, for its panel; `state`: the same for its ring. */
   pcs: Array<{ id: string; label: string; local?: boolean; status?: string; state?: PcLamp; os?: PcOs }>;
-  folders: Array<{ id: string; pc: string; label: string }>;
+  /** `worktreeOf`: a worktree's original folder, drawn joined to it. */
+  folders: Array<{ id: string; pc: string; label: string; worktreeOf?: string }>;
   sessions: MapSession[];
   /** PC-to-PC handoffs, from the handing PC to the folder it went to. */
   delegations: Array<{ id: string; from: string; toFolder: string; running: boolean; instructions?: string; at?: number }>;
@@ -90,7 +91,8 @@ export interface MNode {
   os?: PcOs;
 }
 /** `both`: a share read both ways. */
-export interface MEdge { from: string; to: string; kind: "tree" | "loop" | "delegation" | "share"; live: boolean; both?: boolean }
+/** `branch`: a folder to its worktree. */
+export interface MEdge { from: string; to: string; kind: "tree" | "loop" | "delegation" | "share" | "branch"; live: boolean; both?: boolean }
 export interface Cluster { id: string; pc: string; fx: number; fy: number; side: 1 | -1; colX: number; top: number; bottom: number; activity: number }
 export interface Box { x0: number; y0: number; x1: number; y1: number }
 /** Folder positions per PC, kept while the PC's structure holds. */
@@ -332,6 +334,10 @@ export function build(input: MapInput, previous?: MapModel, offsets: Record<stri
   for (const d of input.delegations) {
     const a = byId.get(`h:${d.from}`), b = byId.get(`f:${d.toFolder}`);
     if (a && b) edges.push({ from: a.id, to: b.id, kind: "delegation", live: d.running });
+  }
+  for (const f of input.folders) {
+    const a = f.worktreeOf === undefined ? undefined : byId.get(`f:${f.worktreeOf}`), b = byId.get(`f:${f.id}`);
+    if (a && b) edges.push({ from: a.id, to: b.id, kind: "branch", live: false });
   }
   const pairs = new Map<string, MEdge>();
   for (const s of input.shares) {

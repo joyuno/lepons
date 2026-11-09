@@ -29,6 +29,11 @@ test("received data is checked: bad items dropped, bad frames refused", () => {
   assert.equal(lampState(gone(true)), "shellOnly", "the AI has gone from its terminal");
   assert.equal(lampState(gone()), "done", "a PC that does not send it renders as before");
   assert.equal(lampState(gone("yes")), "done", "nor does anything else count");
+  const tree = (extra: Record<string, unknown>) => stateOf({ sessions: [{ id: "ab12", pc: "PC", folder: "t", mood: "done", agent: true, ...extra }], pcs: [] })!.sessions[0]!;
+  assert.deepEqual([tree({ worktreeOf: "f", worktree: "t" }).worktreeOf, tree({ worktreeOf: "f", worktree: "t" }).worktree], ["f", "t"]);
+  assert.equal("worktree" in tree({ worktreeOf: "", worktree: "t" }), false, "no task without its folder");
+  assert.deepEqual(tree({ worktreeOf: "f", worktree: 3 }).worktree, undefined);
+  assert.equal("worktreeOf" in tree({ worktreeOf: "x".repeat(501) }), false);
   assert.equal(stateOf(null), undefined);
 
   assert.deepEqual(screenOf({ data: "x", cols: 100000, rows: -1 }), { data: "x", cols: 500, rows: 5 });
@@ -73,7 +78,7 @@ test("demo: same routes and refusals as the PC, events the app can read", async 
   try {
     const listed = await demo.request("GET", "/api/state");
     const state = stateOf(listed.body);
-    assert.ok(state && state.sessions.length === 8, "state passes the app's own check");
+    assert.ok(state && state.sessions.length === 9, "state passes the app's own check");
     const waiting = state.sessions.find((s) => s.mood === "waiting")!;
     const terminal = state.sessions.find((s) => !s.agent)!;
 
@@ -82,7 +87,8 @@ test("demo: same routes and refusals as the PC, events the app can read", async 
     assert.equal((await input({ s: waiting.id, text: "!ls" })).status, 403);
     assert.equal((await input({ s: waiting.id, text: "x".repeat(2001) })).status, 413);
     assert.equal((await input({ s: waiting.id, key: "ctrl-c" })).status, 400);
-    assert.equal((await input({ s: terminal.id, text: "ls" })).status, 403);
+    // A plain terminal takes a line, as the PC's terminal tab does (the demo echoes it).
+    assert.equal((await input({ s: terminal.id, text: "ls" })).status, 200);
 
     assert.equal((await demo.request("GET", `/api/events?s=${waiting.id}`)).status, 200);
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -229,7 +235,8 @@ test("demo: a map for each of two PCs, summaries that are the PC's own reading o
     assert.ok(desk!.nodes.some((node) => node.kind === "merged"), "a one-session folder is one pill");
     assert.ok(desk!.nodes.some((node) => node.kind === "folder"), "api-server has two sessions");
     assert.equal(desk!.nodes.filter((node) => node.kind === "sub" && node.mood !== "done").length, 2, "the working session's two running subagents");
-    assert.deepEqual(desk!.nodes[0]!.counts, { working: 1, waiting: 1, done: 3, subagents: 2 });
+    assert.deepEqual(desk!.nodes[0]!.counts, { working: 1, waiting: 1, done: 4, subagents: 2 });
+    assert.ok(desk!.edges.some((edge) => edge.kind === "branch" && edge.from === "f:shop-web"), "the worktree branches from shop-web");
     const working = desk!.nodes.find((node) => node.mood === "working" && node.lines);
     assert.equal(working?.lines?.[0]?.text, "Bash", "a command's text never reaches the phone");
 

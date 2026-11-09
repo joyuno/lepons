@@ -21,11 +21,12 @@ export const MAX_INPUT = 2000;
  * Enter. The app checks before sending so it can say why at once; the PC
  * checks again, and its word is the one that counts.
  */
-export function inputFor(body: Record<string, unknown>): string[] | "bad" | "long" | "exit" | "shell" {
+export function inputFor(body: Record<string, unknown>, shell = false): string[] | "bad" | "long" | "exit" | "shell" {
   if (typeof body.key === "string") return Object.hasOwn(keys, body.key) ? [keys[body.key]!] : "bad";
   if (typeof body.text !== "string") return "bad";
   const text = body.text.replace(/[\r\n]+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").trim();
   if (text === "") return "bad";
+  if (shell) return text.length > MAX_INPUT ? "long" : [text, "\r"];
   if (/^(?:\/(?:exit|quit)(?:\s|$)|(?:exit|quit)$|:w?q!?$)/i.test(text)) return "exit";
   if (text.startsWith("!")) return "shell";
   if (text.length > MAX_INPUT) return "long";

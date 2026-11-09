@@ -13,6 +13,8 @@ export interface RepoConfig {
   id: string;
   label: string;
   path: string;
+  /** A git worktree Lepons made: the original folder's id, its branch, and the branch it started from. */
+  worktree?: { of: string; branch: string; base: string };
 }
 
 interface NodeCommon {
@@ -126,7 +128,7 @@ export interface ShareStatus {
 }
 
 /** What a folder row's settings menu can ask the page to do. */
-export type RepoAction = "newFile" | "rename" | "remove" | "terminal" | "pin";
+export type RepoAction = "rename" | "remove" | "terminal" | "pin" | "worktree";
 
 /**
  * Identifies one terminal: a node, optionally scoped to a repository. A
@@ -145,7 +147,10 @@ export function sessionKey(nodeId: string, repoId: string | null, terminal = fal
 export type WorkflowItem =
   | { kind: "prompt"; at: number; text: string }
   | { kind: "note"; at: number; text: string; /** The operator stopped the turn here. */ cancelled?: true }
-  | { kind: "action"; at: number; text: string; /** Every call pooled here, for counting. */ labels?: string[]; /** The operator stopped the turn here. */ cancelled?: true }
+  | {
+      kind: "action"; at: number; text: string; /** Every call pooled here, for counting. */ labels?: string[]; /** The operator stopped the turn here. */ cancelled?: true;
+      /** Whole paths of the files these calls changed; the PC's own reads only, never the phone's. */ paths?: string[];
+    }
   | {
       kind: "subagent";
       at: number;
@@ -275,6 +280,9 @@ export interface PhoneSession {
   agentName?: string;
   /** Working, but only background work: its main AI's turn is over (workflow/turn.ts turnOver), so it reads what it is sent. Absent otherwise. */
   mainFree?: boolean;
+  /** A worktree's session: its original folder's label, and its own task name. */
+  worktreeOf?: string;
+  worktree?: string;
 }
 
 /**
@@ -480,14 +488,14 @@ export interface CockpitApi {
    * `resume` continues the folder's last conversation, or the one whose id it is, as a new session.
    * `terminal` opens the folder's plain terminal, beside its agent session.
    */
-  openSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean): Promise<SessionState>;
+  openSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState>;
   /**
    * Like `openSession`, but for a tmux-backed node kills the remote session
    * first instead of reattaching to it -- the operator's deliberate way to
    * drop a conversation that has grown too long, rather than waiting on the
    * automatic idle reset.
    */
-  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean): Promise<SessionState>;
+  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState>;
   writeSession(key: string, data: string): void;
   resizeSession(key: string, cols: number, rows: number): void;
   /**
@@ -502,6 +510,8 @@ export interface CockpitApi {
   stopSession(nodeId: string, repoId: string | null): Promise<void>;
   /** The session's internal workflow, parsed from its transcript on disk. */
   sessionWorkflow(nodeId: string, repoId: string): Promise<SessionWorkflowResult>;
+  /** A summary of the folder's conversation for another AI to carry on (handoffPrompt); none with nothing asked. */
+  handoffText(nodeId: string, repoId: string): Promise<string | undefined>;
   /** How a quiet session's turn ended, from its record's tail; never rejects. `workedMs`: how long it had been busy. */
   sessionTurn(nodeId: string, repoId: string, workedMs: number): Promise<TurnEnd>;
   /** Starts the AI again in a terminal it has left, if it is sure to have left: a live AI would take the line as a message. */
@@ -519,9 +529,21 @@ export interface CockpitApi {
    * onFileAction. `pinned` says which pin choice a folder's own row offers.
    */
   fileMenu(nodeId: string, path: string, isDirectory: boolean, canPaste: boolean, pinned?: boolean): Promise<void>;
-  /** A folder row's settings menu, dropped below its button at (x, y); picks come back through onRepoAction. */
-  repoMenu(nodeId: string, repoId: string, x: number, y: number): void;
   onRepoAction(handler: (action: RepoAction, nodeId: string, repoId: string) => void): void;
+  /**
+   * A new worktree of a folder for one more AI, after main asked whatever it had to.
+   * `carry`: the agent whose current conversation the new one continues; `resume` is
+   * that conversation's id when it can. Undefined when nothing was made.
+   */
+  addWorktree(nodeId: string, repoId: string, task: string, carry?: AgentKind): Promise<{ nodes: NodeConfig[]; repoId: string; resume?: string } | undefined>;
+  /** 원본에 반영, then the worktree goes; main says what stopped it. */
+  mergeWorktree(nodeId: string, repoId: string): Promise<NodeConfig[]>;
+  /** Takes a worktree away, asking first if work would be lost. */
+  removeWorktree(nodeId: string, repoId: string): Promise<NodeConfig[]>;
+  /** Commits and changed files a worktree has beyond its base; null when git could not say. */
+  worktreeChanges(nodeId: string, repoId: string): Promise<number | null>;
+  /** A plain native menu at the pointer: the picked item's id, or undefined when it closed without a pick. "-" is a separator. */
+  popupMenu(items: ReadonlyArray<{ id: string; label: string } | "-">): Promise<string | undefined>;
   /** A terminal's right-click menu; the pick comes back through onTerminalAction with the same key. */
   terminalMenu(key: string, canCopy: boolean): void;
   onTerminalAction(handler: (action: "copy" | "paste", key: string) => void): void;
@@ -531,6 +553,13 @@ export interface CockpitApi {
   /** Moves or renames; never onto a name already taken. */
   moveEntry(nodeId: string, from: string, to: string): Promise<{ ok: boolean }>;
   copyEntry(nodeId: string, from: string, to: string): Promise<{ ok: boolean }>;
+  /** Into `dir` of `toNodeId` from any PC, or from this one's Explorer; a move only from another PC's tree. */
+  placeEntries(toNodeId: string, dir: string, sources: Array<{ nodeId: string; path: string }>, move: boolean): Promise<{ ok: boolean }>;
+  /** A printed path checked before a tab opens it: the file to open, or why not (missing, a folder, too big). */
+  locateFile(nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  /** Files copied in Explorer, this PC's paths; none on a Mac. */
+  clipboardFiles(): Promise<string[]>;
+  pathForFile(file: File): string;
   /** Opens a file for editing; refused, with the reason, when that is not safe. */
   openForEdit(nodeId: string, path: string): Promise<EditOpenResult>;
   /** What VS Code, Cursor, Claude Code and Codex know about that Lepons does not. */
@@ -629,6 +658,8 @@ export interface CockpitApi {
   onPhoneInput(handler: (key: string) => void): void;
   /** A phone pressed "다시 연결" for this PC (node id). */
   onPhoneReconnect(handler: (nodeId: string) => void): void;
+  /** A phone opened the terminal tab of a folder whose plain terminal is not open. */
+  onPhoneTerminal(handler: (nodeId: string, repoId: string) => void): void;
 }
 
 /** What creating a secret-bearing file inside a repository found out. */
@@ -766,6 +797,7 @@ export const channels = {
   dialogRequest: "dialog:request",
   dialogReply: "dialog:reply",
   sessionWorkflow: "workflow:session",
+  handoffText: "workflow:handoff",
   sessionTurn: "workflow:turn",
   restartAgent: "session:restart-agent",
   agentGone: "session:agent-gone",
@@ -774,13 +806,20 @@ export const channels = {
   downloadFile: "files:download",
   fileMenu: "files:menu",
   fileAction: "files:action",
-  repoMenu: "rail:repo-menu",
   repoAction: "rail:repo-action",
+  popupMenu: "menu:popup",
+  addWorktree: "worktree:add",
+  mergeWorktree: "worktree:merge",
+  removeWorktree: "worktree:remove",
+  worktreeChanges: "worktree:changes",
   terminalMenu: "terminal:menu",
   terminalAction: "terminal:action",
   deleteEntry: "files:delete",
   moveEntry: "files:move",
   copyEntry: "files:copy",
+  placeEntries: "files:place",
+  locateFile: "files:locate",
+  clipboardFiles: "files:clipboard",
   openForEdit: "files:open-for-edit",
   scanImports: "import:scan",
   importLocalFolder: "import:local-folder",
@@ -799,6 +838,7 @@ export const channels = {
   phoneChanged: "phone:changed",
   phoneInput: "phone:input",
   phoneReconnect: "phone:reconnect",
+  phoneTerminal: "phone:terminal",
   phoneQr: "phone:qr",
   relayAction: "phone:relay",
 } as const;

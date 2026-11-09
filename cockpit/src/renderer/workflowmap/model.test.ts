@@ -247,3 +247,10 @@ test("a share read one way flows one way; read both ways it says so", () => {
   assert.equal(both.length, 1);
   assert.equal(both[0]!.both, true);
 });
+
+test("a worktree's folder is joined to its original's by a branch edge", () => {
+  const base = input();
+  const m = build({ ...base, folders: base.folders.map((f) => (f.id === "local::c" ? { ...f, worktreeOf: "local::a" } : f)) });
+  assert.deepEqual(m.edges.filter((e) => e.kind === "branch").map((e) => [e.from, e.to, e.live]), [["f:local::a", "f:local::c", false]]);
+  assert.equal(build(base).edges.some((e) => e.kind === "branch"), false);
+});

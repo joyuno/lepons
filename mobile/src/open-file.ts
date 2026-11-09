@@ -1,8 +1,12 @@
 import { Directory, File, Paths } from "expo-file-system";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
 
+import { router } from "expo-router";
+
 import type { Connection } from "@/connection";
+import { documentKind } from "@/phone/document-kind";
 import { previewOrShare } from "@/phone/native-preview";
+import { relativeToFolder } from "@/phone/printed-path";
 import { utf8 } from "@/relay/protocol";
 
 /** A 20 MiB file over the relay is ~40 frames; give it time. */
@@ -49,4 +53,27 @@ export async function openInViewer(file: FetchedFile, path: string): Promise<boo
     await shareAsync(out.uri, mimeType ? { mimeType } : undefined);
     return true;
   });
+}
+
+/**
+ * A file path tapped in the chat, opened as the files tab opens it: the page
+ * for what it can draw, the phone's viewer for the rest. Its folder is listed
+ * first, as the PC hands over only what a listing named. False when it is not
+ * a file there; back from the page is the chat again.
+ */
+export async function openPrinted(request: Connection["request"], session: string, folder: string | undefined, printed: string): Promise<boolean> {
+  const path = relativeToFolder(printed, folder);
+  if (!path) return false;
+  const q = encodeURIComponent;
+  const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const listed = await request("GET", `/api/directory?s=${q(session)}&p=${q(dir)}`);
+  const entries = listed.status === 200 ? (listed.body as { entries?: unknown }).entries : undefined;
+  if (!Array.isArray(entries) || !entries.some((entry) => entry?.name === name && entry?.directory === false)) return false;
+  if (documentKind(path) !== "native") {
+    router.push({ pathname: "/doc", params: { s: session, p: path } });
+    return true;
+  }
+  const file = await fetchFile(request, session, path);
+  return file ? openInViewer(file, path) : false;
 }

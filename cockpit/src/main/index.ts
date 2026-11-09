@@ -1,8 +1,8 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, safeStorage, screen, shell, type MenuItemConstructorOptions } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, watch as fsWatch } from "node:fs";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { exec, spawn } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { exec, execFile, spawn } from "node:child_process";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
@@ -10,7 +10,7 @@ import { NodeSession } from "../ssh/session.ts";
 import { LocalSession } from "../session/local.ts";
 import { localMachine, machineFor, type Changed, type Machine } from "../machine/machine.ts";
 import { execInPty, probeCapabilities, runRemote, runRemoteStatus } from "../ssh/capabilities.ts";
-import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor } from "../agent/agents.ts";
+import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor } from "../agent/agents.ts";
 import { ExecutorCheckError, localLaunch, localProbe } from "../agent/delegate.ts";
 import { freshWindowsPath, loginReply, loginWatch, outputTail, regValue, sudoAsks, tmuxInstallLine } from "../agent/install.ts";
 import { suggestShares, type Manifests } from "../repo/suggest.ts";
@@ -38,7 +38,8 @@ import { swapArgs, unpackPatch } from "./app-patch.ts";
 import { failedTry, joinRunning, olderThanTunnel, type Outage } from "./share-outage.ts";
 import { dialogRequest, replyIndex } from "./app-dialog.ts";
 import { ALWAYS, ONCE, REFUSE, approveDelegation, instructionsPreview } from "./delegate-approval.ts";
-import { containingRepo, transferProblem, type EntryAction } from "../browse/entry-ops.ts";
+import { containingRepo, freeCopyName, transferProblem, type EntryAction } from "../browse/entry-ops.ts";
+import { getTree, putTree } from "../ssh/tree-copy.ts";
 import { openForEdit, saveEdited, type FileStore } from "./edit-file.ts";
 import { folderPath, resolveTarget } from "../browse/target.ts";
 import { containedBy } from "../read/wire-path.ts";
@@ -93,8 +94,10 @@ import {
   type ShareStatus,
   type TmuxInstallResult,
 } from "../shared/ipc.ts";
-import { parseTranscript, transcriptDir } from "../workflow/transcript.ts";
+import { parseTranscript, projectSlug, transcriptDir } from "../workflow/transcript.ts";
+import { addWorktree, goneWorktrees, localHost, mergeWorktree, movedTranscript, pendingWork, remoteHost, removeWorktree, startRepo, type WorktreeHost } from "./worktree.ts";
 import { parseCodexRollout } from "../workflow/codex.ts";
+import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
 import type { TurnEnd } from "../shared/status.ts";
 import { agySettingsFile, agyStatusLineWith, agyUsageFile, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
@@ -1620,6 +1623,15 @@ app.whenReady().then(() => {
     return { ok: true, workflow: parseTranscript(jsonl, full) };
   };
   ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string) => workflowOf(nodeId, repoId));
+  // What another AI is told to carry on this folder's conversation; read before the old one is replaced.
+  ipcMain.handle(channels.handoffText, async (_event, nodeId: string, repoId: string): Promise<string | undefined> => {
+    const read = await workflowOf(nodeId, repoId).catch(() => undefined);
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    const repo = node?.repos.find((candidate) => candidate.id === repoId);
+    const from = sessionExecutor.get(sessionKey(nodeId, repoId)) ?? node?.agent;
+    if (!read?.ok || !repo || !isAgentKind(from)) return undefined;
+    return handoffPrompt(read.workflow, agents[from].short, repo.path, t);
+  });
 
   // Once per quiet (pet.ts), and only the tail: the page goes on meanwhile, and
   // takes "unknown" as output rhythm's own answer.
@@ -2064,6 +2076,48 @@ app.whenReady().then(() => {
    * snapshot for reading; editing it changes nothing on the node, which is
    * why the reply says where it landed.
    */
+  /** A path's size, or that it is a folder or not there: on this PC by stat, on another by one shell line. */
+  const sizeOn = async (node: NodeConfig, path: string): Promise<number | "dir" | "missing"> => {
+    if (node.kind === "local") {
+      return stat(path).then((info) => (info.isDirectory() ? "dir" as const : info.size), () => "missing" as const);
+    }
+    const quoted = posixQuote(path);
+    const ran = await machineOf(node).run(`if [ -d ${quoted} ]; then echo dir; elif [ -f ${quoted} ]; then wc -c < ${quoted}; else echo missing; fi`);
+    const said = ran?.output.trim() ?? "";
+    return said === "dir" ? "dir" : /^\d+$/.test(said) ? Number(said) : "missing";
+  };
+  /** Why a file could not be read, one reason and the full path: not there, a folder, or over the 5MB a preview takes. */
+  const unreadable = async (node: NodeConfig, path: string): Promise<string> => {
+    const size = await sizeOn(node, path);
+    const shown = machineOf(node).nativePath(path);
+    if (size === "missing") return t("files.missing", { path: shown });
+    if (size === "dir") return t("files.isFolder", { path: shown });
+    if (size > previewLimit) return t("files.tooBig", { size: `${(size / 1024 / 1024).toFixed(1)}MB`, path: shown });
+    return t("files.unreadable", { path: shown });
+  };
+  /**
+   * A path an agent printed, before a tab opens it: there as written, or, when
+   * not, the one file in its folder whose path ends the same (an agent that
+   * cd'ed into a subfolder prints paths from there). Else why not, plainly.
+   */
+  ipcMain.handle(channels.locateFile, async (_event, nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => {
+    const node = requireNode(nodeId);
+    if (typeof path !== "string" || path === "") return { ok: false, error: t("files.missing", { path: String(path) }) };
+    let at = path;
+    let size = await sizeOn(node, at);
+    const base = typeof root === "string" ? root.replace(/\/+$/, "") : "";
+    if (size === "missing" && base !== "" && at.startsWith(`${base}/`)) {
+      const relative = at.slice(base.length + 1);
+      const hits = (await machineOf(node).allFiles(base)).filter((file) => file === relative || file.endsWith(`/${relative}`));
+      if (hits.length === 1) {
+        at = `${base}/${hits[0]}`;
+        size = await sizeOn(node, at);
+      }
+    }
+    if (size === "missing" || size === "dir" || size > previewLimit) return { ok: false, error: await unreadable(node, at) };
+    return { ok: true, path: at };
+  });
+
   const openNodeFile = async (nodeId: string, path: string): Promise<string | undefined> => {
     const node = requireNode(nodeId);
     if (node.kind === "local") {
@@ -2071,7 +2125,7 @@ app.whenReady().then(() => {
       return failure === "" ? undefined : failure;
     }
     const bytes = await machineOf(node).read(path, previewLimit);
-    if (bytes === undefined) return t("files.tooBigOrGone");
+    if (bytes === undefined) return unreadable(node, path);
     const local = join(app.getPath("temp"), "lepons", nodeId.replace(/[^A-Za-z0-9_.-]/g, "-"));
     await mkdir(local, { recursive: true });
     const target = join(local, path.split("/").pop() ?? "file");
@@ -2136,6 +2190,7 @@ app.whenReady().then(() => {
     if (!repo && !root) return;
     const base = (repo ?? root)!.path.replace(/\/+$/, "");
     const send = (action: EntryAction) => () => event.sender.send(channels.fileAction, action, nodeId, path, isDirectory);
+    const rail = (action: RepoAction) => () => event.sender.send(channels.repoAction, action, nodeId, root!.id);
     // As the operator's own tools spell it: backslashes on Windows here, and
     // the node's own slashes there.
     const native = machineOf(node).nativePath;
@@ -2149,7 +2204,8 @@ app.whenReady().then(() => {
         }]
       : [];
     const groups: MenuItemConstructorOptions[][] = [
-      root ? [{ label: t(pinned ? "rail.unpin" : "rail.pin"), click: () => event.sender.send(channels.repoAction, "pin", nodeId, root.id) }] : [],
+      root && !root.worktree ? [{ label: t("worktree.add"), click: rail("worktree") }] : [],
+      root ? [{ label: t("rail.openTerminal"), click: rail("terminal") }] : [],
       isDirectory
         ? [{ label: t("files.newFile"), click: send("newFile") }, { label: t("files.newFolder"), click: send("newFolder") }, ...reveal]
         : [
@@ -2175,14 +2231,18 @@ app.whenReady().then(() => {
             ...reveal,
           ],
       [
-        ...(repo ? [{ label: t("files.cut"), click: send("cut") }, { label: t("files.copy"), click: send("copy") }] : []),
-        ...(isDirectory ? [{ label: t("files.paste"), enabled: canPaste === true, click: send("paste") }] : []),
+        // Picked up here, so files copied in Explorer before it are not what a paste brings.
+        ...(repo ? [{ label: t("files.cut"), click: () => { forgetClipboardFiles(); send("cut")(); } }, { label: t("files.copy"), click: () => { forgetClipboardFiles(); send("copy")(); } }] : []),
+        ...(isDirectory ? [{ label: t("files.paste"), enabled: canPaste === true || clipboard.availableFormats().includes("text/uri-list"), click: send("paste") }] : []),
       ],
       [
         { label: t("files.copyPath"), click: copyText(native(path)) },
         ...(repo ? [{ label: t("files.copyRelativePath"), click: copyText(native(path.slice(base.length + 1))) }] : []),
       ],
       repo ? [{ label: t("files.rename"), click: send("rename") }, { label: t("files.delete"), click: send("delete") }] : [],
+      // The registration's own: where it sits on the rail, its name there, and taking it off.
+      root ? [{ label: t(pinned ? "rail.unpin" : "rail.pin"), click: rail("pin") }, { label: t("rail.renameFolder"), click: rail("rename") }] : [],
+      root ? [{ label: t("rail.removeFolder"), click: rail("remove") }] : [],
     ];
     Menu.buildFromTemplate(
       groups
@@ -2232,6 +2292,94 @@ app.whenReady().then(() => {
     return entryDone(await machineOf(node).transfer(from, to, move));
   };
   ipcMain.handle(channels.moveEntry, (_event, nodeId: string, from: string, to: string) => transferEntry(nodeId, from, to, true));
+
+  /**
+   * Files copied in Explorer, for 붙여넣기. Windows only: Electron says files
+   * are there (text/uri-list) but not which, and PowerShell's list does.
+   */
+  const clipboardFiles = (): Promise<string[]> =>
+    process.platform !== "win32" || !clipboard.availableFormats().includes("text/uri-list")
+      ? Promise.resolve([])
+      : new Promise((resolve) =>
+          execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName }"], { windowsHide: true, timeout: 10_000 }, (error, stdout) =>
+            resolve(error ? [] : stdout.split(/\r?\n/).map((line) => line.trim().replace(/\\/g, "/")).filter(Boolean))));
+  ipcMain.handle(channels.clipboardFiles, () => clipboardFiles());
+  const forgetClipboardFiles = () => {
+    if (clipboard.availableFormats().includes("text/uri-list")) clipboard.clear();
+  };
+
+  /**
+   * One file or folder to a path on another PC, never over one there: why
+   * not, or how many links it left behind (SFTP carries none).
+   */
+  const copyBetween = async (from: NodeConfig, fromPath: string, to: NodeConfig, toPath: string): Promise<{ failed: string } | { skipped: number }> => {
+    for (const node of [from, to]) {
+      const ready = await machineOf(node).ready();
+      if (!ready.ok) return { failed: ready.reason };
+    }
+    const source = machineOf(from).connection();
+    const target = machineOf(to).connection();
+    const counted = (result: { skipped: string[] } | { failed: string }) => ("failed" in result ? result : { skipped: result.skipped.length });
+    if (!source && !target) {
+      const done = await machineOf(to).transfer(fromPath, toPath, false);
+      return done.ok ? { skipped: 0 } : { failed: done.detail ?? done.reason };
+    }
+    if (!source) return counted(await putTree(target!, fromPath, toPath));
+    if (!target) return counted(await getTree(source, fromPath, toPath));
+    // PC to PC goes by way of this one: neither has a key for the other.
+    const stage = await mkdtemp(join(tmpdir(), "lepons-copy-"));
+    try {
+      const here = join(stage, fromPath.slice(fromPath.lastIndexOf("/") + 1));
+      const got = await getTree(source, fromPath, here);
+      if ("failed" in got) return got;
+      const put = counted(await putTree(target, here, toPath));
+      return "failed" in put ? put : { skipped: got.skipped.length + put.skipped };
+    } finally {
+      await rm(stage, { recursive: true, force: true });
+    }
+  };
+
+  /**
+   * Into a folder of a registered one, from anywhere: Explorer (a drop or a
+   * paste, this PC's paths) or another PC's tree (잘라내기·복사). A copy takes
+   * a free name as a paste on one PC does; a move keeps its name, refused if
+   * it is taken, and its source goes only once the copy is whole.
+   */
+  ipcMain.handle(channels.placeEntries, async (_event, toNodeId: string, dir: string, sources: Array<{ nodeId: string; path: string }>, move: boolean): Promise<{ ok: boolean }> => {
+    const to = requireNode(toNodeId);
+    const into = typeof dir === "string" ? dir.replace(/\/+$/, "") : "";
+    const registered = to.repos.some((repo) => repo.path.replace(/\/+$/, "") === into) || containingRepo(to.repos, into) !== undefined;
+    if (!registered || !Array.isArray(sources)) return entryFailed(t("files.outside"));
+    const listing = await machineOf(to).list(into);
+    const taken = new Set(listing.ok ? listing.entries.map((entry) => entry.name) : []);
+    for (const source of sources) {
+      const from = requireNode(source.nodeId);
+      const path = typeof source.path === "string" ? source.path.replace(/\/+$/, "") : "";
+      // Another PC's entry comes from its tree, so from a registered folder; this PC's may come from Explorer.
+      if (path === "" || (from.kind !== "local" && !containingRepo(from.repos, path))) return entryFailed(t("files.outside"));
+      if (from.id === to.id && (into === path || into.startsWith(`${path}/`))) return entryFailed(t("files.intoItself"));
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (move && taken.has(name)) return entryFailed(t("files.nameTaken"));
+      const isDirectory = (await machineOf(from).list(path)).ok;
+      const target = `${into}/${move ? name : freeCopyName(name, taken, isDirectory)}`;
+      taken.add(target.slice(into.length + 1));
+      // One PC: its own copy or move, links and all.
+      if (from.id === to.id) {
+        const done = await machineOf(to).transfer(path, target, move);
+        if (!done.ok) return entryDone(done);
+        continue;
+      }
+      const copied = await copyBetween(from, path, to, target);
+      if ("failed" in copied) return entryFailed(copied.failed);
+      // A link did not go along: the original stays, or the move would lose it.
+      if (move && copied.skipped > 0) return entryFailed(t("files.linksKept", { count: copied.skipped }));
+      if (move) {
+        const removed = await machineOf(from).remove(path);
+        if (!removed.ok) return entryDone(removed);
+      }
+    }
+    return { ok: true };
+  });
   ipcMain.handle(channels.copyEntry, (_event, nodeId: string, from: string, to: string) => transferEntry(nodeId, from, to, false));
 
   /**
@@ -2241,8 +2389,9 @@ app.whenReady().then(() => {
    * `openFile`, just returned as text instead of written to a temp copy.
    */
   const readText = async (nodeId: string, path: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
-    const bytes = await machineOf(requireNode(nodeId)).read(path, previewLimit);
-    return bytes === undefined ? { ok: false, error: t("files.tooBigOrGone") } : { ok: true, text: bytes.toString("utf8") };
+    const node = requireNode(nodeId);
+    const bytes = await machineOf(node).read(path, previewLimit);
+    return bytes === undefined ? { ok: false, error: await unreadable(node, path) } : { ok: true, text: bytes.toString("utf8") };
   };
   ipcMain.handle(channels.readText, (_event, nodeId: string, path: string) => readText(nodeId, path));
 
@@ -2259,8 +2408,9 @@ app.whenReady().then(() => {
       nodeId: string,
       path: string,
     ): Promise<{ ok: true; base64: string } | { ok: false; error: string }> => {
-      const bytes = await machineOf(requireNode(nodeId)).read(path, previewLimit);
-      return bytes === undefined ? { ok: false, error: t("files.tooBigOrGone") } : { ok: true, base64: bytes.toString("base64") };
+      const node = requireNode(nodeId);
+      const bytes = await machineOf(node).read(path, previewLimit);
+      return bytes === undefined ? { ok: false, error: await unreadable(node, path) } : { ok: true, base64: bytes.toString("base64") };
     },
   );
 
@@ -2597,6 +2747,12 @@ app.whenReady().then(() => {
       cancelId: 1,
     };
     const window = BrowserWindow.fromWebContents(event.sender);
+    // A worktree left without its original could never be merged back: those go first.
+    const holding = leaving.find((repo) => node.repos.some((other) => other.worktree?.of === repo.id && !repoIds.includes(other.id)));
+    if (holding) {
+      await appDialog(window ?? undefined, { type: "info", message: t("worktree.endFirst", { name: holding.label }) });
+      return nodes.list();
+    }
     const { response } = await appDialog(window ?? undefined, ask);
     if (response !== 0) return nodes.list();
     if (last) return forgetNode(nodeId);
@@ -2610,6 +2766,189 @@ app.whenReady().then(() => {
     }
     return nodes.save({ ...node, repos: node.repos.filter((candidate) => !repoIds.includes(candidate.id)) });
   });
+
+  // --- worktrees: one more AI in a folder, each in its own git worktree ---
+
+  /** Git where the folder is: argument arrays here, quoted POSIX lines over SSH. */
+  const worktreeHost = (node: NodeConfig): WorktreeHost =>
+    node.kind === "local" ? localHost : remoteHost((command) => machineOf(node).run(command));
+  const worktreeOf = (nodeId: string, repoId: string) => {
+    const node = requireNode(nodeId);
+    const repo = node.repos.find((candidate) => candidate.id === repoId);
+    const worktree = repo?.worktree;
+    const original = worktree && node.repos.find((candidate) => candidate.id === worktree.of);
+    return repo && worktree && original ? { node, repo, worktree, original } : undefined;
+  };
+  const worktreeSay = (window: BrowserWindow | undefined, reason: string, detail?: string, values?: Record<string, string>) =>
+    appDialog(window, { type: reason === "failed" ? "error" : "info", message: t(`worktree.${reason}`, values), ...(detail ? { detail } : {}) });
+
+  /**
+   * The conversation an agent is having in `from`, made one it can continue in
+   * `to`: Codex finds a conversation by id from any folder; Claude only from
+   * its own folder's record, so a copy goes there (worktree.ts movedTranscript).
+   */
+  const carryConversation = async (node: NodeConfig, from: string, to: string, agent: AgentKind): Promise<string | undefined> => {
+    if (!agentSpec(agent).resumeIdCommand) return undefined;
+    const machine = machineOf(node);
+    const last = (await machine.past(from, "").catch(() => null))?.find((past) => past.agent === agent);
+    if (!last || agent === "codex") return last?.id;
+    if (agent !== "claude" || !node.home) return undefined;
+    const dir = (folder: string) => `${node.home}/.claude/projects/${projectSlug(folder)}`;
+    const record = await machine.read(`${dir(from)}/${last.id}.jsonl`, 256 * 1024 * 1024);
+    if (!record) return undefined;
+    await machine.makeDirs(dir(to)).catch(() => undefined);
+    const copied = await machine.create(`${dir(to)}/${last.id}.jsonl`, movedTranscript(record.toString("utf8"), from, to));
+    return copied.ok ? last.id : undefined;
+  };
+
+  ipcMain.handle(channels.addWorktree, async (event, nodeId: string, repoId: string, task: string, carry?: AgentKind) => {
+    const node = requireNode(nodeId);
+    const original = node.repos.find((candidate) => candidate.id === repoId && !candidate.worktree);
+    if (!original || typeof task !== "string") return undefined;
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const ready = await machineOf(node).ready();
+    if (!ready.ok) return void (await worktreeSay(window, "unreachable", ready.reason));
+    if (!node.home) return void (await worktreeSay(window, "unreachable"));
+    const host = worktreeHost(node);
+    const ask = { folder: original.path, home: node.home, task: task.trim(), taken: node.repos.map((repo) => repo.path) };
+    let made = await addWorktree(host, ask);
+    if (!made.ok && made.reason === "not_repo") {
+      const { response } = await appDialog(window, {
+        type: "question",
+        message: t("worktree.askInit", { name: original.label }),
+        detail: t("worktree.askInitDetail"),
+        buttons: [t("worktree.init"), t("common.cancel")],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response !== 0) return undefined;
+      const started = await startRepo(host.git, original.path);
+      if (!started.ok) return void (await worktreeSay(window, started.reason, started.detail));
+      made = await addWorktree(host, ask);
+    }
+    if (!made.ok) return void (await worktreeSay(window, made.reason, made.detail));
+    const worktree: RepoConfig = { id: made.path, label: task.trim() || made.slug, path: made.path, worktree: { of: original.id, branch: made.branch, base: made.base } };
+    const fresh = requireNode(nodeId);
+    nodes.save({ ...fresh, repos: [...fresh.repos, worktree] });
+    // Whoever reads the original reads this one too, until it ends.
+    const from = wireRepoId(nodeId, original.path);
+    for (const consumer of nodes.list()) {
+      if (!grants.for(consumer.id).has(from)) continue;
+      grants.set(consumer.id, wireRepoId(nodeId, worktree.path), true);
+      void syncBridge(consumer.id);
+    }
+    const resume = isAgentKind(carry) ? await carryConversation(node, original.path, worktree.path, carry) : undefined;
+    return { nodes: nodes.list(), repoId: worktree.id, ...(resume ? { resume } : {}) };
+  });
+
+  /** A worktree's end: its sessions, the worktree and branch, its entry, and the grants it inherited. */
+  const endWorktree = async (window: BrowserWindow | undefined, found: NonNullable<ReturnType<typeof worktreeOf>>, force: boolean): Promise<void> => {
+    const { node, repo, worktree, original } = found;
+    for (const key of [sessionKey(node.id, repo.id), sessionKey(node.id, repo.id, true)]) {
+      const agent = sessionExecutor.get(key);
+      if (node.kind === "ssh" && node.useTmux && agent !== undefined) await machineOf(node).run(tmuxKillCommand(key, agent), { login: true });
+      sessions.get(key)?.close();
+      sessions.delete(key);
+      sessionExecutor.delete(key);
+      survivesDisconnect.delete(key);
+    }
+    const git = worktreeHost(node).git;
+    const remove = () => removeWorktree(git, { folder: original.path, path: repo.path, branch: worktree.branch, force });
+    let removed = await remove();
+    // Windows holds a folder a shell has just left for a moment.
+    for (let tries = 0; !removed.ok && node.kind === "local" && tries < 3; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      removed = await remove();
+    }
+    if (!removed.ok) return void (await worktreeSay(window, "removeFailed", removed.detail));
+    revokeGrantsOn(wireRepoId(node.id, repo.path));
+    const fresh = requireNode(node.id);
+    nodes.save({ ...fresh, repos: fresh.repos.filter((candidate) => candidate.id !== repo.id) });
+  };
+
+  ipcMain.handle(channels.mergeWorktree, async (event, nodeId: string, repoId: string): Promise<NodeConfig[]> => {
+    const found = worktreeOf(nodeId, repoId);
+    if (!found) return nodes.list();
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const { node, repo, worktree, original } = found;
+    const { branch, base } = worktree;
+    const merged = await mergeWorktree(worktreeHost(node).git, { folder: original.path, path: repo.path, branch, base, message: repo.label });
+    if (merged.ok) {
+      await endWorktree(window, found, false);
+      return nodes.list();
+    }
+    if (merged.reason === "conflict") {
+      const { response } = await appDialog(window, {
+        type: "warning",
+        message: t("worktree.conflict", { base }),
+        detail: t("worktree.conflictDetail", { name: original.label }),
+        buttons: [t("worktree.askAi"), t("common.close")],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response !== 0) return nodes.list();
+      // Typed into the worktree's own AI, as the operator would; Enter apart, so it is not read as a paste.
+      const key = sessionKey(nodeId, repo.id);
+      const session = sessions.get(key);
+      if (!session || session.state.kind !== "ready" || sessionExecutor.get(key) === "shell") {
+        await worktreeSay(window, "noAgent");
+        return nodes.list();
+      }
+      session.write(t("worktree.rebasePrompt", { base }));
+      setTimeout(() => session.write("\r"), 150);
+      return nodes.list();
+    }
+    if (merged.reason === "moved") await worktreeSay(window, "moved", undefined, { name: original.label, base, current: merged.current || "-" });
+    else await worktreeSay(window, merged.reason, merged.detail, { name: original.label });
+    return nodes.list();
+  });
+
+  ipcMain.handle(channels.removeWorktree, async (event, nodeId: string, repoId: string): Promise<NodeConfig[]> => {
+    const found = worktreeOf(nodeId, repoId);
+    if (!found) return nodes.list();
+    const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const left = await pendingWork(worktreeHost(found.node).git, found.repo.path, found.worktree.base);
+    // Nothing to lose, nothing to ask. Git that cannot say is asked about too:
+    // the folder may be there with work in it (a renamed base, a held lock).
+    if (left === undefined || left.commits + left.files > 0) {
+      const { response } = await appDialog(window, {
+        type: "warning",
+        message: t("worktree.removeAsk", { name: found.repo.label }),
+        detail: left === undefined ? t("worktree.removeUnknown") : t("worktree.removeLeft", { commits: String(left.commits), files: String(left.files) }),
+        buttons: [t("worktree.remove"), t("common.cancel")],
+        defaultId: 1,
+        cancelId: 1,
+      });
+      if (response !== 0) return nodes.list();
+    }
+    await endWorktree(window, found, left === undefined || left.commits + left.files > 0);
+    return nodes.list();
+  });
+
+  ipcMain.handle(channels.worktreeChanges, async (_event, nodeId: string, repoId: string): Promise<number | null> => {
+    const found = worktreeOf(nodeId, repoId);
+    const left = found && (await pendingWork(worktreeHost(found.node).git, found.repo.path, found.worktree.base));
+    return left ? left.commits + left.files : null;
+  });
+
+  /** Once a run per PC: worktrees removed outside Lepons leave the list. This PC at start, another at its first session. */
+  const reconciled = new Set<string>();
+  const reconcileWorktrees = async (nodeId: string): Promise<void> => {
+    if (reconciled.has(nodeId)) return;
+    reconciled.add(nodeId);
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    if (!node) return;
+    const gone: string[] = [];
+    for (const original of node.repos) {
+      const own = node.repos.filter((repo) => repo.worktree?.of === original.id).map((repo) => repo.path);
+      if (own.length > 0) gone.push(...(await goneWorktrees(worktreeHost(node).git, original.path, own)));
+    }
+    if (gone.length === 0) return;
+    for (const path of gone) revokeGrantsOn(wireRepoId(nodeId, path));
+    const fresh = requireNode(nodeId);
+    nodes.save({ ...fresh, repos: fresh.repos.filter((repo) => !gone.includes(repo.path)) });
+  };
+  void reconcileWorktrees(localNodeId);
 
 
   // One picker in the UI, two backends here. Both refuse to report a missing
@@ -2709,6 +3048,8 @@ app.whenReady().then(() => {
     resume?: boolean | string,
     bypass?: boolean,
     terminal = false,
+    // Typed once the new AI is up: what another AI's conversation handed over (handoffPrompt).
+    firstPrompt?: string,
   ): Promise<SessionState> => {
     if (executor !== undefined && executor !== "shell" && !isAgentKind(executor)) {
       return { kind: "closed", reason: "spawn_failed", detail: "Unknown executor" };
@@ -2724,6 +3065,7 @@ app.whenReady().then(() => {
     forgetChangedKeyAnswers(node.id);
     const ready = await machineOf(node).ready();
     if (!ready.ok) return { kind: "closed", reason: "auth_failed", detail: ready.reason };
+    void reconcileWorktrees(nodeId);
     try {
       if (!plain) await machineOf(node).checkAgent(node.agent).catch(async (error: unknown) => {
         // Installed from a terminal since Lepons started: Windows put it on
@@ -2759,8 +3101,9 @@ app.whenReady().then(() => {
     // The CLI is brought up to date by the first session each machine gets
     // after Lepons starts -- "once per power-on" -- not on every launch.
     const updateKey = `${nodeId}::${node.agent}`;
-    const update = !plain && !updatedThisRun.has(updateKey);
-    if (!plain) updatedThisRun.add(updateKey);
+    // Not with a handoff to type: a quiet update would take it, and its Enter, at the shell. The next session updates.
+    const update = !plain && !firstPrompt && !updatedThisRun.has(updateKey);
+    if (!plain && !firstPrompt) updatedThisRun.add(updateKey);
     // A PC's own terminal has no folder: home, as a remote login lands there too.
     const cwd = repo?.path ?? (node.kind === "local" ? homedir() : undefined);
     const { session, survives } = buildSession(node, key, cwd, cols, rows, resume ?? false, update, plain, bypass === true, repo?.label);
@@ -2815,19 +3158,20 @@ app.whenReady().then(() => {
     // agy: that would branch the conversation open there.
     const fork = agentSpec(node.agent).forkCommand;
     if (fork && resume === true && !plain && !(node.kind === "ssh" && node.useTmux && !fresh)) typeWhenSettled(session, fork);
+    if (firstPrompt && !plain) typeWhenSettled(session, firstPrompt.replace(/\s+/g, " "), 3000, startQuestion);
     return session.open();
   };
 
   ipcMain.handle(
     channels.openSession,
-    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean): Promise<SessionState> =>
-      openOrRestart(nodeId, repoId, cols, rows, false, executor, resume, bypass, terminal),
+    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState> =>
+      openOrRestart(nodeId, repoId, cols, rows, false, executor, resume, bypass, terminal, typeof firstPrompt === "string" ? firstPrompt : undefined),
   );
 
   ipcMain.handle(
     channels.restartSession,
-    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean): Promise<SessionState> =>
-      openOrRestart(nodeId, repoId, cols, rows, true, executor, resume, bypass, terminal),
+    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState> =>
+      openOrRestart(nodeId, repoId, cols, rows, true, executor, resume, bypass, terminal, typeof firstPrompt === "string" ? firstPrompt : undefined),
   );
 
   ipcMain.on(channels.writeSession, (_event, key: string, data: string) => {
@@ -3193,20 +3537,14 @@ app.whenReady().then(() => {
 
   // The row's own settings, behind one button: four icons side by side read
   // as a wall on a row whose point is its name. Native for fileMenu's reasons.
-  ipcMain.on(channels.repoMenu, (event, nodeId: string, repoId: string, x: number, y: number) => {
-    const repo = nodes.list().find((node) => node.id === nodeId)?.repos.find((candidate) => candidate.id === repoId);
-    const window = BrowserWindow.fromWebContents(event.sender);
-    if (!repo || !window) return;
-    const send = (action: RepoAction) => () => event.sender.send(channels.repoAction, action, nodeId, repoId);
-    Menu.buildFromTemplate([
-      { label: t("rail.openTerminal"), click: send("terminal") },
-      { type: "separator" },
-      { label: t("browse.newFile"), click: send("newFile") },
-      { label: t("rail.renameFolder"), click: send("rename") },
-      { type: "separator" },
-      { label: t("rail.removeFolder"), click: send("remove") },
-    ]).popup({ window, x: Math.round(x), y: Math.round(y) });
-  });
+  // The renderer's own small menus (a PC's head): it names the items, main only shows them.
+  ipcMain.handle(channels.popupMenu, (event, items: unknown) => new Promise<string | undefined>((resolve) => {
+    const list = Array.isArray(items) ? items.slice(0, 30) : [];
+    const menu = Menu.buildFromTemplate(list.map((item): MenuItemConstructorOptions =>
+      item === "-" || typeof item?.id !== "string" ? { type: "separator" } : { label: String(item.label).slice(0, 120), click: () => resolve(item.id) }));
+    // On some platforms the close comes before the click: give the click its turn.
+    menu.popup({ window: BrowserWindow.fromWebContents(event.sender) ?? undefined, callback: () => setTimeout(() => resolve(undefined), 100) });
+  }));
 
   // A terminal's right-click: the two things a terminal's own menu offers.
   ipcMain.on(channels.terminalMenu, (event, key: string, canCopy: boolean) => {

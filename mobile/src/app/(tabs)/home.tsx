@@ -7,7 +7,7 @@ import { LinkNotice } from "@/link-notice";
 import { halted, useConnection } from "@/connection";
 import { fmt, t, type StringKey } from "@/i18n";
 import { Level, Press, Spin, SwapText, Tally } from "@/motion";
-import { lampState, type AgentUsage, type PhonePc, type PhoneSessionView, type UsageWindow } from "@/phone/types";
+import { folderName, lampState, type AgentUsage, type PhonePc, type PhoneSessionView, type UsageWindow } from "@/phone/types";
 import { modelLabel, modelStacks, tokenDates, tokenStatsOf, tokenStatsTimer, usdByAgent, usdCeiling, usdDays, usdText, usdTick, type TokenStats } from "@/phone/token-stats";
 import { font, Group, Lamp, radius, Screen, Section, SessionRow, size, Skeleton, space, useTheme } from "@/ui";
 
@@ -125,7 +125,7 @@ export default function Dashboard() {
               <Press accessibilityRole="button" onPress={() => openSession(active)} style={s.card}>
                 <View style={s.row}>
                   <Lamp state="working" />
-                  <SwapText text={active.folder} numberOfLines={1} style={[s.text, font.semibold]} box={{ flex: 1 }} />
+                  <SwapText text={folderName(active)} numberOfLines={1} style={[s.text, font.semibold]} box={{ flex: 1 }} />
                   <Text style={s.dim}>{active.agentName || t.chat} {"\u203a"}</Text>
                 </View>
                 {active.summary?.goal ? <SwapText text={active.summary.goal} numberOfLines={2} style={s.text} /> : null}
@@ -147,7 +147,8 @@ export default function Dashboard() {
               <View key={`${pc.label}-${i}`} style={[s.row, { minHeight: 32 }]}>
                 <Lamp state={pc.state} size={8} />
                 <Text style={[s.dim, { flex: 1 }]} numberOfLines={1}>{pc.label} {"\u00b7"} {t[`pc_${pc.state}`]}</Text>
-                {pc.id !== undefined && pc.state === "failed" ? (
+                {/* Failed, or switched off on the PC (not connected at start): this one PC is tried again, never all at once. */}
+                {pc.id !== undefined && (pc.state === "failed" || pc.state === "off") ? (
                   <Pressable accessibilityRole="button" accessibilityLabel={`${pc.label}, ${t.reconnect}`} hitSlop={8} onPress={() => void reconnectPc(pc)} style={({ pressed }) => ({ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
                     <SymbolView name={{ ios: "arrow.clockwise", android: "refresh" }} tintColor={p.text} size={20} />
                   </Pressable>

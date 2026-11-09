@@ -1,6 +1,6 @@
 import type { BrowserWindow, IpcMain, WebContents } from "electron";
 import { appendFile } from "node:fs/promises";
-import { hostname } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { toDataURL } from "qrcode";
@@ -196,8 +196,8 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
         ...(session.mood === "working" && mainFree.has(session.key) && sessions.get(session.key)?.state.kind === "ready" ? { mainFree: true } : {}),
       };
     }),
-    // An agent, never a plain terminal: a shell runs whatever it is sent,
-    // an agent at least asks before it acts.
+    // An agent's session, not a plain terminal's: the phone's chat and its
+    // agent-only refusals go to agents; shell lines go to terminals (input.ts).
     isAgent: (key) => !key.endsWith("::terminal") && isAgentKind(sessionExecutor.get(key)),
     screen: (key) => {
       const screen = screens.get(key);
@@ -300,6 +300,17 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (!found) return [];
       return machineOf(found.node).allFiles(found.repo.path);
     }),
+    // The composer's clip, saved where a desktop paste for that PC goes (index.ts pasteImage):
+    // its temp folder, readable by that account only, the path then typed into the agent.
+    upload: async (key, name, bytes) => {
+      const found = phoneSessionPlace(key);
+      if (!found) return undefined;
+      const { node } = found;
+      const dir = node.kind === "local" ? tmpdir() : node.windows ? `${node.home}/AppData/Local/Temp` : "/tmp";
+      const path = node.kind === "local" ? join(dir, name) : `${dir}/${name}`;
+      const written = await machineOf(node).create(path, bytes).catch(() => ({ ok: false as const }));
+      return written.ok ? path : undefined;
+    },
     signedIn: (count) => {
       phoneCount = count;
       sendPhoneView();
@@ -312,6 +323,9 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     // The rail's "다시 연결" lives in the window: asked there, as phoneInput tells it of typing.
     reconnectPc: (nodeId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneReconnect, nodeId);
+    },
+    openTerminal: (nodeId, repoId) => {
+      if (!window.isDestroyed()) window.webContents.send(channels.phoneTerminal, nodeId, repoId);
     },
     // What the AI accounts tab shows, for every PC; kept a minute like the suggestions.
     accounts: () => phoneCached("accounts", () => Promise.all(nodes.list().map(async (node) => ({

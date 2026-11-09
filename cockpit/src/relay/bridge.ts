@@ -57,7 +57,7 @@ export function relayBridge(api: PhoneApi): (send: (message: Message) => void) =
       }
       const body = request.method !== "POST" ? undefined
         : typeof request.body === "object" && request.body !== null && !Array.isArray(request.body) ? (request.body as Record<string, unknown>) : {};
-      const reply = await api.call({ method: request.method, path: request.path, token: request.token, body });
+      const reply = await api.call({ method: request.method, path: request.path, token: request.token, body, bin: request.bin });
       safeSend({
         t: "res",
         id,

@@ -199,13 +199,15 @@ export function parseTranscript(jsonl: string, full = false): SessionWorkflow {
   // A working agent fires dozens of tool calls between narration lines;
   // one timeline row each would drown the story. Consecutive calls pool
   // here and flush as a single "action" row when narration resumes.
-  let actions: { at: number; labels: string[] } | null = null;
+  let actions: { at: number; labels: string[]; paths: string[] } | null = null;
   const flushActions = (): void => {
     if (!actions) return;
     const unique = [...new Set(actions.labels)];
     const shown = unique.slice(0, 4).join("  ·  ");
     const extra = unique.length > 4 ? `  +${unique.length - 4}` : "";
-    events.push({ kind: "action", at: actions.at, text: shown + extra, labels: actions.labels });
+    // Whole paths for the PC's worktree checks; `full` is the phone's read, which gets base names only.
+    const paths = full ? [] : [...new Set(actions.paths)];
+    events.push({ kind: "action", at: actions.at, text: shown + extra, labels: actions.labels, ...(paths.length ? { paths } : {}) });
     actions = null;
   };
 
@@ -320,10 +322,12 @@ export function parseTranscript(jsonl: string, full = false): SessionWorkflow {
           events.push(item);
           if (typeof block.id === "string") pending.set(block.id, item);
         } else if (block?.type === "tool_use" && typeof block.name === "string") {
-          const label = actionLabel(block.name, (block.input ?? {}) as Record<string, unknown>);
+          const input = (block.input ?? {}) as Record<string, unknown>;
+          const label = actionLabel(block.name, input);
           if (label !== undefined) {
-            actions ??= { at, labels: [] };
+            actions ??= { at, labels: [], paths: [] };
             actions.labels.push(label);
+            if (/^(Edit|Write|NotebookEdit)$/.test(block.name) && typeof input["file_path"] === "string") actions.paths.push(input["file_path"]);
           } else unlisted.push(block.name);
         }
       }

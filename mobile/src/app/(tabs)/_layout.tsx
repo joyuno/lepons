@@ -65,7 +65,7 @@ export default function TabsLayout() {
     }
     waitedBefore.current = waiting;
   }, [waiting, live, pop]);
-  if (!c.demo && !(c.pairing && c.signedIn)) return <Redirect href="/" />;
+  if (!c.demo && !(c.pairing && c.signedIn)) return <Redirect href={c.pairing ? "/login" : "/"} />;
   const kind = c.status.kind;
   const connectionLamp = c.demo || kind === "connected" ? "live" : kind === "connecting" || kind === "waiting" || kind === "confirm" ? "connecting" : "failed";
   const connectionLabel = c.demo ? t.connected : t[kind === "confirm" ? "connecting" : kind];

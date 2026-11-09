@@ -2,7 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 
 import { hashPassword, PhoneAuth } from "./auth.ts";
-import { auditLine, createPhoneApi, inputFor, MAX_INPUT, sessionId, usageSummary, type ApiReply, type PhoneApi, type PhoneDeps } from "./server.ts";
+import { auditLine, createPhoneApi, inputFor, MAX_INPUT, MAX_UPLOAD, sessionId, uploadName, usageSummary, type ApiReply, type PhoneApi, type PhoneDeps } from "./server.ts";
 import { base32Encode, stepOf, totpAt } from "./totp.ts";
 import type { PhoneSession } from "../shared/ipc.ts";
 
@@ -26,6 +26,7 @@ const deps: PhoneDeps = {
   screen: () => ({ data: "\x1b[31mhello\x1b[0m", cols: 80, rows: 24 }),
   pcs: () => [{ nodeId: "local", label: "이 PC", state: "live" }, { nodeId: "node-7f3a", label: "10.0.0.5", state: "failed" }],
   reconnectPc: (nodeId) => void reconnects.push(nodeId),
+  openTerminal: (nodeId, repoId) => void terminalsOpened.push([nodeId, repoId]),
   accounts: async () => [
     { pc: "이 PC", agents: [{ name: "Claude Code", version: "2.1.0", signedIn: true }, { name: "Codex", version: "0.9", signedIn: false }, { name: "Grok" }] },
     // What a CLI might also say: none of it may reach the phone.
@@ -46,6 +47,10 @@ const deps: PhoneDeps = {
   commands: async () => [{ name: "/compact", description: "Free up context" }],
   files: async () => ["src/auth.ts"],
   directory: async (_key, relative) => relative === "missing" ? undefined : [{ name: "src", directory: true }],
+  upload: async (key, name, bytes) => {
+    uploads.push([key, name, bytes.length]);
+    return key === "local::C:/work/api" ? undefined : `/tmp/${name}`;
+  },
   signedIn: () => {},
   pushToken: (token, done) => {
     pushTokens.push(token);
@@ -53,7 +58,9 @@ const deps: PhoneDeps = {
   },
 };
 const writes: Array<[string, string[]]> = [];
+const uploads: Array<[string, string, number]> = [];
 const reconnects: string[] = [];
+const terminalsOpened: Array<[string, string]> = [];
 const pushDone: boolean[] = [];
 const pushTokens: Array<string | undefined> = [];
 
@@ -210,7 +217,7 @@ test("a session whose AI has gone is told apart, and its shell takes no input", 
   }
 });
 
-test("input reaches agent sessions only, length-capped", async () => {
+test("input reaches agent sessions and plain terminals, length-capped", async () => {
   const token = await signIn();
   writes.length = 0;
   const web = sessionId("local::C:/work/web");
@@ -219,9 +226,7 @@ test("input reaches agent sessions only, length-capped", async () => {
   assert.deepEqual(writes, [["local::C:/work/web", ["1"]], ["local::C:/work/web", ["계속해", "\r"]]]);
 
   writes.length = 0;
-  const shell = sessionId("local::C:/work/web::terminal");
-  assert.equal((await post("/api/input", { s: shell, key: "esc" }, token)).status, 403);
-  assert.equal((await post("/api/input", { s: shell, text: "rm -rf /" }, token)).status, 403);
+  assert.equal((await post("/api/input", { s: web, text: "!rm -rf /" }, token)).status, 403);
   assert.equal((await post("/api/input", { s: web, text: "x".repeat(MAX_INPUT + 1) }, token)).status, 413);
   assert.equal((await post("/api/input", { s: web, key: "\x1b[2J" }, token)).status, 400);
   assert.equal((await post("/api/input", { s: "nope", key: "1" }, token)).status, 404);
@@ -229,6 +234,69 @@ test("input reaches agent sessions only, length-capped", async () => {
 
   assert.equal((await post("/api/input", { s: sessionId("local::C:/work/api"), key: "1" }, token)).status, 409, "closed on the PC");
   assert.equal((await post("/api/input", { s: web, key: "1" })).status, 401, "no sign-in");
+});
+
+test("a plain terminal takes a shell line: exit and ! too, no control characters, length-capped", async () => {
+  assert.deepEqual(inputFor({ text: "exit" }, true), ["exit", "\r"]);
+  assert.deepEqual(inputFor({ text: "!ls" }, true), ["!ls", "\r"]);
+  assert.deepEqual(inputFor({ text: "ls\x03 -la\n" }, true), ["ls -la", "\r"]);
+  assert.equal(inputFor({ text: "x".repeat(MAX_INPUT + 1) }, true), "long");
+  assert.equal(inputFor({ text: "\x03" }, true), "bad");
+  const token = await signIn();
+  writes.length = 0;
+  const shell = sessionId("local::C:/work/web::terminal");
+  assert.equal((await post("/api/input", { s: shell, text: "git status" }, token)).status, 200);
+  assert.equal((await post("/api/input", { s: shell, text: "exit" }, token)).status, 200);
+  assert.equal((await post("/api/input", { s: shell, text: "x".repeat(MAX_INPUT + 1) }, token)).status, 413);
+  assert.deepEqual(writes, [["local::C:/work/web::terminal", ["git status", "\r"]], ["local::C:/work/web::terminal", ["exit", "\r"]]]);
+});
+
+test("the terminal tab finds the project's terminal, or asks the PC to open it", async () => {
+  const token = await signIn();
+  terminalsOpened.length = 0;
+  const open = (s: string) => post("/api/terminal", { s }, token);
+  // Open already: its id, nothing opened.
+  assert.deepEqual((await open(sessionId("local::C:/work/web"))).body, { id: sessionId("local::C:/work/web::terminal") });
+  assert.deepEqual((await open(sessionId("local::C:/work/web::terminal"))).body, { id: sessionId("local::C:/work/web::terminal") });
+  assert.deepEqual(terminalsOpened, []);
+  // Not open: the PC is asked, and the id it will have is answered.
+  assert.deepEqual((await open(sessionId("local::C:/work/api"))).body, { id: sessionId("local::C:/work/api::terminal") });
+  assert.deepEqual(terminalsOpened, [["local", "C:/work/api"]]);
+  assert.equal((await open("nope")).status, 404);
+  assert.equal((await post("/api/terminal", { s: sessionId("local::C:/work/api") })).status, 401);
+  assert.equal(terminalsOpened.length, 1);
+});
+
+test("an upload is saved under a new ASCII name for the session's AI, its path answered", async () => {
+  const token = await signIn();
+  uploads.length = 0;
+  const web = sessionId("local::C:/work/web");
+  const send = (path: string, bin: Buffer | undefined) => api.call({ method: "POST", path, token, bin });
+  const saved = await send(`/api/upload?s=${web}&n=${encodeURIComponent("IMG 0042.HEIC")}`, Buffer.from("jpeg"));
+  assert.equal(saved.status, 200);
+  const [key, name, size] = uploads[0]!;
+  assert.deepEqual([key, size], ["local::C:/work/web", 4]);
+  assert.match(name, /^lepons-phone-[0-9a-f]{8}-IMG-0042\.heic$/);
+  assert.deepEqual(saved.body, { path: `/tmp/${name}` });
+  assert.equal((await send(`/api/upload?s=${web}&n=a.png`, Buffer.alloc(0))).status, 400);
+  assert.equal((await send(`/api/upload?s=${web}&n=a.png`, undefined)).status, 400);
+  assert.equal((await send(`/api/upload?s=${web}&n=a.png`, Buffer.alloc(MAX_UPLOAD + 1))).status, 413);
+  assert.equal((await send(`/api/upload?s=nope&n=a.png`, Buffer.from("x"))).status, 404);
+  assert.equal((await api.call({ method: "POST", path: `/api/upload?s=${web}&n=a.png`, bin: Buffer.from("x") })).status, 401);
+  // The PC could not write it.
+  assert.equal((await send(`/api/upload?s=${sessionId("local::C:/work/api")}&n=a.png`, Buffer.from("x"))).status, 502);
+  assert.equal(uploads.length, 2);
+});
+
+test("an upload's name keeps only safe letters and a short extension", () => {
+  assert.equal(uploadName("사진.JPG", "1a2b3c4d"), "lepons-phone-1a2b3c4d.jpg");
+  assert.equal(uploadName("../../etc/passwd", "1a2b3c4d"), "lepons-phone-1a2b3c4d-passwd");
+  assert.equal(uploadName("report final.pdf", "1a2b3c4d"), "lepons-phone-1a2b3c4d-report-final.pdf");
+  assert.equal(uploadName(String.raw`C:\Users\me\shot.png`, "1a2b3c4d"), "lepons-phone-1a2b3c4d-shot.png");
+  assert.equal(uploadName(".bashrc", "1a2b3c4d"), "lepons-phone-1a2b3c4d-bashrc");
+  assert.equal(uploadName("a.tar.gz", "1a2b3c4d"), "lepons-phone-1a2b3c4d-a-tar.gz");
+  assert.equal(uploadName("x.verylongext", "1a2b3c4d"), "lepons-phone-1a2b3c4d-x");
+  assert.equal(uploadName("", "1a2b3c4d"), "lepons-phone-1a2b3c4d");
 });
 
 test("the workflow and listed .md files are readable, nothing else", async () => {
@@ -391,6 +459,11 @@ test("/api/accounts: PC label, agent name and sign-in state, nothing else", asyn
   });
   const text = JSON.stringify(reply.body);
   for (const secret of ["example.com", "/home", "2.1.0", "version"]) assert.equal(text.includes(secret), false, secret);
+});
+
+test("a usage window past its reset reaches the phone as unused, as the desktop shows it", () => {
+  const reading = { claude: { fiveHour: { usedPercent: 87, resetsAt: 1_000 }, week: { usedPercent: 40, resetsAt: 3_000 } } };
+  assert.deepEqual(usageSummary(reading, { claude: "Claude Code" }, 2_000_000), [{ name: "Claude Code", fiveHour: { percent: 0 }, week: { percent: 40, resetsAt: 3_000 } }]);
 });
 
 test("usage rides in the state, re-sent only when it changes", async () => {

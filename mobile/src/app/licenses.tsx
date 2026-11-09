@@ -1,4 +1,4 @@
-import { Linking, Text } from "react-native";
+import { Linking, Platform, Text } from "react-native";
 
 import { t } from "@/i18n";
 import { Group, GroupRow, Screen, useTheme } from "@/ui";
@@ -7,7 +7,8 @@ import { Group, GroupRow, Screen, useTheme } from "@/ui";
 // SF Symbols are drawn by iOS itself and are not shipped in the app.
 const items: Array<[name: string, license: string, url: string]> = [
   ["Pretendard © 2021 Kil Hyung-jin", "SIL Open Font License 1.1", "https://github.com/orioncactus/pretendard/blob/main/LICENSE"],
-  ["Material Symbols © Google (Android icons)", "Apache License 2.0", "https://github.com/google/material-design-icons/blob/master/LICENSE"],
+  // The icons shipped on the other platform only; iOS draws SF Symbols itself.
+  ...(Platform.OS === "android" ? [["Material Symbols © Google", "Apache License 2.0", "https://github.com/google/material-design-icons/blob/master/LICENSE"] as [string, string, string]] : []),
   ["React Native © Meta Platforms", "MIT", "https://github.com/facebook/react-native/blob/main/LICENSE"],
   ["React © Meta Platforms", "MIT", "https://github.com/facebook/react/blob/main/LICENSE"],
   ["Expo © 650 Industries", "MIT", "https://github.com/expo/expo/blob/main/LICENSE"],

@@ -1,11 +1,14 @@
 import "@/phone/xterm-shim";
 import { Terminal } from "@xterm/headless";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { setStringAsync } from "expo-clipboard";
 import { SymbolView } from "expo-symbols";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
-import { ActivityIndicator, Alert, AppState, FlatList, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance } from "react-native";
+import { createContext, Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement, type ReactNode } from "react";
+import { ActivityIndicator, Alert, AppState, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, useColorScheme, View, type ScrollViewInstance, type TextInputInstance, type ViewInstance } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { pick, upload, type Picked } from "@/attach";
+import { shownUploads, splitUploads, uploadedName, withUploads } from "@/phone/attachments";
 import type { Connection } from "@/connection";
 import { useConnection, useTermSize } from "@/connection";
 import { fmt, t } from "@/i18n";
@@ -13,7 +16,8 @@ import { Appear, Crossfade, ms, Press, TypingDots, useReducedMotion } from "@/mo
 import { chatFrom, type ChatItem } from "@/phone/chat";
 import { firstDrawn, sameRow, stillAtBottom, type Flow } from "@/phone/chat-rows";
 import { LinkNotice } from "@/link-notice";
-import { fetchFile, openInViewer } from "@/open-file";
+import { fetchFile, openInViewer, openPrinted } from "@/open-file";
+import { findPaths } from "../../../../cockpit/src/shared/term-paths.ts";
 import { composerAction, menuQuestion, menuRows } from "@/phone/composer";
 import { documentKind } from "@/phone/document-kind";
 import { inputFor, MAX_INPUT, reflow } from "@/phone/copied";
@@ -27,13 +31,24 @@ import { toolDoing, toolLabels } from "@/phone/tool-labels";
 import { replyBlocks, replyRuns, typedEvents } from "@/phone/reply";
 import { menuFrom, type MenuOption } from "@/phone/menu";
 import { statusFrom } from "@/phone/status";
+import { termLines, type TermRun } from "@/phone/term-lines";
 import { playSend, prepareSend } from "@/sound";
 import { chats, drafts, sends } from "@/store";
-import { lampState, type CommandSuggestion, type PhoneSessionView } from "@/phone/types";
+import { folderName, lampState, type CommandSuggestion, type PhoneSessionView } from "@/phone/types";
 import { commandsOf, screenOf, withChange, workflowChangeOf } from "@/phone/validate";
 import { DemoBadge, font, Group, groupRow, Lamp, mono, monoSizes, radius, Segments, SelectableText, size, Skeleton, space, useTheme } from "@/ui";
 
-type Sub = "chat" | "docs";
+type Sub = "chat" | "term" | "docs";
+/** A photo or file for the next message: on its way to the PC from the moment it is picked; `path` once it is there. */
+type Attached = Picked & { key: number; path?: string; failed?: string };
+/**
+ * Each session's chips, kept while its screen is away (another tab, another
+ * session), as its draft is: an upload that lands meanwhile is written here.
+ */
+const attachedBySession = new Map<string, Attached[]>();
+let attachedKey = 0;
+/** Opens a file path the agent printed (open-file.ts openPrinted); the chat's, so a tap on one goes there. */
+const PathOpen = createContext<((path: string) => void) | undefined>(undefined);
 const q = encodeURIComponent;
 const noLabels: string[] = [];
 /** How strong a message is until the transcript shows it. */
@@ -74,6 +89,12 @@ export default function SessionScreen() {
   const [question, setQuestion] = useState<string | undefined>();
   const [statusLine, setStatusLine] = useState("");
   const [limit, setLimit] = useState<string | undefined>();
+  const folder = session?.folder;
+  const openPath = useCallback((path: string) => {
+    void openPrinted(c.request, id, folder, path).catch(() => false).then((opened) => {
+      if (!opened) Alert.alert(t.pathMissing);
+    });
+  }, [id, folder]);
 
   const poll = useRef<{ now(): Promise<void>; poke(): void; flow(): void } | undefined>(undefined);
   /** The last answer as text: an unchanged chat keeps its object, so nothing redraws. */
@@ -92,6 +113,9 @@ export default function SessionScreen() {
     return () => listener.remove();
   }, []);
   const inView = focused && sub === "chat";
+  /** Off while the terminal tab has the stream: what it carries then is the shell's, not this agent's. */
+  const chatStream = useRef(true);
+  chatStream.current = sub === "chat";
   const polling = inView && foreground && c.status.kind === "connected";
   const mood = session?.mood;
 
@@ -180,13 +204,13 @@ export default function SessionScreen() {
     };
     const offScreen = c.on("screen", (data) => {
       const screen = screenOf(data);
-      if (!screen) return;
+      if (!screen || !chatStream.current) return;
       term?.dispose();
       term = new Terminal({ cols: screen.cols, rows: screen.rows, scrollback: 500, allowProposedApi: true });
       term.write(screen.data, schedule);
     });
     const offOutput = c.on("output", (data) => {
-      if (typeof data !== "string" || !term) return;
+      if (typeof data !== "string" || !term || !chatStream.current) return;
       term.write(data, schedule);
       // Once more when the output settles.
       clearTimeout(flowTimer);
@@ -233,7 +257,7 @@ export default function SessionScreen() {
           </Pressable>
           <View style={{ flex: 1, paddingHorizontal: space.xs }}>
             <View style={[s.row, { gap: space.sm }]}>
-              <Text style={{ ...font.bold, color: p.text, fontSize: size.headline, flexShrink: 1 }} numberOfLines={1}>{session?.folder ?? ""}</Text>
+              <Text style={{ ...font.bold, color: p.text, fontSize: size.headline, flexShrink: 1 }} numberOfLines={1}>{session ? folderName(session) : ""}</Text>
               {c.demo ? <DemoBadge label={t.demo} /> : null}
             </View>
             {session ? (
@@ -245,13 +269,14 @@ export default function SessionScreen() {
           </View>
         </View>
         <View style={{ marginHorizontal: space.md }}>
-          <Segments role="tab" items={[["chat", session?.agentName || t.chat], ["docs", t.docs]]} value={sub} onChange={setSub} />
+          <Segments role="tab" items={[["chat", session?.agentName || t.chat], ["term", t.terminal], ["docs", t.docs]]} value={sub} onChange={setSub} />
         </View>
       </View>
       <View style={{ paddingHorizontal: space.lg }}><LinkNotice /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         {c.phone && !session ? <Text style={s.empty}>{t.sessionGone}</Text> : null}
-        {sub === "chat" ? <ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} /> : null}
+        {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} /></PathOpen.Provider> : null}
+        {sub === "term" ? <TerminalView key={id} id={id} /> : null}
         {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} list={list} request={c.request} /> : null}
         {sub === "chat" && session ? <Composer key={`composer-${id}`} id={id} session={session} menu={menu} question={question} list={list} after={flow?.events.at(-1)?.at ?? 0} onSent={askSoon} /> : null}
       </KeyboardAvoidingView>
@@ -435,14 +460,14 @@ function ChatBubble({ item, labels, fresh }: { item: ChatItem; labels: string[];
   }, []);
   // Parsed again only when its text changed.
   const reply = item.kind === "agent" ? item.text : "";
-  const blocks = useMemo(() => replyBlocks(reply), [reply]);
+  const groups = useMemo(() => flowGroups(replyBlocks(reply)), [reply]);
   if (item.kind === "user") {
     // A long paste folds to 10 lines so the answer under it stays in reach; a tap unfolds it, and unfolded it can be selected.
     const long = item.text.length > 500 || item.text.split("\n").length > 10;
     const words = { ...font.regular, color: p.onInk, fontSize: size.callout, lineHeight: 22 };
     return (
       <View style={{ alignSelf: "flex-end", backgroundColor: p.ink, borderRadius: radius.lg, borderBottomRightRadius: radius.xs, borderCurve: "continuous", paddingHorizontal: space.md, paddingVertical: space.sm, maxWidth: "80%", gap: space.xs }}>
-        {long && !open ? <Text style={words} numberOfLines={10} onPress={() => setOpen(true)}>{item.text}</Text> : <SelectableText style={words}>{item.text}</SelectableText>}
+        {long && !open ? <Text style={words} numberOfLines={10} onPress={() => setOpen(true)}>{shownUploads(item.text)}</Text> : <SelectableText style={words}>{shownUploads(item.text)}</SelectableText>}
         {long ? <Text style={{ ...font.semibold, color: p.onInk, opacity: 0.7, fontSize: size.caption }} onPress={() => setOpen(!open)}>{open ? t.showLess : t.showMore}</Text> : null}
       </View>
     );
@@ -456,12 +481,96 @@ function ChatBubble({ item, labels, fresh }: { item: ChatItem; labels: string[];
   return (
     <View style={{ backgroundColor: p.card, borderRadius: radius.lg, borderBottomLeftRadius: radius.xs, borderCurve: "continuous", paddingHorizontal: space.md, paddingVertical: space.sm, gap: space.sm }}>
       {/* Block by block, never letter by letter. */}
-      {blocks.map((block, i) => <Appear key={i} skip={!fresh && !drawn.current} delay={Math.min(i * BLOCK_DELAY, BLOCK_DELAY_MAX)}><ReplyBlock block={block} body={body} /></Appear>)}
+      {groups.map((group, i) => <Appear key={i} skip={!fresh && !drawn.current} delay={Math.min(i * BLOCK_DELAY, BLOCK_DELAY_MAX)}>{flows(group[0]!) ? <FlowText blocks={group} body={body} /> : <ReplyBlock block={group[0]!} body={body} />}</Appear>)}
     </View>
   );
 }
 
-function ReplyBlock({ block, body }: { block: ReturnType<typeof replyBlocks>[number]; body: object[] }) {
+type Block = ReturnType<typeof replyBlocks>[number];
+/** Words, not a box: what runs together in one selectable text. */
+const flows = (block: Block) => block.type !== "code" && block.type !== "table" && block.type !== "hr";
+/** Blocks in a row that flow, as one group; a code box, a table or a rule on its own. */
+function flowGroups(blocks: Block[]): Block[][] {
+  const groups: Block[][] = [];
+  for (const block of blocks) {
+    const last = groups.at(-1);
+    if (last && flows(block) && flows(last[0]!)) last.push(block);
+    else groups.push([block]);
+  }
+  return groups;
+}
+
+/**
+ * Paragraphs, headings, lists and quotes in one text, so a drag selects across
+ * them (a selection never leaves its own text view, SelectableText). A list
+ * item's wrapped lines start under its bullet, not past it; a quote's bar is a character.
+ */
+function FlowText({ blocks, body }: { blocks: Block[]; body: object[] }) {
+  const { c: p } = useSessionTheme();
+  return (
+    <SelectableText style={body}>
+      {blocks.map((block, i) => (
+        <Fragment key={i}>
+          {/* Between blocks a short empty line: about the gap the boxes had, not a whole line's. */}
+          {i > 0 ? <>{"\n"}<Text style={{ fontSize: 4, lineHeight: 8 }}>{"\n"}</Text></> : null}
+          {block.type === "list" ? block.items.map((text, j) => (
+            <Fragment key={j}>
+              {j > 0 ? "\n" : null}
+              <Text style={{ color: p.muted }}>{block.ordered ? `${j + 1}. ` : "•  "}</Text>
+              <Runs text={text} />
+            </Fragment>
+          ))
+          : block.type === "quote" ? <Text style={{ color: p.muted }}><Text style={{ color: p.line }}>{"▎ "}</Text><Runs text={block.text} /></Text>
+          : block.type === "h" ? <Text style={{ ...font.bold, fontSize: size.headline }}><Runs text={block.text} /></Text>
+          : block.type === "p" ? <Runs text={block.text} /> : null}
+        </Fragment>
+      ))}
+    </SelectableText>
+  );
+}
+
+/** Under an answer, at its left: copy all of it, or share it; on iOS, the files it names to open. */
+function AnswerActions({ text }: { text: string }) {
+  const { c: p, s } = useSessionTheme();
+  const open = useContext(PathOpen);
+  const paths = useMemo(() => (Platform.OS === "ios" && open ? [...new Set(findPaths(text).map((match) => match.path))].slice(0, 4) : []), [text, open]);
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // 32 points and 6 of slop all round: a 44-point target that looks small.
+  const button = ({ pressed }: { pressed: boolean }) => [{ width: 32, height: 32, borderRadius: 16, alignItems: "center", justifyContent: "center" } as const, pressed && { backgroundColor: p.raise }];
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs, marginLeft: space.xs }}>
+      <Press
+        accessibilityRole="button"
+        accessibilityLabel={copied ? t.copied : t.copy}
+        hitSlop={6}
+        onPress={() => {
+          void setStringAsync(text).then(() => {
+            setCopied(true);
+            clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1500);
+          }, () => undefined);
+        }}
+        style={button}
+      >
+        <SymbolView name={copied ? { ios: "checkmark", android: "check" } : { ios: "doc.on.doc", android: "content_copy" }} tintColor={p.muted} size={16} />
+      </Press>
+      <Press accessibilityRole="button" accessibilityLabel={t.share} hitSlop={6} onPress={() => void Share.share({ message: text }).catch(() => undefined)} style={button}>
+        <SymbolView name={{ ios: "square.and.arrow.up", android: "share" }} tintColor={p.muted} size={16} />
+      </Press>
+      {paths.map((path) => (
+        <Press key={path} accessibilityRole="button" accessibilityLabel={fmt(t.openPath, { name: path })} hitSlop={6} onPress={() => open!(path)}
+          style={({ pressed }) => [{ height: 32, maxWidth: 160, flexDirection: "row", alignItems: "center", gap: space.xxs, paddingHorizontal: space.sm, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: p.line }, pressed && { backgroundColor: p.raise }]}>
+          <SymbolView name={{ ios: "doc", android: "description" }} tintColor={p.muted} size={13} />
+          <Text style={[s.dim, { fontSize: size.caption, flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="head">{path.slice(path.lastIndexOf("/") + 1)}</Text>
+        </Press>
+      ))}
+    </View>
+  );
+}
+
+function ReplyBlock({ block, body }: { block: Block; body: object[] }) {
   const { c: p, s } = useSessionTheme();
   if (block.type === "code") {
     // A plain box that wraps: a horizontal ScrollView here measured one
@@ -505,6 +614,7 @@ const ChatRow = memo(function ChatRow({ item, labels, fresh }: { item: ChatItem;
   return (
     <Appear skip={!fresh} rise={user || item.kind === "agent" ? 0 : undefined} from={user ? PENDING : undefined} style={{ gap: space.xs }}>
       <ChatBubble item={item} labels={labels} fresh={fresh} />
+      {item.kind === "agent" ? <AnswerActions text={item.text} /> : null}
       {item.cancelled ? <Text style={[s.dim, { fontSize: size.caption }]}>{t.chatCancelled}</Text> : null}
     </Appear>
   );
@@ -513,13 +623,37 @@ const ChatRow = memo(function ChatRow({ item, labels, fresh }: { item: ChatItem;
 /** `code` and **bold** as styled runs, everything else as text: never markup. */
 function Runs({ text }: { text: string }) {
   const { c: p } = useSessionTheme();
+  // A file path opens on a tap, on Android: iOS's selectable text takes no nested press, so there the paths are buttons under the answer (AnswerActions).
+  const tap = useContext(PathOpen);
+  const open = Platform.OS === "android" ? tap : undefined;
+  const pathStyle = { textDecorationLine: "underline", textDecorationStyle: "dotted", color: p.link } as const;
+  const withPaths = (words: string, key: number) => {
+    const found = open ? findPaths(words) : [];
+    if (found.length === 0) return words;
+    let at = 0;
+    const pieces: ReactNode[] = [];
+    for (const match of found) {
+      pieces.push(words.slice(at, match.index), <Text key={`${key}-${match.index}`} style={pathStyle} onPress={() => open!(match.path)}>{match.text}</Text>);
+      at = match.index + match.text.length;
+    }
+    pieces.push(words.slice(at));
+    return <Fragment key={key}>{pieces}</Fragment>;
+  };
   return replyRuns(text).map((run, i) =>
-    run.kind === "text" ? run.text
-    : run.kind === "code" ? <Text key={i} style={{ fontFamily: mono, fontSize: size.footnote, backgroundColor: p.raise }}>{run.text}</Text>
+    run.kind === "text" ? withPaths(run.text, i)
+    : run.kind === "code" ? <CodeRun key={i} text={run.text} open={open} style={pathStyle} />
     // A web link opens in the browser. In iOS's selectable text a nested press never fires; the text view's own link detection opens it there (SelectableText).
     // Words that are not the address are followed by the host they open, dimmed: "문서 (evil.example)".
     : run.kind === "link" ? <Text key={i} style={{ textDecorationLine: "underline", color: run.url ? p.link : undefined }} onPress={run.url ? () => void Linking.openURL(run.url!) : undefined}>{run.text}{run.host ? <Text style={{ color: p.muted, textDecorationLine: "none" }}> ({run.host})</Text> : null}</Text>
     : <Text key={i} style={font.bold}>{run.text}</Text>);
+}
+
+/** `code`: a tap opens it when the whole of it is a file path (`src/a.ts:12`). */
+function CodeRun({ text, open, style }: { text: string; open: ((path: string) => void) | undefined; style: object }) {
+  const { c: p } = useSessionTheme();
+  const [found] = open ? findPaths(text) : [];
+  const path = found?.text === text ? found.path : undefined;
+  return <Text style={[{ fontFamily: mono, fontSize: size.footnote, backgroundColor: p.raise }, path !== undefined && style]} onPress={path !== undefined ? () => open!(path) : undefined}>{text}</Text>;
 }
 
 function Inline({ text, style }: { text: string; style: object }) {
@@ -548,6 +682,157 @@ function Table({ head, rows }: { head: string[]; rows: string[][] }) {
         ))}
       </View>
     </ScrollView>
+  );
+}
+
+// --- the project's terminal -----------------------------------------------------
+
+/** ANSI's 16 colours: GitHub's, deeper on the light page, softer on the dark one. */
+const ansiLight = ["#24292f", "#cf222e", "#116329", "#9a6700", "#0969da", "#8250df", "#1b7c83", "#6e7781", "#57606a", "#a40e26", "#1a7f37", "#7d4e00", "#218bff", "#a475f9", "#3192aa", "#8c959f"];
+const ansiDark = ["#484f58", "#ff7b72", "#3fb950", "#d29922", "#58a6ff", "#bc8cff", "#39c5cf", "#b1bac4", "#6e7681", "#ffa198", "#56d364", "#e3b341", "#79c0ff", "#d2a8ff", "#56d4dd", "#ffffff"];
+
+/**
+ * The project's plain terminal (the PC's "<node>::<repo>::terminal"), opened on the PC if
+ * it is not: its screen replayed as monospace lines, and one line that types into it. Apart
+ * from the chat: no keys, no menu, nothing of the agent's.
+ */
+function TerminalView({ id }: { id: string }) {
+  const c = useConnection();
+  const { c: p, s } = useSessionTheme();
+  const dark = useColorScheme() === "dark";
+  /** undefined while asking, null when the PC could not give one. */
+  const [termId, setTermId] = useState<string | null>();
+  const ready = termId ? c.phone?.sessions.some((one) => one.id === termId) === true : false;
+  const [lines, setLines] = useState<TermRun[][]>([]);
+  const [text, setText] = useState("");
+  const [note, setNote] = useState("");
+  const scroll = useRef<ScrollViewInstance>(null);
+  const atBottom = useRef(true);
+  const colors = useRef({ ansi: ansiLight, fg: p.text, bg: p.card });
+  colors.current = { ansi: dark ? ansiDark : ansiLight, fg: p.text, bg: p.card };
+
+  useEffect(() => {
+    let live = true;
+    c.request("POST", "/api/terminal", { body: { s: id } })
+      .then((reply) => {
+        const got = typeof reply.body === "object" && reply.body !== null ? (reply.body as { id?: unknown }).id : undefined;
+        if (live) setTermId(reply.status === 200 && typeof got === "string" ? got : null);
+      })
+      .catch(() => {
+        if (live) setTermId(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [id]);
+
+  // Asked for but not listed in 15 s (the PC could not open it, say its PC is down): said so, not "opening" for ever.
+  useEffect(() => {
+    if (!termId || ready) return;
+    const timer = setTimeout(() => setTermId(null), 15000);
+    return () => clearTimeout(timer);
+  }, [termId, ready]);
+
+  // Once the PC lists it: the link's one stream carries this terminal while the tab is open.
+  useEffect(() => {
+    if (!termId || !ready) return;
+    let term: Terminal | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const paint = () => {
+      timer = undefined;
+      if (term) setLines(termLines(term, colors.current));
+    };
+    const schedule = () => {
+      timer ??= setTimeout(paint, 150);
+    };
+    const offScreen = c.on("screen", (data) => {
+      const screen = screenOf(data);
+      if (!screen) return;
+      term?.dispose();
+      term = new Terminal({ cols: screen.cols, rows: screen.rows, scrollback: 500, allowProposedApi: true });
+      term.write(screen.data, schedule);
+    });
+    const offOutput = c.on("output", (data) => {
+      if (typeof data === "string" && term) term.write(data, schedule);
+    });
+    c.watch(termId);
+    return () => {
+      offScreen();
+      offOutput();
+      clearTimeout(timer);
+      term?.dispose();
+      c.unwatch(termId);
+    };
+  }, [termId, ready]);
+
+  const submit = async () => {
+    if (!termId || !ready) return;
+    const line = text;
+    setText("");
+    setNote("");
+    const back = (why: string) => {
+      setNote(why);
+      setText((now) => now || line);
+    };
+    try {
+      // Empty is a bare Enter.
+      const reply = await c.request("POST", "/api/input", { body: line.trim() === "" ? { s: termId, key: "enter" } : { s: termId, text: line } });
+      if (reply.status !== 200) back(reply.status === 413 ? t.errorLong : reply.status === 409 ? t.closed : t.errorInput);
+    } catch {
+      back(t.errorInput);
+    }
+  };
+
+  const follow = () => {
+    if (atBottom.current) scroll.current?.scrollToEnd({ animated: false });
+  };
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView
+        ref={scroll}
+        style={{ flex: 1, backgroundColor: p.card }}
+        contentContainerStyle={{ padding: space.md }}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={100}
+        onScroll={({ nativeEvent: e }) => {
+          atBottom.current = e.contentOffset.y + e.layoutMeasurement.height >= e.contentSize.height - 24;
+        }}
+        onContentSizeChange={follow}
+        onLayout={follow}
+      >
+        {termId === null ? <Text style={s.empty}>{t.terminalFailed}</Text>
+        : !ready ? <Text style={s.empty}>{t.terminalOpening}</Text>
+        : (
+          // One text for every line: a few hundred rows, drawn again with each burst of output.
+          <Text style={s.mono} selectable>
+            {lines.map((runs, i) => (
+              <Fragment key={i}>
+                {i > 0 ? "\n" : ""}
+                {runs.map((run, j) => (run.color || run.background || run.bold ? <Text key={j} style={{ color: run.color, backgroundColor: run.background, fontWeight: run.bold ? "700" : undefined }}>{run.text}</Text> : run.text))}
+              </Fragment>
+            ))}
+          </Text>
+        )}
+      </ScrollView>
+      <View style={{ borderTopWidth: 1, borderTopColor: p.line, backgroundColor: p.bg, paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.xs }}>
+        <TextInput
+          style={[s.input, { minHeight: 44, borderRadius: radius.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, fontFamily: mono, fontSize: size.callout }]}
+          value={text}
+          onChangeText={setText}
+          onSubmitEditing={() => void submit()}
+          submitBehavior="submit"
+          returnKeyType="send"
+          editable={ready}
+          placeholder={t.terminalHint}
+          placeholderTextColor={p.muted}
+          maxLength={MAX_INPUT}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+        />
+        {note ? <Text style={[s.dim, { fontSize: size.caption, color: p.stop }]} accessibilityLiveRegion="polite">{note}</Text> : null}
+      </View>
+    </View>
   );
 }
 
@@ -675,6 +960,10 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
   const [text, setText] = useState(() => sends.box(id));
   /** A key on its way (a menu number, Enter); text on its way is `flying`, so a box that replaced this one knows too. */
   const [sending, setSending] = useState(false);
+  // The PC took a message: the arrow is a check for a moment. The button stays live meanwhile.
+  const [took, setTook] = useState(false);
+  const tookTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(tookTimer.current), []);
   const flying = useSyncExternalStore(sends.subscribe, () => sends.flying(id));
   const [placeholder, setPlaceholder] = useState(t.typeHere);
   /** The menu's "type something" row is open: what goes to the PC now is the answer, digits too. */
@@ -683,6 +972,19 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
     if (!menu.some((option) => option.freeText)) setTypingAnswer(false);
   }, [menu]);
   const [note, setNote] = useState<{ text: string; bad: boolean }>({ text: "", bad: false });
+  const [files, setShownFiles] = useState<Attached[]>(() => attachedBySession.get(id) ?? []);
+  /** Changes the session's chips in the keeping place, then on screen if the box is still there. */
+  const setFiles = (change: (now: Attached[]) => Attached[]) => {
+    const next = change(attachedBySession.get(id) ?? []);
+    attachedBySession.set(id, next);
+    setShownFiles(next);
+  };
+  /** The sheet the clip's menu is laid on: its own height, which may not be the window's. */
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const uploading = files.some((file) => !file.path && !file.failed);
+  /** Where the clip is on screen, while its menu is open. */
+  const [picker, setPicker] = useState<{ x: number; y: number } | undefined>();
+  const clipBox = useRef<ViewInstance>(null);
   const [rows, setRows] = useState<Array<{ insert: string; label: string; detail?: string }>>([]);
   const input = useRef<TextInputInstance>(null);
   /** Fetched once per session view, then filtered here as the operator types. */
@@ -719,7 +1021,10 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
   );
   useEffect(() => sends.typed(id, text), [id, text]);
   useEffect(() => sends.onReturned(id, (box, why) => {
-    setText(box);
+    // The files it carried go back to chips: the box shows words, never the PC's temp paths.
+    const { paths, words } = splitUploads(box);
+    if (paths.length > 0) setFiles((now) => [...paths.map((path) => ({ key: ++attachedKey, uri: "", image: false, name: uploadedName(path), path })), ...now]);
+    setText(words);
     setNote({ text: why, bad: true });
   }), [id]);
   useEffect(prepareSend, []);
@@ -788,8 +1093,13 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
   };
 
   const submit = async () => {
-    if (sending) return;
-    const draft = text;
+    // A file still on its way holds the send (the button says so); one that did not get there must be taken off first.
+    if (sending || uploading) return;
+    if (files.some((file) => file.failed)) {
+      setNote({ text: t.attachFailed, bad: true });
+      return;
+    }
+    const draft = withUploads(text, files.map((file) => file.path!));
     if (draft.trim() === "") {
       // A press just after a send is not an Enter for the agent.
       if (flying) return;
@@ -806,6 +1116,7 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
     // Seen and heard at once; the PC's answer comes later, and a no brings the text back (outbox.ts).
     sends.begin(id, draft, after);
     setText("");
+    setFiles(() => []);
     setPlaceholder(t.typeHere);
     setNote({ text: "", bad: false });
     playSend();
@@ -815,13 +1126,56 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
       else {
         sends.accepted(id);
         onSent();
+        setTook(true);
+        clearTimeout(tookTimer.current);
+        tookTimer.current = setTimeout(() => setTook(false), 900);
       }
     });
   };
 
   const stop = () => void send({ key: "esc" });
 
-  const action = composerAction(session.mood, text, flying, session.mainFree);
+  // The clip's menu: a photo taken now, one from the library, or any file. It goes to the PC at once, shows as a chip, and the message carries its path.
+  const attachOne = async (kind: "camera" | "photo" | "file") => {
+    setPicker(undefined);
+    let picked: Awaited<ReturnType<typeof pick>>;
+    try {
+      picked = await pick(kind);
+    } catch {
+      setNote({ text: t.attachFailed, bad: true });
+      return;
+    }
+    if (picked === "denied") {
+      Alert.alert(t.cameraDenied, undefined, [{ text: t.cancel, style: "cancel" }, { text: t.openSettings, onPress: () => void Linking.openSettings() }]);
+      return;
+    }
+    if (!picked) return;
+    const key = ++attachedKey;
+    const chosen = picked;
+    setFiles((now) => [...now, { ...chosen, key }]);
+    setNote({ text: "", bad: false });
+    const got = await upload(c.request, id, chosen).catch(() => "failed" as const);
+    setFiles((now) => now.map((file) => (file.key !== key ? file : got === "big" || got === "failed" ? { ...file, failed: got === "big" ? t.attachBig : t.attachFailed } : { ...file, path: got })));
+  };
+  // Measured with the keyboard down: the menu's sheet takes the focus and the keyboard goes, which would leave it floating where the clip was.
+  const openPicker = () => {
+    const measure = () => clipBox.current?.measureInWindow((x, y) => setPicker({ x, y }));
+    if (!keyboard) return measure();
+    let done = false;
+    const once = () => {
+      if (done) return;
+      done = true;
+      gone.remove();
+      measure();
+    };
+    const gone = Keyboard.addListener("keyboardDidHide", once);
+    // A keyboard already on its way down sends no second "hidden".
+    setTimeout(once, 600);
+    Keyboard.dismiss();
+  };
+
+  // Files alone are a message, not a stop.
+  const action = composerAction(session.mood, files.length > 0 ? `${text}@` : text, flying, session.mainFree);
   const options = menuRows(menu, typingAnswer);
   const face = { flex: 1, borderRadius: 22, alignItems: "center", justifyContent: "center" } as const;
   return (
@@ -879,7 +1233,57 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
           ))}
         </ScrollView>
       ) : null}
+      {files.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ gap: space.sm }}>
+          {files.map((file) => (
+            <View key={file.key} style={{ flexDirection: "row", alignItems: "center", gap: space.xs, height: 40, paddingLeft: space.xs, borderRadius: radius.md, borderCurve: "continuous", backgroundColor: p.raise }}>
+              {file.image && file.uri
+                ? <Image source={{ uri: file.uri }} style={{ width: 32, height: 32, borderRadius: radius.sm, opacity: file.path ? 1 : 0.5 }} />
+                : <SymbolView name={{ ios: "doc", android: "description" }} tintColor={p.muted} size={18} />}
+              <Text style={[s.text, { fontSize: size.footnote, maxWidth: 150, color: file.failed ? p.stop : p.text }]} numberOfLines={1} ellipsizeMode="middle">{file.failed ?? `@${file.name}`}</Text>
+              {!file.path && !file.failed ? <ActivityIndicator size="small" color={p.muted} accessibilityLabel={t.loading} /> : null}
+              <Pressable accessibilityRole="button" accessibilityLabel={fmt(t.attachRemove, { name: file.name })} hitSlop={6}
+                onPress={() => setFiles((now) => now.filter((one) => one.key !== file.key))}
+                style={{ width: 32, height: 40, alignItems: "center", justifyContent: "center" }}>
+                <SymbolView name={{ ios: "xmark", android: "close" }} tintColor={p.muted} size={12} />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
       <View style={[s.row, { gap: space.sm, alignItems: "flex-end" }]}>
+        {/* Narrow, so the text gets the room; the slop keeps a 44-point target. Pulled into the bar's own margin. */}
+        <View ref={clipBox} collapsable={false}>
+          <Press
+            accessibilityRole="button"
+            accessibilityLabel={t.attach}
+            accessibilityState={{ disabled: !answerable, expanded: picker !== undefined }}
+            disabled={!answerable}
+            onPress={openPicker}
+            hitSlop={{ left: 8, right: 4 }}
+            style={({ pressed }) => [s.circle, { width: 28, marginLeft: -space.xs, marginRight: -space.xs, borderWidth: 0, backgroundColor: "transparent", opacity: !answerable ? 0.5 : pressed ? 0.7 : 1 }]}
+          >
+            <SymbolView name={{ ios: "paperclip", android: "attach_file" }} tintColor={p.muted} size={22} />
+          </Press>
+        </View>
+        {/* The clip's menu, over the bar like a popover: a tap anywhere else puts it away. */}
+        <Modal visible={picker !== undefined} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={() => setPicker(undefined)}>
+          <Pressable style={{ flex: 1 }} onPress={() => setPicker(undefined)} onLayout={(event) => setSheetHeight(event.nativeEvent.layout.height)} accessibilityLabel={t.cancel}>
+            {picker && sheetHeight > 0 ? (
+              <Pressable onPress={() => {}} style={{ position: "absolute", left: Math.max(space.md, picker.x - space.sm), bottom: sheetHeight - picker.y + space.sm, minWidth: 210, padding: space.sm, gap: space.xxs, borderRadius: 24, borderCurve: "continuous", backgroundColor: p.card, borderWidth: StyleSheet.hairlineWidth, borderColor: p.line, boxShadow: "0 12px 32px rgba(0,0,0,0.18)" }}>
+                {([["camera", t.attachCamera, "camera", "photo_camera"], ["photo", t.attachPhoto, "photo", "image"], ["file", t.attachFile, "paperclip", "attach_file"]] as const).map(([kind, label, ios, android]) => (
+                  <Pressable key={kind} accessibilityRole="button" onPress={() => void attachOne(kind)}
+                    style={({ pressed }) => [{ flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 52, paddingHorizontal: space.sm, borderRadius: radius.lg, borderCurve: "continuous" }, pressed && { backgroundColor: p.raise }]}>
+                    <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: p.raise, alignItems: "center", justifyContent: "center" }}>
+                      <SymbolView name={{ ios, android }} tintColor={p.text} size={20} />
+                    </View>
+                    <Text style={[s.text, { fontSize: size.callout }]}>{label}</Text>
+                  </Pressable>
+                ))}
+              </Pressable>
+            ) : null}
+          </Pressable>
+        </Modal>
         <TextInput
           ref={input}
           // No fixed height: a multiline input grows with its lines up to maxHeight, then scrolls.
@@ -899,15 +1303,22 @@ function Composer({ id, session, menu, question, list, after, onSent }: { id: st
           accessibilityRole="button"
           accessibilityLabel={action === "stop" ? t.stop : t.send}
           accessibilityHint={action === "stop" ? t.stopHint : undefined}
-          accessibilityState={{ disabled: !answerable || sending }}
-          disabled={!answerable || sending}
+          accessibilityState={{ disabled: !answerable || sending || uploading, busy: uploading }}
+          disabled={!answerable || sending || uploading}
           onPress={action === "stop" ? stop : () => void submit()}
           style={({ pressed }) => [s.circle, { borderWidth: 0, backgroundColor: "transparent", opacity: !answerable || sending ? 0.5 : pressed ? 0.7 : 1 }]}
         >
           <Crossfade
             on={action === "stop"}
             style={{ width: 44, height: 44 }}
-            first={<View style={[face, { backgroundColor: p.ink }]}><SymbolView name={{ ios: "arrow.up", android: "arrow_upward" }} weight="bold" tintColor={p.onInk} size={20} /></View>}
+            first={
+              <Crossfade
+                on={took}
+                style={{ width: 44, height: 44 }}
+                first={<View style={[face, { backgroundColor: p.ink }]}><SymbolView name={{ ios: "arrow.up", android: "arrow_upward" }} weight="bold" tintColor={p.onInk} size={20} /></View>}
+                second={<View style={[face, { backgroundColor: p.ink }]}><SymbolView name={{ ios: "checkmark", android: "check" }} weight="bold" tintColor={p.onInk} size={20} /></View>}
+              />
+            }
             second={<View style={[face, { backgroundColor: p.stop }]}><SymbolView name={{ ios: "stop.fill", android: "stop" }} weight="bold" tintColor={p.onStop} size={20} /></View>}
           />
         </Press>

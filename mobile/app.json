@@ -17,7 +17,8 @@
       },
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSPhotoLibraryAddUsageDescription": "PC에서 연 사진을 사진 앱에 저장해요"
       }
     },
     "locales": {
@@ -50,9 +51,17 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "PC 화면의 QR을 찍어 연결해요",
+          "cameraPermission": "PC 화면의 QR을 찍어 연결하고, 내 PC의 세션에 첨부할 사진을 찍어요",
           "microphonePermission": false,
           "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "내 PC의 세션에 첨부할 사진을 골라요",
+          "cameraPermission": "PC 화면의 QR을 찍어 연결하고, 내 PC의 세션에 첨부할 사진을 찍어요",
+          "microphonePermission": false
         }
       ],
       ["expo-audio", { "microphonePermission": false, "recordAudioAndroid": false, "enableBackgroundPlayback": false }],

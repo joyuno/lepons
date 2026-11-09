@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
 import type { PcState } from "../shared/status.ts";
@@ -23,6 +23,22 @@ import { matchTotp } from "./totp.ts";
 export interface AccountRow { name: string; version?: string; signedIn?: boolean; unknown?: true }
 
 export const RECONNECT_MS = 10_000;
+
+/** A phone upload's cap: under the relay's 25 MB message (relay/protocol.ts MAX_MESSAGE). */
+export const MAX_UPLOAD = 20 * 1024 * 1024;
+
+/**
+ * The name a phone upload is saved under: new each time, ASCII only so the
+ * path types into an agent as one word, the extension kept so the AI knows
+ * what it is. "IMG 0042.JPG" -> "lepons-phone-1a2b3c4d-IMG-0042.jpg".
+ */
+export function uploadName(path: string, unique: string): string {
+  const name = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  const base = (dot > 0 ? name.slice(0, dot) : name).replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return `lepons-phone-${unique}${base ? `-${base}` : ""}${/^[a-z0-9]{1,8}$/.test(ext) ? `.${ext}` : ""}`;
+}
 
 /** Events are not chunked: one over a frame (relay/protocol.ts CHUNK) is lost whole. */
 export const MAX_SCREEN_JSON = 60 * 1024;
@@ -61,6 +77,8 @@ export interface PhoneDeps {
   pcs(): Array<{ nodeId: string; label: string; state: PcState }>;
   /** "다시 연결" from the PC's remote-PC list, for this node. */
   reconnectPc(nodeId: string): void;
+  /** Opens a folder's plain terminal on the PC, as its rail's "터미널 열기" does. */
+  openTerminal(nodeId: string, repoId: string): void;
   /** Each PC's agents and their sign-ins, as the settings' AI accounts tab reads them. */
   accounts(): Promise<Array<{ pc: string; agents: AccountRow[] }>>;
   /**
@@ -81,6 +99,11 @@ export interface PhoneDeps {
   /** "@" suggestions: the session folder's files, relative, already path-checked. */
   files(key: string): Promise<string[]>;
   directory(key: string, relative: string): Promise<PhoneFileEntry[] | undefined>;
+  /**
+   * Saves a photo or file from the phone where the session's AI can read it,
+   * under `name` (uploadName's); its full path there, or undefined when it could not.
+   */
+  upload(key: string, name: string, bytes: Buffer): Promise<string | undefined>;
   /** How many phones are signed in, after any change to it. */
   signedIn(count: number): void;
   /** The paired phone's Expo push token, already checked; undefined forgets it. `done`: the all-done push is wanted. */
@@ -102,16 +125,17 @@ const accountState = (agent: AccountRow): AccountState =>
   agent.unknown ? "unknown" : agent.version === undefined ? "none" : agent.signedIn === undefined ? "unknown" : agent.signedIn ? "in" : "out";
 
 type Window = { usedPercent: number; resetsAt?: number } | undefined;
-const phoneWindow = (w: Window): PhoneUsageWindow | undefined =>
-  w && Number.isFinite(w.usedPercent)
-    ? { percent: Math.round(Math.min(100, Math.max(0, w.usedPercent))), ...(w.resetsAt === undefined ? {} : { resetsAt: w.resetsAt }) }
-    : undefined;
+/** A window whose reset has passed counts as unused, as the desktop's readout (renderer) counts it: the saved reading is from before it. */
+const phoneWindow = (w: Window, nowMs: number): PhoneUsageWindow | undefined =>
+  !w || !Number.isFinite(w.usedPercent) ? undefined
+  : w.resetsAt !== undefined && w.resetsAt * 1000 < nowMs ? { percent: 0 }
+  : { percent: Math.round(Math.min(100, Math.max(0, w.usedPercent))), ...(w.resetsAt === undefined ? {} : { resetsAt: w.resetsAt }) };
 
 /** The desktop's reading (agent/usage.ts's Usage) as the phone's summary: rounded percents, agents with a reading only. */
-export function usageSummary<K extends string>(reading: Partial<Record<K, { fiveHour?: Window; week?: Window }>>, names: Partial<Record<K, string>>): PhoneUsage {
+export function usageSummary<K extends string>(reading: Partial<Record<K, { fiveHour?: Window; week?: Window }>>, names: Partial<Record<K, string>>, nowMs = Date.now()): PhoneUsage {
   return (Object.entries(names) as Array<[K, string]>).flatMap(([kind, name]) => {
-    const fiveHour = phoneWindow(reading[kind]?.fiveHour);
-    const week = phoneWindow(reading[kind]?.week);
+    const fiveHour = phoneWindow(reading[kind]?.fiveHour, nowMs);
+    const week = phoneWindow(reading[kind]?.week, nowMs);
     return fiveHour || week ? [{ name, ...(fiveHour ? { fiveHour } : {}), ...(week ? { week } : {}) }] : [];
   });
 }
@@ -125,6 +149,8 @@ export interface ApiRequest {
   token?: string | undefined;
   /** A POST's JSON body; "bad" when it would not parse. */
   body?: Record<string, unknown> | "bad" | undefined;
+  /** A POST's raw bytes (POST /api/upload), the relay message's `bin`. */
+  bin?: Buffer | undefined;
 }
 
 export interface ApiReply {
@@ -209,6 +235,7 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         ...(session.subagents?.length ? { subagents: session.subagents } : {}),
         ...(session.agentName ? { agentName: session.agentName } : {}),
         ...(session.mainFree ? { mainFree: true } : {}),
+        ...(session.worktreeOf === undefined ? {} : { worktreeOf: session.worktreeOf, ...(session.worktree === undefined ? {} : { worktree: session.worktree }) }),
       }))
       .sort((a, b) => moodOrder.indexOf(a.mood) - moodOrder.indexOf(b.mood)),
     pcs: pcList().map(({ id, label, state }): PhonePc => ({ id, label, state })),
@@ -308,7 +335,7 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
     return { ...ok("POST /api/login", { ok: true }), token };
   };
 
-  const call = async ({ method, path, token, body }: ApiRequest): Promise<ApiReply> => {
+  const call = async ({ method, path, token, body, bin }: ApiRequest): Promise<ApiReply> => {
     const url = new URL(path, "http://phone");
     if (method !== "GET" && method !== "POST") return fail(405, "method");
     // A route not in the contract matches nothing below, and ends at the 404.
@@ -438,16 +465,42 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       return ok(at, { ok: true });
     }
 
-    // Input: only to an agent session -- never a plain terminal, which runs
-    // whatever it is sent -- and only what inputFor lets through.
+    // The terminal tab: the project's plain terminal ("<node>::<repo>::terminal",
+    // sessionKey's), asked open on the PC when it is not in the list yet.
+    if (at === "POST /api/terminal") {
+      if (body === "bad") return fail(400, "body");
+      const { s } = (body ?? {}) as Unproven<typeof at>;
+      const session = deps.sessions().find((one) => sessionId(one.key) === s);
+      if (!session) return fail(404, "session");
+      const key = session.terminal ? session.key : `${session.nodeId}::${session.repoId}::terminal`;
+      if (!deps.sessions().some((one) => one.key === key)) deps.openTerminal(session.nodeId, session.repoId);
+      return ok(at, { id: sessionId(key) });
+    }
+
+    // The composer's clip: one photo or file, saved on the session's PC for its AI to read.
+    if (at === "POST /api/upload") {
+      const key = keyFor(param(at, "s"));
+      if (key === undefined) return fail(404, "session");
+      if (!bin || bin.length === 0) return fail(400, "body");
+      if (bin.length > MAX_UPLOAD) return fail(413, "too large");
+      const saved = await deps.upload(key, uploadName(param(at, "n") ?? "", randomUUID().slice(0, 8)), bin);
+      return saved === undefined ? fail(502, "upload") : ok(at, { path: saved });
+    }
+
+    // Input: an agent session takes what inputFor lets through; a plain
+    // terminal takes a line of shell (the terminal tab), length-capped and
+    // without control characters. The operator accepted that: a lost phone
+    // is unpaired on the PC.
     if (at === "POST /api/input") {
       if (body === "bad") return fail(400, "body");
       const fields = (body ?? {}) as Unproven<typeof at>;
       const key = keyFor(fields.s);
       if (key === undefined) return fail(404, "session");
-      // An AI that has gone left a shell behind, which is that plain terminal.
-      if (!deps.isAgent(key) || deps.sessions().find((session) => session.key === key)?.agentGone) return fail(403, "not agent");
-      const pieces = inputFor(fields);
+      const session = deps.sessions().find((one) => one.key === key);
+      const shell = session?.terminal === true;
+      // An AI that has gone left a shell behind in the chat's session: the chat does not type into it.
+      if (!shell && (!deps.isAgent(key) || session?.agentGone)) return fail(403, "not agent");
+      const pieces = inputFor(fields, shell);
       if (pieces === "bad" || pieces === "long" || pieces === "exit" || pieces === "shell") {
         return fail(pieces === "long" ? 413 : pieces === "exit" ? 422 : pieces === "shell" ? 403 : 400, pieces);
       }

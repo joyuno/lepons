@@ -26,6 +26,28 @@ const listRank: Record<Mood, number> = { waiting: 0, working: 1, failed: 2, done
 export const byUrgency = <S extends { mood: Mood; agentGone?: boolean }>(sessions: readonly S[]): S[] =>
   [...sessions].sort((a, b) => (a.agentGone ? 5 : listRank[a.mood]) - (b.agentGone ? 5 : listRank[b.mood]));
 
+type Placed = { pc: string; folder: string; worktreeOf?: string; worktree?: string };
+
+/** "lepons · 로그인 수정" for a worktree's session, so it never reads as a second "lepons"; the folder's name for any other. */
+export const folderName = (session: Placed): string =>
+  session.worktreeOf ? `${session.worktreeOf} · ${session.worktree ?? session.folder}` : session.folder;
+
+/**
+ * Each worktree's sessions right under the last session of its original
+ * folder on the same PC, marked `nested`; one whose original is not in the
+ * list keeps its own place. The order is otherwise kept.
+ */
+export function underOriginals<S extends Placed>(sessions: readonly S[]): Array<{ session: S; nested: boolean }> {
+  const isOriginal = (o: S, w: S) => o.worktreeOf === undefined && o.pc === w.pc && o.folder === w.worktreeOf;
+  const nested = (w: S) => w.worktreeOf !== undefined && sessions.some((o) => isOriginal(o, w));
+  const top = sessions.filter((s) => !nested(s));
+  return top.flatMap((s, i) => {
+    const last = s.worktreeOf === undefined && !top.slice(i + 1).some((o) => o.worktreeOf === undefined && o.pc === s.pc && o.folder === s.folder);
+    const trees = last ? sessions.filter((w) => nested(w) && isOriginal(s, w)) : [];
+    return [{ session: s, nested: false }, ...trees.map((w) => ({ session: w, nested: true }))];
+  });
+}
+
 /** A workflow step's kind, as the work map's dot chain shows it. */
 export const stepKinds = ["prompt", "action", "subagent"] as const;
 export type StepKind = (typeof stepKinds)[number];

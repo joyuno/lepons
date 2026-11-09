@@ -75,7 +75,7 @@ test("what the real server sends, every optional field filled, the phone's reade
     pane: { n: 1, tab: 0, shown: true }, steps: ["prompt" as const, "action" as const, "subagent" as const],
     summary: { goal: "g", now: { at: 5, kind: "action" as const, text: "t" }, result: "r", progress: { files: 1, fileNames: ["a.ts"], reads: 2, commands: 3, subagents: 1, running: 1, since: 4 } },
     subagents: [{ label: "l", running: false, since: 1, doneAt: 2, result: "r" }],
-    agentName: "Claude Code", mainFree: true,
+    agentName: "Claude Code", mainFree: true, worktreeOf: "lepons", worktree: "로그인 수정",
   };
   const workflow = {
     title: "t",
@@ -107,7 +107,7 @@ test("what the real server sends, every optional field filled, the phone's reade
     directory: async () => entries,
     signedIn: () => {},
   } as unknown as PhoneDeps, auth);
-  api.usage(usageSummary({ claude: { fiveHour: { usedPercent: 10, resetsAt: 100 }, week: { usedPercent: 20, resetsAt: 200 } } }, { claude: "Claude" }));
+  api.usage(usageSummary({ claude: { fiveHour: { usedPercent: 10, resetsAt: 100 }, week: { usedPercent: 20, resetsAt: 200 } } }, { claude: "Claude" }, 0));
   const ask = (path: string) => api.call({ method: "GET", path, token });
   const body = async (path: string) => (await ask(path)).body as Record<string, unknown>;
 

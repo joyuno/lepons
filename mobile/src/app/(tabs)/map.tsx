@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useConnection } from "@/connection";
 import { ago, fmt, t } from "@/i18n";
 import { Press } from "@/motion";
-import { lampState, type PhoneSessionView } from "@/phone/types";
+import { folderName, lampState, type PhoneSessionView } from "@/phone/types";
 import { loadMapSpots, saveMapSpot } from "@/store";
 import type { MapInput } from "../../../../cockpit/src/renderer/workflowmap/model.ts";
 import { Button, font, Lamp, radius, size, space, useTheme } from "@/ui";
@@ -138,7 +138,7 @@ export default function MapScreen() {
                 <Pressable
                   key={one.id}
                   accessibilityRole="button"
-                  accessibilityLabel={one.folder}
+                  accessibilityLabel={folderName(one)}
                   accessibilityHint={[t[`mood_${lampState(one)}`], one.summary?.now?.text].filter(Boolean).join(", ")}
                   onPress={() => setOpen(one.id)}
                   style={{ width: 2, height: 2 }}
@@ -187,7 +187,7 @@ function SessionSheet({ session, onChat, onClose }: { session: PhoneSessionView;
       <View style={s.row}>
         <Lamp state={lampState(session)} />
         <View style={{ flex: 1 }}>
-          <Text style={[s.text, font.semibold]} numberOfLines={1}>{session.folder}</Text>
+          <Text style={[s.text, font.semibold]} numberOfLines={1}>{folderName(session)}</Text>
           <Text style={[s.dim, { fontSize: size.footnote }]} numberOfLines={1}>{`${session.pc} · ${t[`mood_${lampState(session)}`]}`}</Text>
         </View>
         <Pressable

@@ -1,5 +1,7 @@
 {
   "ios": {
-    "NSCameraUsageDescription": "扫描电脑屏幕上的二维码进行连接"
+    "NSCameraUsageDescription": "扫描电脑屏幕上的二维码进行连接，并拍摄要附加到你自己电脑上会话的照片",
+    "NSPhotoLibraryUsageDescription": "选择要附加到你自己电脑上会话的照片",
+    "NSPhotoLibraryAddUsageDescription": "将从电脑打开的照片保存到“照片”"
   }
 }

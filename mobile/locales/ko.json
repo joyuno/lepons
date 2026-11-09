@@ -1,5 +1,7 @@
 {
   "ios": {
-    "NSCameraUsageDescription": "PC 화면의 QR을 찍어 연결해요"
+    "NSCameraUsageDescription": "PC 화면의 QR을 찍어 연결하고, 내 PC의 세션에 첨부할 사진을 찍어요",
+    "NSPhotoLibraryUsageDescription": "내 PC의 세션에 첨부할 사진을 골라요",
+    "NSPhotoLibraryAddUsageDescription": "PC에서 연 사진을 사진 앱에 저장해요"
   }
 }

@@ -124,7 +124,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   };
 
   /** One request, to the demo or over the link; a 401 means the PC forgot this sign-in. */
-  const request: Connection["request"] = async (method: string, path: string, opts?: { body?: unknown; timeoutMs?: number }) => {
+  const request: Connection["request"] = async (method: string, path: string, opts?: { body?: unknown; bin?: Uint8Array; timeoutMs?: number }) => {
     if (demoRef.current) return demoRef.current.request(method, path, opts);
     // A send in the seconds a link takes to come back goes out when it does, not "couldn't send". Nothing waits on a link that won't return by itself.
     if (path === "/api/input") {

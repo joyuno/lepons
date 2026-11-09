@@ -209,8 +209,11 @@ test("tool calls pool into one action row, flushed when narration resumes", () =
     at: Date.parse("2026-08-04T01:00:00.000Z"),
     text: "Edit map.ts  ·  Bash · 테스트 실행",
     labels: ["Edit map.ts", "Bash · 테스트 실행", "Edit map.ts"],
+    paths: ["C:\\repo\\src\\map.ts"],
   });
   assert.equal(events[1]!.kind, "note");
+  // The phone's read keeps base names only.
+  assert.equal("paths" in parseTranscript(jsonl, true).events[0]!, false);
 });
 
 test("long text clips at a sentence boundary, not mid-word", () => {

@@ -1,5 +1,7 @@
 {
   "ios": {
-    "NSCameraUsageDescription": "Scan the QR on your PC screen to connect"
+    "NSCameraUsageDescription": "Scan the QR on your PC screen to connect, and take photos to attach to a session on your own PC",
+    "NSPhotoLibraryUsageDescription": "Choose photos to attach to a session on your own PC",
+    "NSPhotoLibraryAddUsageDescription": "Save photos you opened from your PC to Photos"
   }
 }

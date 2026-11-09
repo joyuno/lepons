@@ -19,13 +19,15 @@ export const MAX_INPUT = 2000;
  * What one phone request types: a named key, or a line of text and then
  * Enter, sent as two pieces so the agent does not take the Enter as part of
  * a paste (the broadcast dialog's reason too). A line is one line -- voice
- * input can add a newline, and a newline would send early.
+ * input can add a newline, and a newline would send early. `shell`: a plain
+ * terminal's line (the terminal tab), where exit and "!" are just commands.
  */
-export function inputFor(body: Record<string, unknown>): string[] | "bad" | "long" | "exit" | "shell" {
+export function inputFor(body: Record<string, unknown>, shell = false): string[] | "bad" | "long" | "exit" | "shell" {
   if (typeof body.key === "string") return Object.hasOwn(keys, body.key) ? [keys[body.key]!] : "bad";
   if (typeof body.text !== "string") return "bad";
   const text = body.text.replace(/[\r\n]+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").trim();
   if (text === "") return "bad";
+  if (shell) return text.length > MAX_INPUT ? "long" : [text, "\r"];
   // What would end the agent and leave a shell behind is the PC's to type:
   // a slash command ends it whatever follows, a bare word only on its own,
   // and Claude Code takes the vim spellings too.

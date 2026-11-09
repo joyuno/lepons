@@ -483,7 +483,8 @@ export class Painter {
     const dim = this.dim(a.id) || this.dim(b.id);
     c.globalAlpha = dim ? 0.15 : 1;
     c.beginPath();
-    if (e.kind === "delegation" || e.kind === "share") {
+    // A worktree's branch is drawn as a finished handoff is: still, dashed.
+    if (e.kind === "delegation" || e.kind === "share" || e.kind === "branch") {
       const [x1, y1] = [this.sx(a), this.sy(a)], [x2, y2] = [this.sx(b), this.sy(b)];
       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2, bend = 0.12;
       const cx = mx - (y2 - y1) * bend, cy = my + (x2 - x1) * bend;

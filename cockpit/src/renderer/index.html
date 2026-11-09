@@ -262,6 +262,8 @@
       /* Where a dragged folder or machine will land. */
       .dropBefore { box-shadow: inset 0 2px 0 var(--live); }
       .dropAfter { box-shadow: inset 0 -2px 0 var(--live); }
+      /* A folder that takes the files dragged in from Explorer. */
+      .filesOver { box-shadow: inset 0 0 0 1px var(--live); background: var(--raise); }
       .ws.active { background: var(--raise); border-left-color: var(--live); }
       .lamp {
         width: 7px; height: 7px; border-radius: 50%; flex: 0 0 7px;
@@ -330,6 +332,19 @@
       .pickBar .pickCancel:hover { border-color: var(--muted); }
       /* A pin whose PC is off or cut off: still there, a click away from connecting. */
       .ws.offline { opacity: .5; }
+      /* A worktree under its project: one step in, its branch mark before the name. */
+      .machine .ws.wt { padding-left: 30px; }
+      .ws.wt .wsTitle .lucide { flex: none; color: var(--muted); }
+      .wtCount {
+        flex: none; display: inline-flex; align-items: center; gap: 2px; border: 0; background: none;
+        color: var(--muted); font-size: 11px; padding: 2px 4px; border-radius: 4px; cursor: pointer; font-variant-numeric: tabular-nums;
+      }
+      .wtCount:hover { color: var(--text); background: var(--raise); }
+      .wtCount.waiting { color: var(--live); }
+      .wtCount.folded { opacity: .7; }
+      .wtWarn { color: var(--live); }
+      .wtClean { border: 0; background: none; padding: 0; font: inherit; color: var(--dim); cursor: pointer; text-align: left; }
+      .wtClean:hover { color: var(--text); text-decoration: underline; }
       /* The PC list's own head, where the PC 관리 edit mode is switched. */
       .railListHead {
         display: flex; align-items: center; gap: 8px; padding: 10px 18px 5px;
@@ -340,7 +355,10 @@
       .machineHead.managing .iconBtn, .railListHead .iconBtn { display: inline-block; }
       .grip { cursor: grab; color: var(--muted); }
       .machineHead > .lamp { margin-right: 2px; }
-      .reconnectBtn { padding: 1px 8px; font-size: 11px; border-radius: 10px; border: 1px solid var(--stop); color: var(--stop); background: transparent; cursor: pointer; }
+      /* An icon, not a word: a word wrapped letter by letter once the head ran short. */
+      .reconnectBtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 18px; padding: 0; border-radius: 9px; border: 1px solid var(--stop); color: var(--stop); background: transparent; cursor: pointer; }
+      .reconnectBtn .lucide { margin: 0; }
+      .reconnectBtn svg { width: 12px; height: 12px; }
       .reconnectBtn:hover { background: color-mix(in srgb, var(--stop) 12%, transparent); }
       .autoConnect { display: flex; align-items: center; gap: 6px; padding: 2px 12px 4px 28px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
       .wsText { flex: 1; min-width: 0; }
@@ -988,14 +1006,82 @@
       /* The agent picker and the in-app dialog focus the likely choice by
          hand; a mouse-opened dialog would otherwise not show which one Enter
          takes. */
-      #executorDialog .row button:focus, #askDialog .row button:focus { outline: 2px solid var(--live); outline-offset: 2px; }
-      /* Seven choices: wrap the row, never the words inside a button. */
-      #executorDialog .row { flex-wrap: wrap; }
-      #executorDialog .row button { white-space: nowrap; }
+      #askDialog .row button:focus { outline: 2px solid var(--live); outline-offset: 2px; }
       .resumeOpt { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 12px; color: var(--muted); cursor: pointer; }
       .resumeOpt[hidden] { display: none; }
-      /* Sits in a muted hint line; it is a control, so it reads like the buttons below it. */
-      #executorPick { color: var(--text); }
+      /* The agent picker: the agents as equal tiles with their marks, and
+         everything else quiet around them -- one line of choices, a footer
+         for the plain terminal. */
+      #executorDialog, #addDialog { padding: 18px 18px 0; }
+      /* The add chooser borrows the picker's tiles: two, a line under each name. */
+      .exTiles.addTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .addTiles .exTile { gap: 6px; padding: 18px 8px 14px; font-size: 13px; }
+      .addTiles .exTile svg { width: 28px; height: 28px; }
+      .addHint { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .addRow {
+        display: flex; align-items: center; gap: 10px; width: 100%; margin: 12px 0 0; padding: 9px 10px;
+        border: 1px dashed var(--line); border-radius: 8px; background: none; font-size: 12px; text-align: left; cursor: pointer;
+      }
+      .addRow:hover, .addRow:focus-visible { outline: none; border-color: var(--muted); background: var(--raise); }
+      .addRow svg { flex: none; width: 16px; height: 16px; color: var(--muted); }
+      .addRowText { display: grid; min-width: 0; }
+      .addRowText small { color: var(--muted); font-size: 11px; }
+      .exHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
+      .exHead h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .exHead .sub { margin: 0; white-space: nowrap; }
+      .exTiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+      .exTile {
+        position: relative; display: grid; justify-items: center; gap: 7px; padding: 14px 4px 10px;
+        border-radius: 8px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; cursor: pointer;
+        transition: border-color var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+      }
+      .exTile svg { width: 26px; height: 26px; }
+      .exTile > .exName { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .exTile:hover { border-color: var(--muted); }
+      /* What Enter opens: the folder's last pick, else the PC's agent. */
+      .exTile:focus-visible, .exTile:focus { outline: none; border-color: var(--live); background: color-mix(in srgb, var(--live) 10%, var(--raise)); }
+      .exTile kbd { position: absolute; top: 5px; left: 7px; font: 10px var(--sans); color: var(--dim); opacity: 0; transition: opacity var(--t-fast) var(--ease); }
+      .exTiles:hover kbd, .exTiles:focus-within kbd { opacity: 1; }
+      .exTile.missing { color: var(--dim); }
+      .exTile.missing svg { filter: grayscale(1); opacity: .45; }
+      .exTile .exMissing {
+        position: absolute; bottom: -1px; left: 50%; translate: -50% 50%; font-size: 10px; color: var(--muted);
+        background: var(--panel); padding: 0 5px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap;
+      }
+      .exOpts { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 0; flex-wrap: wrap; }
+      .seg { display: inline-flex; padding: 2px; background: var(--ground); border: 1px solid var(--line); border-radius: 7px; }
+      .seg button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+      .seg button:hover { color: var(--text); }
+      .seg button[aria-pressed="true"] { background: var(--raise); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+      .seg[hidden] { display: none; }
+      .exBypass { display: inline-flex; align-items: center; gap: 6px; }
+      .exBypassNote { font-size: 11px; color: var(--stop); }
+      .exBypassNote[hidden] { display: none; }
+      .exWorktree { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: -4px 0 14px; }
+      .exWorktree[hidden] { display: none; }
+      .exWorking { flex: 1 0 100%; font-size: 12px; color: var(--muted); }
+      .exWorking:empty { display: none; }
+      #executorTask { flex: 1; min-width: 140px; }
+      #executorTask[hidden] { display: none; }
+      .switch { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; border: 0; background: none; padding: 2px 0; }
+      .switch i { position: relative; width: 26px; height: 15px; border-radius: 8px; background: var(--line); transition: background-color var(--t-fast) var(--ease); }
+      .switch i::after {
+        content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--muted);
+        transition: translate var(--t-fast) var(--ease), background-color var(--t-fast) var(--ease);
+      }
+      /* On, it is the risky setting, so it reads in the stop colour. */
+      .switch[aria-checked="true"] { color: var(--stop); }
+      .switch[aria-checked="true"] i { background: color-mix(in srgb, var(--stop) 35%, transparent); }
+      .switch[aria-checked="true"] i::after { translate: 11px 0; background: var(--stop); }
+      .exInfo { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; border: 1px solid var(--line); color: var(--dim); font-size: 10px; cursor: help; }
+      .exFoot { display: flex; align-items: center; justify-content: space-between; margin: 16px -18px 0; padding: 8px 18px; border-top: 1px solid var(--line); }
+      .exGhost { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 3px 6px; margin-left: -6px; border-radius: 5px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+      .exGhost:hover, .exGhost:focus-visible { color: var(--text); background: var(--raise); }
+      .exGhost code { font: 11px var(--mono); }
+      .exEsc { border: 0; background: none; color: var(--dim); font-size: 11px; padding: 3px 6px; margin-right: -6px; border-radius: 5px; cursor: pointer; }
+      .exEsc:hover, .exEsc:focus-visible { color: var(--text); background: var(--raise); }
+      .exEsc kbd { font: inherit; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+      @media (prefers-reduced-motion: reduce) { .exTile, .exTile kbd, .switch i, .switch i::after { transition: none; } }
       #pastSearch { width: 100%; box-sizing: border-box; margin: 0 0 8px; }
       #pastList { max-height: 50vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
       /* Editing: the CodeMirror view fills the pane (colours come from its
@@ -1565,20 +1651,32 @@
 
     <dialog id="executorDialog" aria-labelledby="executorTitle">
       <form method="dialog">
-        <h2 id="executorTitle" data-i18n="session.executor"></h2>
-        <p class="sub" data-i18n="session.executorHint"></p>
-        <label class="resumeOpt" id="executorResumeRow"><input type="checkbox" id="executorResume" /> <span data-i18n="session.resume"></span></label>
-        <p class="sub"><button type="button" id="executorPick" data-i18n="past.pick"></button></p>
-        <label class="resumeOpt"><input type="checkbox" id="executorBypass" /> <span data-i18n="session.bypass"></span></label>
-        <p class="sub" data-i18n="session.bypassHint"></p>
-        <div class="row">
-          <button value="claude">Claude Code</button>
-          <button value="codex">Codex</button>
-          <button value="grok">Grok</button>
-          <button value="agy">Antigravity</button>
-          <button value="agent">Cursor</button>
-          <button value="shell" data-i18n="session.shell"></button>
-          <button value="" data-i18n="common.cancel"></button>
+        <div class="exHead"><h2 id="executorTitle"></h2><span class="sub" id="executorWhere"></span></div>
+        <!-- Only from "worktree에서 AI 추가": what is there now, and change it or add one beside it. -->
+        <div class="exWorktree" id="executorWorktree" hidden>
+          <span class="exWorking" id="executorWorking"></span>
+          <span class="seg" role="group">
+            <button type="button" id="executorModeChange" aria-pressed="false" data-i18n="worktree.modeChange"></button>
+            <button type="button" id="executorModeAdd" aria-pressed="true" data-i18n="worktree.modeAdd"></button>
+          </span>
+          <input type="text" id="executorTask" maxlength="60" />
+        </div>
+        <div class="exTiles" id="executorTiles" role="group" aria-labelledby="executorTitle"></div>
+        <div class="exOpts">
+          <span class="seg" id="executorResumeRow" role="group">
+            <button type="button" id="executorResume" aria-pressed="true" data-i18n="session.resumeLast"></button>
+            <button type="button" id="executorFresh" aria-pressed="false" data-i18n="session.fresh"></button>
+            <button type="button" id="executorPick" data-i18n="past.pick"></button>
+          </span>
+          <span class="exBypass">
+            <button type="button" class="switch" role="switch" id="executorBypass" aria-checked="false"><i></i><span data-i18n="session.bypassSwitch"></span></button>
+            <span class="exInfo" id="executorBypassInfo" tabindex="0">?</span>
+            <span class="exBypassNote" id="executorBypassNote" data-i18n="worktree.bypassNote" hidden></span>
+          </span>
+        </div>
+        <div class="exFoot">
+          <button value="shell" class="exGhost"><code>&gt;_</code> <span data-i18n="session.terminalOnly"></span></button>
+          <button value="" class="exEsc"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
         </div>
       </form>
     </dialog>
@@ -1592,20 +1690,30 @@
       <div class="row"><button type="button" id="pastCancel" data-i18n="common.cancel"></button></div>
     </dialog>
 
-    <dialog id="addDialog">
-      <h2 data-i18n="add.title"></h2>
-      <p class="sub" data-i18n="add.sub"></p>
-      <div class="row">
-        <button type="button" id="addChooseLocal" data-i18n="rail.addLocal"></button>
-        <button type="button" id="addChooseRemote" data-i18n="rail.addRemote"></button>
+    <!-- Built like the agent picker: two tiles, a quiet row, a footer. -->
+    <dialog id="addDialog" aria-labelledby="addTitle">
+      <div class="exHead"><h2 id="addTitle" data-i18n="add.title"></h2><span class="sub" data-i18n="add.sub"></span></div>
+      <div class="exTiles addTiles" role="group" aria-labelledby="addTitle">
+        <button type="button" class="exTile" id="addChooseLocal"><kbd>1</kbd>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+          <span class="exName" data-i18n="rail.addLocal"></span><span class="addHint" data-i18n="add.localHint"></span>
+        </button>
+        <button type="button" class="exTile" id="addChooseRemote"><kbd>2</kbd>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+          <span class="exName" data-i18n="rail.addRemote"></span><span class="addHint" data-i18n="add.remoteHint"></span>
+        </button>
       </div>
-      <!-- The two things only a newcomer needs, beside the action they lead to. -->
-      <div class="row">
-        <button type="button" id="openImport" data-i18n="rail.import"></button>
-        <button type="button" id="openGuide" data-i18n="rail.guide"></button>
-      </div>
-      <div class="row">
-        <button type="button" id="addCancel" data-i18n="common.cancel"></button>
+      <!-- The two things only a newcomer needs, kept below the action. -->
+      <button type="button" class="addRow" id="openImport">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/></svg>
+        <span class="addRowText"><span data-i18n="rail.import"></span><small data-i18n="add.importHint"></small></span>
+      </button>
+      <div class="exFoot">
+        <button type="button" class="exGhost" id="openGuide">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+          <span data-i18n="rail.guide"></span>
+        </button>
+        <button type="button" class="exEsc" id="addCancel"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
       </div>
     </dialog>
 

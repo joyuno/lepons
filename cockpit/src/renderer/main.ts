@@ -1,9 +1,10 @@
 import "@xterm/xterm/css/xterm.css";
-import { Terminal, type ITheme } from "@xterm/xterm";
+import { Terminal, type IBufferLine, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { renderMarkdown, selectionSource } from "./markdown.ts";
 
-import { machineLabel, osName, sessionKey } from "../shared/ipc.ts";
+import { findPaths, resolvePath } from "../shared/term-paths.ts";
+import { localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
 import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
 import { base64Bytes, decodeText, fileKind, imageMime } from "./file-view.ts";
@@ -13,6 +14,7 @@ import { agents, isAgentKind, usageLimitAgents } from "../agent/agents.ts";
 import type { AgentKind, Executor } from "../agent/agents.ts";
 import type { BrowseResult } from "../browse/types.ts";
 import type {
+  AgentAccount,
   CockpitApi,
   DelegationInfo,
   DialogRequest,
@@ -43,6 +45,7 @@ import { statusFrom } from "../phone/status.ts";
 import { layoutOf, leaves, readLayout, restorable, type SavedLayout } from "./restore.ts";
 import { canSplit, MAX_PANES, MAX_TABS, paneFits, splitOrder } from "./pane-size.ts";
 import { bandOf, dropAllowed, dropZone, projectOf, projectOfFile, type Zone } from "./tabs.ts";
+import { editedPaths, outside, overlap } from "./worktree-files.ts";
 import { homeTerminal, leafView, projectZone, shownFile, shownKey, shownTab, Workspace, type Direction, type PaneFile, type PaneLeaf, type PaneNode, type PaneSplit, type PaneTab, type Landing, type ProjectZone } from "./workspace.ts";
 import { canTypeInto, installLine, installQuestion, terminalShell, tmuxInstallLine, type MissingAgent } from "../agent/install.ts";
 import { fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, type ThemeChoice } from "./settings-tabs.ts";
@@ -51,6 +54,7 @@ import { relayLamp, relayRow } from "./relay-state.ts";
 import { APP_PAGE, cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
+import { agentLogos } from "./agent-logos.ts";
 import type { MapInput } from "./workflowmap/model.ts";
 import type { Question } from "./workflowmap/panel.ts";
 import { forPhone, stepsOf } from "./workflowmap/summary.ts";
@@ -174,6 +178,8 @@ const mcpRestart = new Set<string>();
  * -- install its agent, try again, read the guide. Cleared when it opens.
  */
 const sessionNotes = new Map<string, { text: string; actions: Array<[string, () => void]> }>();
+/** The turn that ended during this render, for the rail's pop. */
+const justEnded = new Set<string>();
 const previewTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const PREVIEW_DEBOUNCE_MS = 500;
 
@@ -283,6 +289,12 @@ function paintLamps(): void {
 const openTrees = new Set<string>();
 /** Machines whose folder list is folded away, by node id. Kept across restarts. */
 const foldedNodes = new Set<string>(JSON.parse(localStorage.getItem("foldedNodes") ?? "[]") as string[]);
+/** Projects whose worktree rows are folded under them, by `${node.id}\0${repo.id}` as openTrees. */
+const foldedWorktrees = new Set<string>(JSON.parse(localStorage.getItem("foldedWorktrees") ?? "[]") as string[]);
+/** What a worktree whose AI has stopped still holds (commits and changed files), asked once per stop; null while asking. */
+const worktreeLeft = new Map<string, number | null>();
+/** Paths outside its worktree an AI was already said to have changed. */
+const outsideTold = new Set<string>();
 /** Pinned folders, by `pinKey`, in the order dragged. Kept across restarts. */
 let pins = savedPins(localStorage.getItem("pins"));
 /** The pinned section's drag group: no PC has this id, so its rows only drop among themselves. */
@@ -370,8 +382,10 @@ function fileTree(node: NodeConfig, repo: RepoConfig, path: string, key: string,
     }
     item.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      void cockpit.fileMenu(node.id, childPath, entry.isDirectory, fileClip?.nodeId === node.id);
+      void cockpit.fileMenu(node.id, childPath, entry.isDirectory, fileClip !== undefined);
     });
+    // From Explorer: into the folder, or the folder a file sits in.
+    filesDrop(item, node, entry.isDirectory ? childPath : path);
     box.append(item);
     if (entry.isDirectory && expanded) box.append(fileTree(node, repo, childPath, childKey, depth + 1));
   }
@@ -431,6 +445,16 @@ const lucide = {
   smartphone: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
   pin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
   pinOff: '<path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"/><path d="m2 2 20 20"/><path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11"/>',
+  ellipsis: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  minus: '<path d="M5 12h14"/>',
+  pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  arrowLeftRight: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  rotateCw: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+  gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  gitBranchPlus: '<path d="M6 3v12"/><path d="M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M15 6a9 9 0 0 0-9 9"/><path d="M18 15v6"/><path d="M21 18h-6"/>',
   settings: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
 };
 function lucideIcon(name: keyof typeof lucide): HTMLSpanElement {
@@ -513,10 +537,12 @@ let railPick: { nodeId: string; ids: Set<string>; anchor?: string; cleanup: bool
 /** The PC list's edit mode: grip, rename, address and delete on every PC head. */
 let managing = false;
 
-function iconButton(text: string, title: string, click: () => void): HTMLButtonElement {
+/** A Lucide icon by name, or a word where a word says it better ("완료"). */
+function iconButton(icon: string, title: string, click: () => void): HTMLButtonElement {
   const button = document.createElement("button");
   button.className = "iconBtn";
-  button.textContent = text;
+  if (icon in lucide) button.append(lucideIcon(icon as keyof typeof lucide));
+  else button.textContent = icon;
   button.title = title;
   button.addEventListener("click", click);
   return button;
@@ -531,12 +557,45 @@ function idlePanes(node: NodeConfig): string[] {
   return [...workspace.visibleSessions()].filter((key) => belongsToNode(key, node.id) && states.get(key)?.kind !== "ready" && states.get(key)?.kind !== "connecting");
 }
 /** "다시 연결": its panes come back as they were, its share is retried; with neither, its first folder opens, or with no folder its PC terminal. */
-function reconnectPc(node: NodeConfig): void {
+function reconnectPc(node: NodeConfig, fromPhone = false): void {
   const keys = idlePanes(node);
   const outage = shares.get(node.id)?.outage !== undefined;
   if (outage) cockpit.retryShare(node.id);
   for (const key of keys) void reopen(key);
-  if (keys.length === 0 && !outage) void activate(node.id, node.repos[0]?.id ?? null, node.repos.length === 0);
+  if (keys.length > 0 || outage) return;
+  // From the phone nobody is at the PC to answer the agent picker, so the
+  // PC's own terminal is what connects it: no agent starts unasked.
+  if (fromPhone) void activate(node.id, null, true);
+  else void activate(node.id, node.repos[0]?.id ?? null, node.repos.length === 0);
+}
+
+/** A PC's folders become pickable for taking off the list. */
+function startCleanup(node: NodeConfig): void {
+  railPick = { nodeId: node.id, ids: new Set(), cleanup: true };
+  // Folded, there would be nothing to pick from.
+  if (foldedNodes.delete(node.id)) localStorage.setItem("foldedNodes", JSON.stringify([...foldedNodes]));
+  renderRail();
+}
+
+/** A PC head's right-click menu: the same choices as its buttons and its managing mode, in one list. */
+async function pcMenu(node: NodeConfig, pc: PcState): Promise<void> {
+  const reconnect = pc === "failed" || pc === "off" || idlePanes(node).length > 0;
+  const pick = await cockpit.popupMenu([
+    { id: "terminal", label: t("rail.openTerminal") },
+    { id: "add", label: t("rail.addFolder") },
+    ...(node.repos.length > 0 ? [{ id: "clean", label: t("rail.cleanFolders") }] : []),
+    "-",
+    ...(reconnect ? [{ id: "reconnect", label: t("rail.reconnectPc") }] : []),
+    { id: "rename", label: t("rail.renamePc") },
+    ...(node.kind === "ssh" ? [{ id: "address", label: t("rail.editConnection") }, "-" as const, { id: "remove", label: t("rail.removeMachine") }] : []),
+  ]);
+  if (pick === "terminal") void activate(node.id, null, true);
+  else if (pick === "add") void (node.kind === "local" ? addLocalFolder() : pickRemoteFolder(node));
+  else if (pick === "clean") startCleanup(node);
+  else if (pick === "reconnect") reconnectPc(node);
+  else if (pick === "rename") openRenameDialog({ kind: "pc", node });
+  else if (pick === "address") openRenameDialog({ kind: "address", node });
+  else if (pick === "remove") void removeMachine(node);
 }
 
 /** A PC off the list: with folders it asks once through removeRepos, as the last folder takes it along. */
@@ -637,9 +696,12 @@ function repoRow(group: HTMLElement, node: NodeConfig, repo: RepoConfig, pinned 
   const key = sessionKey(node.id, repo.id);
   const state = states.get(key);
   const waiting = activityOf(key).waiting && state?.kind === "ready";
+  // A worktree is a row under its project, never one of the PC's own to drag or pick.
+  const wt = repo.worktree;
+  const worktrees = wt ? [] : node.repos.filter((each) => each.worktree?.of === repo.id);
   const row = document.createElement("button");
   row.dataset.place = key;
-  row.className = "ws" + (key === workspace.focusedLeaf()?.project ? " active" : "") + (waiting ? " waiting" : "");
+  row.className = "ws" + (wt ? " wt" : "") + (key === workspace.focusedLeaf()?.project ? " active" : "") + (waiting ? " waiting" : "");
   // The lamp already says whether this is running, so it is also where you
   // say stop -- no new control on a row that has too many already. Off, it
   // connects, as the row does: a disabled button swallowed that click.
@@ -683,7 +745,7 @@ ${t("status.shellOnlyHint")}` : ""));
   // is cut short with an ellipsis still shows it.
   const title = document.createElement("span");
   title.className = "wsTitle";
-  title.append(label);
+  title.append(...(wt ? [lucideIcon("gitBranch")] : []), label);
   // Who reads this folder. Beside the name rather than among the buttons on
   // the right, and not clickable, so it never stands where ⚙ or ▸ is aimed.
   const shared = shareMap?.repos.find((candidate) => candidate.ownerNodeId === node.id && candidate.root === repo.path);
@@ -694,14 +756,17 @@ ${t("status.shellOnlyHint")}` : ""));
     const dot = document.createElement("span");
     dot.className = "waitingDot";
     attachHover(dot, () => t("rail.waiting"));
+    // A turn that just ended: the dot arrives with one pop, after the fact, holding nothing up.
+    if (justEnded.has(key)) play(dot, [{ transform: "scale(0)" }, { transform: "scale(1.8)", offset: 0.6 }, { transform: "none" }], MID * 2);
     title.append(dot);
   }
   meta.prepend(...agentBadge(key, node));
+  if (wt) worktreeMarks(node, repo, title, meta);
   text.append(title, ...(meta.childNodes.length > 0 ? [meta] : []));
   row.append(text);
   row.addEventListener("click", (event) => {
     // A pinned row is not among its PC's rows, so it never joins a pick there.
-    if (pinned || !pickRow(node, repo.id, event)) {
+    if (pinned || wt || !pickRow(node, repo.id, event)) {
       void activate(node.id, repo.id).then(() => {
         if (activeKey === key && activityOf(key).agentGone) void cockpit.restartAgent(node.id, repo.id);
       });
@@ -710,10 +775,10 @@ ${t("status.shellOnlyHint")}` : ""));
   // Dragged up and down among its machine's folders, to put the busy ones
   // first; a pinned one only among the pins.
   const project = { nodeId: node.id, repoId: repo.id };
-  railDraggable(row, pinned ? { nodeId: pinnedGroup, repoId: pinKey(node.id, repo.id), project } : { ...project, project });
+  if (!wt) railDraggable(row, pinned ? { nodeId: pinnedGroup, repoId: pinKey(node.id, repo.id), project } : { ...project, project });
   // While cleaning up, a row is only something to pick: no drag, and its
   // buttons step aside (CSS) so every click lands on the row.
-  if (!pinned && railPick?.nodeId === node.id) {
+  if (!pinned && !wt && railPick?.nodeId === node.id) {
     row.classList.toggle("pickable", railPick.cleanup);
     row.classList.toggle("picked", railPick.ids.has(repo.id));
     if (railPick.cleanup) row.draggable = false;
@@ -723,7 +788,7 @@ ${t("status.shellOnlyHint")}` : ""));
       setPins(moved(pins, from, pinKey(node.id, repo.id), after));
       renderRail();
     });
-  } else {
+  } else if (!wt) {
     railDropTarget(row, { nodeId: node.id, repoId: repo.id }, async (from, after) => {
       nodes = await cockpit.reorderRepos(node.id, moved(node.repos.map((r) => r.id), from, repo.id, after));
       renderRail();
@@ -731,34 +796,50 @@ ${t("status.shellOnlyHint")}` : ""));
   }
   // The folder's own row stands for its top level: new files and pastes
   // land there.
+  const menu = () => (wt ? worktreeMenu(node, repo) : cockpit.fileMenu(node.id, repo.path, true, fileClip !== undefined, pins.includes(pinKey(node.id, repo.id))));
+  if (!wt) filesDrop(row, node, repo.path);
   row.addEventListener("contextmenu", (event) => {
     event.preventDefault();
-    void cockpit.fileMenu(node.id, repo.path, true, fileClip?.nodeId === node.id, pins.includes(pinKey(node.id, repo.id)));
+    void menu();
   });
 
-  const pin = document.createElement("button");
-  pin.className = "iconBtn";
-  pin.append(lucideIcon(pinned ? "pinOff" : "pin"));
-  pin.title = t(pinned ? "rail.unpin" : "rail.pin");
-  pin.addEventListener("click", (event) => {
-    event.stopPropagation(); // the row itself opens a terminal
-    togglePin(node.id, repo.id);
-  });
-  row.append(pin);
+  // Its worktrees fold under it by their count, amber while one waits folded away or not.
+  const wtKey = `${node.id}\0${repo.id}`;
+  const wtFolded = foldedWorktrees.has(wtKey);
+  if (worktrees.length > 0) {
+    const count = document.createElement("button");
+    count.type = "button";
+    const asking = worktrees.some((each) => activityOf(sessionKey(node.id, each.id)).waiting && states.get(sessionKey(node.id, each.id))?.kind === "ready");
+    count.className = "wtCount" + (asking ? " waiting" : "") + (wtFolded ? " folded" : "");
+    count.append(lucideIcon("gitBranch"), String(worktrees.length));
+    attachHover(count, () => t(wtFolded ? "worktree.unfold" : "worktree.fold"));
+    count.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (wtFolded) foldedWorktrees.delete(wtKey);
+      else foldedWorktrees.add(wtKey);
+      localStorage.setItem("foldedWorktrees", JSON.stringify([...foldedWorktrees]));
+      renderRail();
+    });
+    row.append(count);
+  }
+  if (!wt) {
+    const branchOff = iconButton("gitBranchPlus", t("worktree.add"), () => void addAgentInWorktree(node.id, repo.id));
+    branchOff.addEventListener("click", (event) => event.stopPropagation()); // the row itself opens a terminal
+    row.append(branchOff);
+  }
 
-  // The row's settings -- terminal, new file, rename, remove -- behind one
-  // button. Four icons side by side left the name little room and read as
-  // a wall; the menu also names each choice instead of leaving it to a glyph.
-  const settings = document.createElement("button");
-  settings.className = "iconBtn";
-  settings.textContent = "⚙";
-  settings.title = t("rail.folderSettings");
-  settings.addEventListener("click", (event) => {
+  // Everything else the folder offers -- terminal, files, pin, rename,
+  // remove -- is one menu, the same one a right-click opens: one place to
+  // look, and room left for the name.
+  const more = document.createElement("button");
+  more.className = "iconBtn";
+  more.append(lucideIcon("ellipsis"));
+  more.title = t("rail.folderSettings");
+  more.addEventListener("click", (event) => {
     event.stopPropagation(); // the row itself opens a terminal
-    const box = settings.getBoundingClientRect();
-    cockpit.repoMenu(node.id, repo.id, box.left, box.bottom);
+    void menu();
   });
-  row.append(settings);
+  row.append(more);
 
   // The folder's contents, off unless asked for: the rail is a list of
   // sessions first, and a tree open by default would bury the next
@@ -779,7 +860,79 @@ ${t("status.shellOnlyHint")}` : ""));
   row.prepend(disclose);
   row.append(lamp);
   group.append(row);
+  // Both open: the worktrees first, then the files.
+  if (!wtFolded) for (const each of worktrees) repoRow(group, node, each);
   if (open) group.append(treeBar(node, repo, treeKey), fileTree(node, repo, repo.path, treeKey));
+}
+
+/**
+ * A worktree row's own marks: "겹침 N" while it and its original change the
+ * same files, and "바뀐 것 없음 · 정리" once its AI stopped with nothing to
+ * bring back.
+ */
+function worktreeMarks(node: NodeConfig, repo: RepoConfig, title: HTMLElement, meta: HTMLElement): void {
+  const key = sessionKey(node.id, repo.id);
+  const original = node.repos.find((each) => each.id === repo.worktree?.of);
+  const both = original ? overlap(
+    { root: repo.path, paths: editedPaths(workflowFetches.get(key)?.result) },
+    { root: original.path, paths: editedPaths(workflowFetches.get(sessionKey(node.id, original.id))?.result) },
+  ) : [];
+  if (both.length > 0) {
+    const mark = shareBadge(`⚠${t("worktree.overlap", { n: both.length })}`, t("worktree.overlapHint", { files: both.join("\n") }));
+    mark.classList.add("wtWarn");
+    title.append(mark);
+  }
+  const state = states.get(key);
+  if (!(state?.kind === "closed" || activityOf(key).agentGone)) {
+    worktreeLeft.delete(key);
+    return;
+  }
+  if (!worktreeLeft.has(key)) {
+    worktreeLeft.set(key, null);
+    void cockpit.worktreeChanges(node.id, repo.id).then((left) => {
+      if (!worktreeLeft.has(key)) return;
+      worktreeLeft.set(key, left);
+      if (left === 0) renderRail();
+    });
+  }
+  if (worktreeLeft.get(key) !== 0) return;
+  const clean = document.createElement("button");
+  clean.type = "button";
+  clean.className = "wtClean";
+  clean.textContent = t("worktree.noChanges");
+  clean.addEventListener("click", (event) => {
+    event.stopPropagation();
+    void worktreeGone(node.id, repo.id, cockpit.removeWorktree(node.id, repo.id));
+  });
+  meta.replaceChildren(clean);
+}
+
+/** A worktree row's ⋯ and right-click. */
+async function worktreeMenu(node: NodeConfig, repo: RepoConfig): Promise<void> {
+  const pick = await cockpit.popupMenu([
+    { id: "merge", label: t("worktree.merge") },
+    { id: "terminal", label: t("rail.openTerminal") },
+    { id: "workflow", label: t("worktree.showWorkflow") },
+    "-",
+    { id: "remove", label: t("worktree.remove") },
+  ]);
+  if (pick === "merge") {
+    const key = sessionKey(node.id, repo.id);
+    // Not under an AI still writing: what it writes next would be left behind.
+    if (sessionStatus(states.get(key), activityOf(key)) === "working") return showToast(t("worktree.busy"), 5000);
+    await worktreeGone(node.id, repo.id, cockpit.mergeWorktree(node.id, repo.id));
+  } else if (pick === "terminal") void activate(node.id, repo.id, true);
+  else if (pick === "workflow" && activeView !== "workflow") el<HTMLButtonElement>("openWorkflow").click();
+  else if (pick === "remove") await worktreeGone(node.id, repo.id, cockpit.removeWorktree(node.id, repo.id));
+}
+
+/** After main merged or removed a worktree: if it went, its tabs and sessions go too. */
+async function worktreeGone(nodeId: string, repoId: string, done: Promise<NodeConfig[]>): Promise<void> {
+  nodes = await done;
+  if (!nodes.find((node) => node.id === nodeId)?.repos.some((repo) => repo.id === repoId)) {
+    forgetSessions((key) => key === sessionKey(nodeId, repoId) || key === sessionKey(nodeId, repoId, true));
+  }
+  renderRail();
 }
 
 /** The rail's rows that can change place, top to bottom, by where they are on screen. Folded away or collapsed, they are nowhere. */
@@ -841,7 +994,7 @@ function renderRail(): void {
     const name = document.createElement("span");
     name.className = "name";
     name.textContent = t("rail.machines");
-    const manage = iconButton(managing ? t("rail.manageDone") : "✎", t(managing ? "rail.manageDone" : "rail.managePcs"), () => {
+    const manage = iconButton(managing ? t("rail.manageDone") : "pencil", t(managing ? "rail.manageDone" : "rail.managePcs"), () => {
       managing = !managing;
       renderRail();
     });
@@ -912,52 +1065,52 @@ function renderRail(): void {
     const addBtn = document.createElement("button");
     addBtn.className = "iconBtn";
     addBtn.title = t("rail.addFolder");
-    addBtn.textContent = "＋";
+    addBtn.append(lucideIcon("plus"));
     addBtn.addEventListener("click", () => {
       if (node.kind === "local") void addLocalFolder();
       else void pickRemoteFolder(node);
     });
 
-    if (!managing) head.append(iconButton(">_", t("rail.pcTerminal"), () => void activate(node.id, null, true)), addBtn);
+    if (!managing) head.append(iconButton("terminal", t("rail.pcTerminal"), () => void activate(node.id, null, true)), addBtn);
     const cleaning = railPick?.cleanup === true && railPick.nodeId === node.id;
     if (managing) {
       // The local PC is only renamed: its address is this PC, and it cannot leave.
-      head.append(iconButton("✎", t("rail.renamePc"), () => openRenameDialog({ kind: "pc", node })));
+      head.append(iconButton("pencil", t("rail.renamePc"), () => openRenameDialog({ kind: "pc", node })));
       if (node.kind === "ssh") {
         head.append(
-          iconButton("⇄", t("rail.editConnection"), () => openRenameDialog({ kind: "address", node })),
-          iconButton("×", t("rail.removeMachine"), () => void removeMachine(node)),
+          iconButton("arrowLeftRight", t("rail.editConnection"), () => openRenameDialog({ kind: "address", node })),
+          iconButton("x", t("rail.removeMachine"), () => void removeMachine(node)),
         );
       }
     } else if (node.repos.length > 0) {
       const clean = document.createElement("button");
       clean.className = "iconBtn" + (cleaning ? " cleaning" : "");
       clean.title = t("rail.cleanFolders");
-      clean.textContent = "－";
-      clean.addEventListener("click", () => {
-        if (cleaning) return dropPick();
-        railPick = { nodeId: node.id, ids: new Set(), cleanup: true };
-        // Folded, there would be nothing to pick from.
-        if (foldedNodes.delete(node.id)) localStorage.setItem("foldedNodes", JSON.stringify([...foldedNodes]));
-        renderRail();
-      });
+      clean.append(lucideIcon("minus"));
+      clean.addEventListener("click", () => (cleaning ? dropPick() : startCleanup(node)));
       head.append(clean);
     }
     // A machine goes with its last folder; one that never got a folder --
     // its agent was missing, the picker was closed -- needs a way out.
     if (!managing && node.kind === "ssh" && node.repos.length === 0) {
-      head.append(iconButton("×", t("rail.removeMachine"), () => void removeMachine(node)));
+      head.append(iconButton("x", t("rail.removeMachine"), () => void removeMachine(node)));
     }
     // Down, or with panes waiting for it: one click brings it back, without hunting row by row.
     if (!managing && (pc === "failed" || idlePanes(node).length > 0)) {
       const again = document.createElement("button");
       again.type = "button";
       again.className = "reconnectBtn";
-      again.textContent = t("rail.reconnectPc");
+      again.setAttribute("aria-label", t("rail.reconnectPc"));
+      again.append(lucideIcon("rotateCw"));
       attachHover(again, () => t("rail.reconnectPcHint"));
       again.addEventListener("click", () => reconnectPc(node));
       head.append(again);
     }
+    // The head's right-click: what its buttons do, and what only managing showed.
+    head.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      void pcMenu(node, pc);
+    });
     group.append(head);
     if (managing && node.kind === "ssh") {
       const auto = document.createElement("label");
@@ -1005,7 +1158,9 @@ function renderRail(): void {
       group.append(down);
     }
 
-    if (!folded) for (const repo of node.repos) if (!pinned.includes(pinKey(node.id, repo.id))) repoRow(group, node, repo);
+    // A worktree goes under its project (repoRow); one whose project is gone stands alone.
+    const underProject = (repo: RepoConfig) => repo.worktree !== undefined && node.repos.some((each) => each.id === repo.worktree!.of);
+    if (!folded) for (const repo of node.repos) if (!underProject(repo) && !pinned.includes(pinKey(node.id, repo.id))) repoRow(group, node, repo);
     if (railPick?.nodeId === node.id) group.append(pickBar(railPick.cleanup, railPick.ids.size));
 
     if (node.repos.length === 0) {
@@ -1109,15 +1264,15 @@ function terminalFor(key: string) {
   term.open(element);
   // Addresses a program printed -- a dev server, a pull request -- open with
   // Ctrl+click, as in an editor's terminal: a plain click is for selecting.
-  // ponytail: columns are read as string offsets, so a link after wide
-  // (Korean, CJK) characters on the same line is underlined off by their count.
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const line = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
+      const row = term.buffer.active.getLine(y - 1);
+      const line = row?.translateToString(true) ?? "";
+      const range = cellRange(row, y);
       const found = findByKey(key);
       const remote = found?.node.kind === "ssh";
       callback([...line.matchAll(/https?:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]]/g)].map((match) => ({
-        range: { start: { x: match.index + 1, y }, end: { x: match.index + match[0].length, y } },
+        range: range(match.index, match[0].length),
         text: match[0],
         hover: (event) => {
           const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(match[0]);
@@ -1134,6 +1289,31 @@ function terminalFor(key: string) {
             const ports = sessionForwards.get(key) ?? new Set<number>();
             sessionForwards.set(key, ports.add(port));
             renderPanes();
+          });
+        },
+      })));
+    },
+  });
+  // A file path the agent printed opens in a tab of this pane's column, on
+  // the session's PC, also with Ctrl+click. Relative to the session's folder.
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const row = term.buffer.active.getLine(y - 1);
+      const range = cellRange(row, y);
+      const found = findByKey(key);
+      if (!found) return callback(undefined);
+      callback(findPaths(row?.translateToString(true) ?? "").map((match) => ({
+        range: range(match.index, match.text.length),
+        text: match.path,
+        hover: (event) => showTipAt(t("link.openFile"), event),
+        leave: () => hideTip(),
+        activate: (event, printed) => {
+          if (!(event.ctrlKey || event.metaKey)) return;
+          const path = resolvePath(found.repo.path, found.node.home, printed);
+          // Checked first, so a path that is not there says so, with the full path it looked at.
+          void cockpit.locateFile(found.node.id, path, found.repo.path).then((located) => {
+            if (!located.ok) return showTipAt(located.error, event);
+            openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
           });
         },
       })));
@@ -1601,6 +1781,29 @@ function saveLayout(): void {
 // plan defined it -- confirmed with the plan's author, who traced it to a
 // copy/paste slip from the sibling workflow-panel plan. Filled in here since
 // this is where the first consumer lands.
+/**
+ * The cells a stretch of a terminal line's text covers. Korean and other wide
+ * characters take two cells for one character, so a string offset alone puts
+ * a link after them off by their count.
+ */
+function cellRange(row: IBufferLine | undefined, y: number): (index: number, length: number) => { start: { x: number; y: number }; end: { x: number; y: number } } {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (let x = 0; row && x < row.length; x++) {
+    const cell = row.getCell(x);
+    if (!cell || cell.getWidth() === 0) continue;
+    // One per UTF-16 unit, as the string's offsets count: an emoji is two units in one cell.
+    for (let unit = (cell.getChars() || " ").length; unit > 0; unit--) {
+      starts.push(x + 1);
+      ends.push(x + cell.getWidth());
+    }
+  }
+  return (index, length) => ({
+    start: { x: starts[index] ?? index + 1, y },
+    end: { x: ends[index + length - 1] ?? index + length, y },
+  });
+}
+
 function findByKey(key: string): { node: NodeConfig; repo: NodeConfig["repos"][number]; terminal: boolean } | undefined {
   for (const node of nodes) {
     for (const repo of node.repos) {
@@ -1791,7 +1994,10 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
   label.className = "name";
   label.textContent = node.project ? projectLabel(node.project) : "";
   attachHover(label, () => [label.scrollWidth > label.clientWidth ? label.textContent : "", workspace.canDragPane() ? t("pane.drag") : ""].filter(Boolean).join(" · "));
-  if (node.project) header.style.setProperty("--band-h", String([35, 190, 140, 275, 340, 60][bandOf(node.project)]));
+  const project = node.project ? findByKey(node.project) : undefined;
+  // A worktree wears its project's colour.
+  const band = project?.repo.worktree ? sessionKey(project.node.id, project.repo.worktree.of) : node.project;
+  if (band) header.style.setProperty("--band-h", String([35, 190, 140, 275, 340, 60][bandOf(band)]));
   header.append(label);
   if (file) {
     const textButton = (text: string, run: () => void): HTMLButtonElement => {
@@ -1896,20 +2102,6 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     header.append(nudge);
   }
 
-  // Restart only means anything on a tmux-backed node: local and plain SSH
-  // sessions already start fresh on every reconnect, so there is nothing
-  // to drop.
-  if (found && !file && found.node.kind === "ssh" && found.node.useTmux) {
-    const restart = document.createElement("button");
-    restart.className = "paneBtn";
-    restart.textContent = "⟲";
-    restart.title = t("session.restart");
-    restart.addEventListener("click", (event) => {
-      event.stopPropagation();
-      void restartPaneSession(found.node.id, found.repo.id, found.terminal ? { executor: "shell", resume: false, terminal: true } : undefined);
-    });
-    header.append(restart);
-  }
   const terminal = document.createElement("button");
   terminal.className = "paneBtn text";
   terminal.textContent = ">_";
@@ -1950,7 +2142,17 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     renderPanes();
     renderRail();
   });
-  header.append(terminal, zoom, close);
+  // One more AI beside this folder's, in a worktree; a worktree's own pane has none.
+  const branchOff = document.createElement("button");
+  branchOff.className = "paneBtn";
+  branchOff.append(lucideIcon("gitBranchPlus"));
+  branchOff.title = t("worktree.add");
+  branchOff.hidden = !project || project.repo.worktree !== undefined;
+  branchOff.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (project) void addAgentInWorktree(project.node.id, project.repo.id);
+  });
+  header.append(branchOff, terminal, zoom, close);
   shell.append(header, strip);
 
   const slot = document.createElement("div");
@@ -2545,6 +2747,14 @@ async function refreshWorkflowGraphData(machines: NodeConfig[]): Promise<void> {
             // anyway would rebuild the map on every tick of an open session.
             if (JSON.stringify(result) !== JSON.stringify(cached?.result)) changed = true;
             workflowFetches.set(key, { at: Date.now(), result });
+            // A worktree's AI that changed a file outside it is changing someone else's work: said once per file.
+            if (repo.worktree) {
+              for (const path of outside(repo.path, editedPaths(result))) {
+                if (outsideTold.has(`${key}\0${path}`)) continue;
+                outsideTold.add(`${key}\0${path}`);
+                showToast(t("worktree.outside", { name: repo.label, path }), 12000);
+              }
+            }
           }),
     ),
     (async () => {
@@ -2557,6 +2767,8 @@ async function refreshWorkflowGraphData(machines: NodeConfig[]): Promise<void> {
   ]);
   if (!changed || token !== workflowGraphFetch) return;
   workflowMap.refresh();
+  // The rail's "겹침" marks read the same records.
+  if (nodes.some((node) => node.repos.some((repo) => repo.worktree))) renderRail();
 }
 
 /**
@@ -2599,9 +2811,9 @@ function updateWorkflowBadge(): void {
   badge.textContent = String(waitingCount);
 }
 
-/** The executor dialog's skip-permissions box, remembered for next time. */
+/** The executor dialog's skip-permissions switch, remembered for next time. */
 function bypassChosen(): boolean {
-  const on = el<HTMLInputElement>("executorBypass").checked;
+  const on = el<HTMLButtonElement>("executorBypass").getAttribute("aria-checked") === "true";
   localStorage.setItem("bypassPermissions", on ? "1" : "0");
   return on;
 }
@@ -2617,7 +2829,7 @@ let pastPicked: string | undefined;
 function resumeChosen(): boolean | string {
   const picked = pastPicked;
   pastPicked = undefined;
-  return picked ?? el<HTMLInputElement>("executorResume").checked;
+  return picked ?? el<HTMLButtonElement>("executorResume").getAttribute("aria-pressed") === "true";
 }
 
 /**
@@ -2668,43 +2880,179 @@ el<HTMLInputElement>("pastSearch").addEventListener("input", (event) => {
 });
 el<HTMLButtonElement>("pastCancel").addEventListener("click", () => el<HTMLDialogElement>("pastDialog").close());
 
+/** The picker's agents, in the order their tiles and number keys go. */
+const pickerAgents: readonly AgentKind[] = ["claude", "codex", "grok", "agy", "agent"];
+
+// The tiles are made once: each closes the dialog with its agent, as the
+// plain-terminal button in the footer does with "shell".
+{
+  const dialog = el<HTMLDialogElement>("executorDialog");
+  el("executorTiles").replaceChildren(...pickerAgents.map((kind, index) => {
+    const tile = document.createElement("button");
+    tile.className = "exTile";
+    tile.value = kind;
+    const number = document.createElement("kbd");
+    number.textContent = String(index + 1);
+    const name = document.createElement("span");
+    name.className = "exName";
+    name.textContent = agents[kind].short;
+    tile.innerHTML = agentLogos[kind];
+    tile.prepend(number);
+    tile.append(name);
+    tile.title = agents[kind].label;
+    return tile;
+  }));
+  // 1-5 open that agent at once; not while the past list (its own dialog) has the keys.
+  dialog.addEventListener("keydown", (event) => {
+    // The task name takes its own keys; Enter there opens what the tiles would.
+    if (event.target === el("executorTask")) {
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
+        dialog.close(dialog.dataset["preferred"]);
+      }
+      return;
+    }
+    const index = Number(event.key) - 1;
+    if (event.ctrlKey || event.metaKey || event.altKey || !(index >= 0 && index < pickerAgents.length)) return;
+    event.preventDefault();
+    dialog.close(pickerAgents[index]);
+  });
+  el("executorResume").addEventListener("click", () => setResume(true));
+  el("executorFresh").addEventListener("click", () => setResume(false));
+  const bypass = el("executorBypass");
+  bypass.addEventListener("click", () => {
+    bypass.setAttribute("aria-checked", String(bypass.getAttribute("aria-checked") !== "true"));
+    syncBypassNote();
+  });
+  attachHover(el("executorBypassInfo"), () => t("session.bypassHint"));
+  // Set from the start: a reopen that skips the dialog reads it too.
+  bypass.setAttribute("aria-checked", String(localStorage.getItem("bypassPermissions") === "1"));
+}
+
+/** In worktree mode with bypass on, the AI may change the original folder too: said beside the switch. */
+function syncBypassNote(): void {
+  el("executorBypassNote").hidden = el("executorWorktree").hidden || el("executorModeAdd").getAttribute("aria-pressed") !== "true" ||
+    el("executorBypass").getAttribute("aria-checked") !== "true";
+}
+
+/** What the picker's worktree mode asked: change the AI in place, or add one in a worktree named `task`. */
+let worktreePicked: { mode: "change" | "add"; task: string; carry?: AgentKind; /** Another AI picked to carry on: told a summary of this one's conversation. */ handoff?: true } | undefined;
+
+function setResume(on: boolean): void {
+  el("executorResume").setAttribute("aria-pressed", String(on));
+  el("executorFresh").setAttribute("aria-pressed", String(!on));
+}
+
 /**
- * Asks what to run in a folder. The button for what ran there last -- else
+ * Each PC's agent report, asked once a run: it is slow (every CLI, or an SSH
+ * probe), and the picker only uses it to dim what is not installed.
+ */
+const agentReports = new Map<string, Promise<AgentAccount[]>>();
+
+/** Dims the tiles of agents the PC does not have, once its report is in. A PC that could not say dims nothing. */
+function markMissingAgents(nodeId: string): void {
+  for (const tile of el("executorTiles").querySelectorAll<HTMLButtonElement>(".exTile")) {
+    tile.classList.remove("missing");
+    tile.querySelector(".exMissing")?.remove();
+  }
+  let report = agentReports.get(nodeId);
+  if (!report) {
+    report = cockpit.agentAccounts(nodeId).catch(() => []);
+    agentReports.set(nodeId, report);
+  }
+  void report.then((accounts) => {
+    if (!el<HTMLDialogElement>("executorDialog").open) return;
+    for (const account of accounts) {
+      if (account.unknown || account.version !== undefined) continue;
+      const tile = el("executorTiles").querySelector<HTMLButtonElement>(`.exTile[value="${account.kind}"]`);
+      if (!tile || tile.classList.contains("missing")) continue;
+      tile.classList.add("missing");
+      const note = document.createElement("span");
+      note.className = "exMissing";
+      note.textContent = t("settings.agents.missing");
+      tile.append(note);
+    }
+  });
+}
+
+/**
+ * Asks what to run in a folder. The tile for what ran there last -- else
  * the machine's agent -- has the focus, so Enter picks it; kept per folder
  * key in localStorage.
  */
-function chooseExecutor(nodeId: string, repoId: string): Promise<Executor | undefined> {
+function chooseExecutor(nodeId: string, repoId: string, worktree = false, startMode: "change" | "add" = "add"): Promise<Executor | undefined> {
   const dialog = el<HTMLDialogElement>("executorDialog");
   if (dialog.open) return Promise.resolve(undefined);
+  const node = nodes.find((candidate) => candidate.id === nodeId);
+  el("executorTitle").textContent = node?.repos.find((repo) => repo.id === repoId)?.label ?? "";
+  el("executorWhere").textContent = node ? machineLabel(node) : "";
+  markMissingAgents(nodeId);
   // On each time: picking up where the folder left off is what an operator
-  // reaching for a folder usually wants; a fresh start is one untick away.
+  // reaching for a folder usually wants; a fresh start is one click away.
   // Claude falls back to a new conversation where there is none to continue.
   pastPicked = undefined;
   // Bound per opening: the list is the folder this dialog is for.
   el<HTMLButtonElement>("executorPick").onclick = () => void pickPast(nodeId, repoId, dialog);
-  el<HTMLInputElement>("executorResume").checked = true;
+  setResume(true);
   // Remembered, unlike resume: it is a standing choice about how much the
   // agent may do unasked, made once by the operator -- and off until then.
-  el<HTMLInputElement>("executorBypass").checked = localStorage.getItem("bypassPermissions") === "1";
+  el("executorBypass").setAttribute("aria-checked", String(localStorage.getItem("bypassPermissions") === "1"));
   // An agent that cannot continue a chat as a new one (Cursor) is not
-  // offered to; the box hides while its button has the focus.
-  const resumeRow = el<HTMLLabelElement>("executorResumeRow");
+  // offered to; the choice hides while its tile has the focus.
+  const resumeRow = el<HTMLElement>("executorResumeRow");
+  // Worktree mode: another AI than the one at work carries on by summary, which any can.
   const syncResume = () => {
     const value = (document.activeElement as HTMLButtonElement | null)?.value;
-    resumeRow.hidden = isAgentKind(value) && agents[value].resumeCommand === undefined;
+    resumeRow.hidden = isAgentKind(value) && agents[value].resumeCommand === undefined && !(worktree && value !== carry);
   };
   dialog.addEventListener("focusin", syncResume);
   dialog.returnValue = "";
   const key = sessionKey(nodeId, repoId);
   const last: Record<string, Executor> = JSON.parse(localStorage.getItem("lastExecutors") ?? "{}");
-  const preferred = last[key] ?? nodes.find((candidate) => candidate.id === nodeId)?.agent ?? "claude";
+  const preferred = last[key] ?? node?.agent ?? "claude";
+  dialog.dataset["preferred"] = preferred;
+  // Worktree mode: the AI working here now, and whose conversation "대화 이어서" carries over.
+  const running = sessionRunning(key) ? sessionExecutors.get(key) : undefined;
+  const carry: AgentKind = isAgentKind(running) ? running : isAgentKind(preferred) ? preferred : node?.agent ?? "claude";
+  const resumeButton = el("executorResume");
+  const task = el<HTMLInputElement>("executorTask");
+  let mode: "change" | "add" = "add";
+  const setMode = (next: "change" | "add") => {
+    mode = next;
+    el("executorModeChange").setAttribute("aria-pressed", String(next === "change"));
+    el("executorModeAdd").setAttribute("aria-pressed", String(next === "add"));
+    const adding = worktree && next === "add";
+    task.hidden = !adding;
+    // A past conversation belongs to this folder: a worktree can only carry the current one.
+    el("executorPick").hidden = adding;
+    resumeButton.textContent = worktree ? t("worktree.continue", { agent: agents[carry].short }) : t("session.resumeLast");
+    syncBypassNote();
+  };
+  el("executorWorktree").hidden = !worktree;
+  el("executorWorking").textContent = isAgentKind(running) ? t("worktree.working", { agent: agents[running].short }) : "";
+  el("executorModeChange").onclick = () => setMode("change");
+  el("executorModeAdd").onclick = () => setMode("add");
+  task.placeholder = t("worktree.task");
+  const defaultTask = t("worktree.taskDefault", { n: (node?.repos.filter((repo) => repo.worktree?.of === repoId).length ?? 0) + 1 });
+  task.value = defaultTask;
+  setMode(startMode);
   return new Promise((resolve) => {
     dialog.addEventListener("close", () => {
       dialog.removeEventListener("focusin", syncResume);
       resumeRow.hidden = false;
       const choice = dialog.returnValue;
       const picked: Executor | undefined = choice === "shell" || isAgentKind(choice) ? choice : undefined;
-      if (picked) localStorage.setItem("lastExecutors", JSON.stringify({ ...last, [key]: picked }));
+      // A pick for a new worktree is not this folder's own.
+      if (picked && !(worktree && mode === "add")) localStorage.setItem("lastExecutors", JSON.stringify({ ...last, [key]: picked }));
+      if (worktree && picked) {
+        const continuing = resumeButton.getAttribute("aria-pressed") === "true";
+        const carrying = mode === "add" && picked === carry && continuing;
+        const handoff = continuing && isAgentKind(picked) && picked !== carry;
+        worktreePicked = { mode, task: task.value.trim() || defaultTask, ...(carrying ? { carry } : {}), ...(handoff ? { handoff: true as const } : {}) };
+      }
+      // Back to the plain picker for the next opening.
+      el("executorWorktree").hidden = true;
+      setMode("change");
       resolve(picked);
     }, { once: true });
     dialog.showModal();
@@ -2783,7 +3131,7 @@ async function dropProject(nodeId: string, repoId: string, paneId: string, zone:
 }
 
 /** A session's tab is in place: shows it, and opens the session with what `ask` says, unless it is running. */
-async function showPlaced(nodeId: string, repoId: string | null, terminal: boolean, ask: () => Executor | undefined | Promise<Executor | undefined>): Promise<void> {
+async function showPlaced(nodeId: string, repoId: string | null, terminal: boolean, ask: () => Executor | undefined | Promise<Executor | undefined>, firstPrompt?: string): Promise<void> {
   const key = sessionKey(nodeId, repoId, terminal);
   activeKey = key;
   activityOf(key).waiting = false;
@@ -2806,7 +3154,7 @@ async function showPlaced(nodeId: string, repoId: string | null, terminal: boole
   saveLayout();
   renderRail();
   const resume = resumeChosen();
-  const opened = await cockpit.openSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), terminal);
+  const opened = await cockpit.openSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), terminal, firstPrompt);
   states.set(key, opened);
   renderRail();
   if (opened.kind === "ready") view.term.focus();
@@ -2824,7 +3172,7 @@ async function restartPaneSession(
   repoId: string | null,
   // Given when the choice is already made -- reopening to pick up a share
   // keeps the agent and its conversation, so there is nothing to ask.
-  preset?: { executor: Executor; resume: boolean; terminal?: boolean },
+  preset?: { executor: Executor; resume: boolean | string; terminal?: boolean; firstPrompt?: string },
 ): Promise<void> {
   const executor = preset?.executor ?? (repoId === null ? "shell" : await chooseExecutor(nodeId, repoId));
   if (!executor) return;
@@ -2836,11 +3184,45 @@ async function restartPaneSession(
   states.set(key, { kind: "connecting" });
   renderRail();
   const resume = preset?.resume ?? resumeChosen();
-  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), preset?.terminal);
+  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), preset?.terminal, preset?.firstPrompt);
   states.set(key, restarted);
   renderRail();
   if (restarted.kind === "ready") view.term.focus();
   await afterOpen([{ key, opened: restarted, executor }]);
+}
+
+/**
+ * "worktree에서 AI 추가": the picker in worktree mode. "AI 모델 변경" starts
+ * the folder's session again with the AI picked; "worktree에서 하나 더" has
+ * main make a worktree and opens the AI there, beside this folder's.
+ */
+async function addAgentInWorktree(nodeId: string, repoId: string, startMode: "change" | "add" = "add"): Promise<void> {
+  const executor = await chooseExecutor(nodeId, repoId, true, startMode);
+  const pick = worktreePicked;
+  worktreePicked = undefined;
+  if (!executor || !pick) return;
+  // Read before the AI at work is replaced: its record is the folder's latest until then.
+  const handoff = pick.handoff ? await cockpit.handoffText(nodeId, repoId).catch(() => undefined) : undefined;
+  if (pick.handoff && !handoff) showToast(t("worktree.freshNote"), 6000);
+  if (pick.mode === "change") {
+    const key = sessionKey(nodeId, repoId);
+    showView("terminal");
+    if (!placeTab(projectOf(key), { kind: "session", key })) return;
+    const resume = resumeChosen();
+    return restartPaneSession(nodeId, repoId, { executor, resume: pick.handoff ? false : resume, firstPrompt: handoff });
+  }
+  // The dialog's resume choice was about the original folder: a worktree starts fresh unless its conversation came along.
+  resumeChosen();
+  const made = await cockpit.addWorktree(nodeId, repoId, pick.task, pick.carry);
+  if (!made) return;
+  nodes = made.nodes;
+  if (pick.carry && !made.resume) showToast(t("worktree.freshNote"), 6000);
+  const key = sessionKey(nodeId, made.repoId);
+  showView("terminal");
+  if (!placeTab(projectOf(key), { kind: "session", key })) return renderRail();
+  pastPicked = made.resume;
+  setResume(false);
+  await showPlaced(nodeId, made.repoId, false, () => executor, handoff);
 }
 
 // --- an agent that is not installed --------------------------------------
@@ -3059,7 +3441,10 @@ function workflowMapInput(): MapInput {
       const state = pcStateOf(node), os = osName(node, navigator.platform);
       return { id: node.id, label: machineLabel(node), ...(node.kind === "local" ? { local: true } : {}), status: t(`phone.pc.${state}`), state, ...(os ? { os } : {}) };
     }),
-    folders: nodes.flatMap((node) => node.repos.map((repo) => ({ id: sessionKey(node.id, repo.id), pc: node.id, label: repo.label }))),
+    folders: nodes.flatMap((node) => node.repos.map((repo) => ({
+      id: sessionKey(node.id, repo.id), pc: node.id, label: repo.label,
+      ...(repo.worktree ? { worktreeOf: sessionKey(node.id, repo.worktree.of) } : {}),
+    }))),
     sessions: snapshotSessions(false).map((session) => {
       const executor = session.terminal ? "shell" : sessionExecutors.get(session.key) ?? findByKey(session.key)!.node.agent;
       const cached = workflowFetches.get(session.key)?.result;
@@ -3429,6 +3814,13 @@ el<HTMLButtonElement>("remoteCancel").addEventListener("click", () => remoteDial
 const addDialog = el<HTMLDialogElement>("addDialog");
 el<HTMLButtonElement>("addMachine").addEventListener("click", () => addDialog.showModal());
 el<HTMLButtonElement>("addCancel").addEventListener("click", () => addDialog.close());
+// The tiles' numbers, as in the agent picker.
+addDialog.addEventListener("keydown", (event) => {
+  const tile = { "1": "addChooseLocal", "2": "addChooseRemote" }[event.key];
+  if (!tile || event.ctrlKey || event.altKey || event.metaKey) return;
+  event.preventDefault();
+  el<HTMLButtonElement>(tile).click();
+});
 
 // --- one prompt to many sessions -------------------------------------------
 
@@ -4403,6 +4795,33 @@ const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 const parentOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
 const isUnder = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
 
+/**
+ * Files or folders dragged in from Explorer or Finder land in `dir` as
+ * copies, on this PC or another; a drag inside Lepons is not one of these.
+ */
+function filesDrop(target: HTMLElement, node: NodeConfig, dir: string): void {
+  const outside = (event: DragEvent) => event.dataTransfer?.types.includes("Files") === true;
+  for (const type of ["dragenter", "dragover"] as const) {
+    target.addEventListener(type, (event) => {
+      if (!outside(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer!.dropEffect = "copy";
+      target.classList.add("filesOver");
+    });
+  }
+  target.addEventListener("dragleave", () => target.classList.remove("filesOver"));
+  target.addEventListener("drop", (event) => {
+    if (!outside(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    target.classList.remove("filesOver");
+    const paths = [...event.dataTransfer!.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== "");
+    if (paths.length === 0) return;
+    void cockpit.placeEntries(node.id, dir, paths.map((path) => ({ nodeId: localNodeId, path })), false).then(() => refreshDir(node, dir));
+  });
+}
+
 /** Drops a folder's cached listing, so the tree reads it again. */
 function refreshDir(node: NodeConfig, dir: string): void {
   listings.delete(`${node.id}\0${dir}`);
@@ -4482,7 +4901,7 @@ cockpit.onRepoAction(async (action, nodeId, repoId) => {
   const repo = node?.repos.find((candidate) => candidate.id === repoId);
   if (!node || !repo) return;
   if (action === "terminal") return void activate(node.id, repo.id, true);
-  if (action === "newFile") return void openFileDialog(node, repo);
+  if (action === "worktree") return void addAgentInWorktree(node.id, repo.id);
   if (action === "pin") return togglePin(node.id, repo.id);
   // A remote agent sees this label, not the folder name.
   if (action === "rename") return openRenameDialog({ kind: "repo", node, repo });
@@ -4535,8 +4954,24 @@ cockpit.onFileAction(async (action, nodeId, path, isDirectory) => {
       refreshDir(node, parentOf(path));
       return;
     case "paste": {
+      // Files copied in Explorer after the last 복사 here: those, from this PC.
+      const outside = await cockpit.clipboardFiles();
+      if (outside.length > 0) {
+        await cockpit.placeEntries(nodeId, path, outside.map((from) => ({ nodeId: localNodeId, path: from })), false);
+        refreshDir(node, path);
+        return;
+      }
       const clip = fileClip;
-      if (!clip || clip.nodeId !== nodeId) return;
+      if (!clip) return;
+      // From another PC's tree: copied across, and a cut goes from there once it has landed.
+      if (clip.nodeId !== nodeId) {
+        const done = await cockpit.placeEntries(nodeId, path, [{ nodeId: clip.nodeId, path: clip.path }], clip.move);
+        const from = nodes.find((candidate) => candidate.id === clip.nodeId);
+        if (done.ok && clip.move) entryMoved(clip.nodeId, clip.path, undefined);
+        if (from && clip.move) refreshDir(from, parentOf(clip.path));
+        refreshDir(node, path);
+        return;
+      }
       // A copy takes a free name; a move keeps its own, and a clash there is
       // refused by main rather than renamed.
       const listing = await cockpit.browse(node, path);
@@ -4965,8 +5400,61 @@ function paintUsage(): void {
     usageText.classList.toggle("stacked", tops.size > 1);
   }
   batteriesSeen = usageBar.hidden ? new Map() : seen;
+  noteLimits();
   usageToggle.innerHTML = svg(usageShown ? '<path d="M4 6l4 4 4-4"/>' : '<path d="M4 10l4-4 4 4"/>');
   usageToggle.title = t(usageShown ? "usage.hide" : "usage.show");
+}
+
+/** Folders told their AI's limit is nearly spent: the note, and the reset it told of. */
+const limitNoted = new Map<string, { note: NonNullable<ReturnType<typeof sessionNotes.get>>; resetsAt?: number }>();
+/** Closed by hand: not told again before that reset. */
+const limitClosed = new Map<string, number | undefined>();
+
+/**
+ * A line over each running folder whose AI has 5% or less of a window left,
+ * offering another AI to carry on (the picker's AI 모델 변경 with this
+ * conversation's summary). At 95, not 100: Claude records no reading once
+ * it stops answering, so the last one seen may never reach 100.
+ */
+function noteLimits(): void {
+  let changed = false;
+  for (const [key, state] of states) {
+    const agent = sessionExecutors.get(key);
+    const found = findByKey(key);
+    const spent = state.kind === "ready" && found && isAgentKind(agent)
+      ? usageRows.find((row) => row.agent === agent)?.windows.find(({ window }) => window.usedPercent >= 95)?.window
+      : undefined;
+    // Only while the note up is this one: a reconnect clears notes, another can take its place.
+    const mine = limitNoted.get(key);
+    const ours = mine !== undefined && sessionNotes.get(key) === mine.note;
+    if (mine && !ours) limitNoted.delete(key);
+    if (!spent || !found || (limitClosed.has(key) && limitClosed.get(key) === spent.resetsAt)) {
+      if (ours) {
+        limitNoted.delete(key);
+        sessionNotes.delete(key);
+        changed = true;
+      }
+      continue;
+    }
+    // Another note (an install, a reconnect) says something more pressing.
+    if ((!ours && sessionNotes.has(key)) || (ours && mine.resetsAt === spent.resetsAt)) continue;
+    const reset = spent.resetsAt ? ` · ${t("limit.reset", { time: formatDate(spent.resetsAt * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" }) })}` : "";
+    const { node, repo } = found;
+    const note: NonNullable<ReturnType<typeof sessionNotes.get>> = {
+      text: `${t("limit.near", { agent: agents[agent as AgentKind].short, used: Math.round(spent.usedPercent) })}${reset}`,
+      actions: [
+        [t("limit.switch"), () => void addAgentInWorktree(node.id, repo.id, "change")],
+        [t("common.close"), () => {
+          limitClosed.set(key, spent.resetsAt);
+          noteLimits();
+        }],
+      ],
+    };
+    sessionNotes.set(key, note);
+    limitNoted.set(key, { note, resetsAt: spent.resetsAt });
+    changed = true;
+  }
+  if (changed) renderPanes();
 }
 
 async function refreshUsage(): Promise<void> {
@@ -5044,7 +5532,9 @@ function turnEnded(key: string): void {
       void activate(found.node.id, found.repo.id, found.terminal);
     };
   }
+  justEnded.add(key);
   renderRail();
+  justEnded.delete(key);
   updateWorkflowBadge();
 }
 
@@ -5099,7 +5589,9 @@ function snapshotSessions(told = true): PhoneSession[] {
     const steps = cached?.ok === true ? stepsOf(cached.workflow.events) : [];
     let summary = told && cached?.ok === true ? toldOf.get(cached) : undefined;
     if (told && cached?.ok === true && !summary) toldOf.set(cached, (summary = forPhone(cached.workflow)));
+    const original = found.repo.worktree && found.node.repos.find((repo) => repo.id === found.repo.worktree!.of);
     return [{
+      ...(original ? { worktreeOf: original.label, worktree: found.repo.label } : {}),
       key, nodeId: found.node.id, repoId: found.repo.id, terminal: found.terminal,
       pc: machineLabel(found.node), folder: found.repo.label, ...(status === "shellOnly" ? { mood: "done" as const, agentGone: true } : { mood: status }), ...(turn ? { turn } : {}), ...(preview === undefined ? {} : { preview }), ...(pane ? { pane } : {}),
       ...(steps.length > 0 ? { steps } : {}), ...summary,
@@ -5429,11 +5921,48 @@ cockpit.onPhoneInput((key) => {
   phoneToastTimer = setTimeout(() => dropToast(toast), 4000);
 });
 
-// The phone's "다시 연결" on a PC row: the same as the rail's.
+// The phone's "다시 연결" on a PC row: the rail's, without the picker.
 cockpit.onPhoneReconnect((nodeId) => {
   const node = nodes.find((candidate) => candidate.id === nodeId);
-  if (node) reconnectPc(node);
+  if (node) reconnectPc(node, true);
 });
+
+// The phone's terminal tab, for a folder whose plain terminal is not open: the rail's "터미널 열기".
+cockpit.onPhoneTerminal((nodeId, repoId) => {
+  if (findByKey(sessionKey(nodeId, repoId, true))) void openTerminalQuietly(nodeId, repoId);
+});
+
+/**
+ * The phone's terminal tab, opened on the PC behind whatever is in front:
+ * the tab joins its project's pane (sized there), then every pane shows and
+ * focuses what it did before, so someone at the PC is not interrupted.
+ */
+async function openTerminalQuietly(nodeId: string, repoId: string): Promise<void> {
+  const key = sessionKey(nodeId, repoId, true);
+  if (sessionRunning(key)) return;
+  const shown = new Map(workspace.leaves().map((leaf) => [leaf.id, leaf.active]));
+  const focused = workspace.focused, active = activeKey;
+  if (!placeTab(projectOf(key), { kind: "session", key })) return;
+  const view = terminalFor(key);
+  renderPanes();
+  view.fit.fit();
+  const { cols, rows } = view.term;
+  for (const leaf of workspace.leaves()) {
+    const was = shown.get(leaf.id);
+    if (was !== undefined && was !== leaf.active && was < leaf.tabs.length) leaf.active = was;
+  }
+  workspace.focus(focused);
+  activeKey = active;
+  renderPanes();
+  sessionExecutors.set(key, "shell");
+  states.set(key, { kind: "connecting" });
+  saveLayout();
+  renderRail();
+  const opened = await cockpit.openSession(nodeId, repoId, cols, rows, "shell", false, false, true);
+  states.set(key, opened);
+  renderRail();
+  await afterOpen([{ key, opened, executor: "shell" }]);
+}
 
 // --- the phone once it is set up ---
 
