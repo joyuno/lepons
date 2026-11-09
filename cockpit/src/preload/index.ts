@@ -138,6 +138,7 @@ const api: CockpitApi = {
   pathForFile: (file: File): string => webUtils.getPathForFile(file).replace(/\\/g, "/"),
   openForEdit: (nodeId: string, path: string) => ipcRenderer.invoke(channels.openForEdit, nodeId, path),
   scanImports: () => ipcRenderer.invoke(channels.scanImports),
+  scanRemoteProjects: (nodeId: string) => ipcRenderer.invoke(channels.scanRemoteProjects, nodeId),
   importLocalFolder: (path: string) => ipcRenderer.invoke(channels.importLocalFolder, path),
   saveEdited: (nodeId: string, path: string, edit: EditedText, force: boolean) =>
     ipcRenderer.invoke(channels.saveEdited, nodeId, path, edit, force),

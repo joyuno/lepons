@@ -26,6 +26,7 @@ import { localNetworkSuspect } from "../ssh/local-network.ts";
 import { collectSetupInfo, ensureLeponsKey } from "./setup-info.ts";
 import { importPet, listPets, themeForWindow } from "./pet-themes.ts";
 import { scanImports } from "./import-scan.ts";
+import { existingFoldersCommand, parseExistingFolders, parseRemoteProjects, remoteProjectsCommand } from "./remote-projects.ts";
 import { onSomeScreen } from "./window-place.ts";
 import { startPhoneHost, type PhoneHost } from "./phone-host.ts";
 import {
@@ -2521,6 +2522,8 @@ app.whenReady().then(() => {
   // the operator already named it when they made it.
   const addFolder = (node: NodeConfig, path: string) => {
     const normalized = folderPath(path);
+    // Already on the list: kept as it is, its name and any worktree link with it.
+    if (node.repos.some((existing) => existing.id === normalized)) return { nodes: nodes.list(), repoId: normalized };
     const repo: RepoConfig = {
       id: normalized,
       label: normalized.split("/").filter(Boolean).at(-1) ?? normalized,
@@ -2618,6 +2621,21 @@ app.whenReady().then(() => {
   ipcMain.handle(channels.scanImports, () =>
     scanImports({ home: homedir(), appData: app.getPath("appData"), nodes: nodes.list() }),
   );
+  // The same, on a connected PC: its own transcripts, read over SSH.
+  ipcMain.handle(channels.scanRemoteProjects, async (_event, nodeId: string) => {
+    const node = requireNode(nodeId);
+    const machine = machineOf(node);
+    // ponytail: POSIX shells only; a Windows PC's sshd answers in cmd.exe. Its folders are picked by hand.
+    if (node.kind !== "ssh" || machine.windows) return { ok: false as const, reason: t("remoteProjects.windows") };
+    const ran = await machine.run(remoteProjectsCommand, { timeoutMs: 30_000 });
+    if (!ran || ran.timedOut) return { ok: false as const, reason: t("remoteProjects.unreachable") };
+    const found = parseRemoteProjects(ran.output, node.repos.map((repo) => repo.path));
+    if (found.length === 0) return { ok: true as const, projects: [] };
+    // A folder since deleted or moved has nothing left to open.
+    const there = await machine.run(existingFoldersCommand(found.map((project) => project.path)), { timeoutMs: 15_000 });
+    const existing = there && !there.timedOut ? parseExistingFolders(there.output) : undefined;
+    return { ok: true as const, projects: existing ? found.filter((project) => existing.has(project.path)) : found };
+  });
   // A folder found by the scan, added the way the folder picker would add it.
   ipcMain.handle(channels.importLocalFolder, async (_event, path: string) => {
     const info = await stat(path).catch(() => undefined);

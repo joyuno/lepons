@@ -219,6 +219,16 @@ export interface LocalFind {
   known: boolean;
 }
 
+/** A folder Claude Code or Codex ran in on a connected PC, from its transcripts there. */
+export interface RemoteProject {
+  path: string;
+  tools: Array<"claude" | "codex">;
+  /** Epoch ms of the newest session. */
+  lastUsed: number;
+  /** Already one of the PC's folders in Lepons. */
+  known: boolean;
+}
+
 export interface ImportScan {
   remote: RemoteFind[];
   local: LocalFind[];
@@ -564,6 +574,8 @@ export interface CockpitApi {
   openForEdit(nodeId: string, path: string): Promise<EditOpenResult>;
   /** What VS Code, Cursor, Claude Code and Codex know about that Lepons does not. */
   scanImports(): Promise<ImportScan>;
+  /** The folders with Claude Code or Codex sessions on a connected PC; a reason when it cannot be read. */
+  scanRemoteProjects(nodeId: string): Promise<{ ok: true; projects: RemoteProject[] } | { ok: false; reason: string }>;
   /** Adds a folder on this machine, found by the scan. */
   importLocalFolder(path: string): Promise<{ nodes: NodeConfig[]; repoId: string } | { error: string }>;
   /** Saves edited text, refusing a file changed since it was opened unless `force`. */
@@ -822,6 +834,7 @@ export const channels = {
   clipboardFiles: "files:clipboard",
   openForEdit: "files:open-for-edit",
   scanImports: "import:scan",
+  scanRemoteProjects: "import:scan-remote",
   importLocalFolder: "import:local-folder",
   saveEdited: "files:save-edited",
   readText: "files:read-text",

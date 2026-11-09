@@ -1020,20 +1020,41 @@
       /* The agent picker: the agents as equal tiles with their marks, and
          everything else quiet around them -- one line of choices, a footer
          for the plain terminal. */
-      #executorDialog, #addDialog { padding: 18px 18px 0; }
-      /* The add chooser borrows the picker's tiles: two, a line under each name. */
-      .exTiles.addTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .addTiles .exTile { gap: 6px; padding: 18px 8px 14px; font-size: 13px; }
-      .addTiles .exTile svg { width: 28px; height: 28px; }
-      .addHint { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .addRow {
+      /* The picker look, shared: dialog.picker is the frame (.exHead, a body,
+         .exFoot), .exTiles the choices. .cardTiles is two big tiles with a
+         line under each name (.tileHint), .pickRow the quiet extra row under
+         them, .pickList a list of .listRow to pick one from. Number keys press
+         the tiles (tileKeys in main.ts). */
+      dialog.picker { padding: 18px 18px 0; }
+      .exTiles.cardTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .cardTiles .exTile { gap: 6px; padding: 18px 8px 14px; font-size: 13px; }
+      .cardTiles .exTile svg { width: 28px; height: 28px; }
+      .tileHint { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pickRow {
         display: flex; align-items: center; gap: 10px; width: 100%; margin: 12px 0 0; padding: 9px 10px;
         border: 1px dashed var(--line); border-radius: 8px; background: none; font-size: 12px; text-align: left; cursor: pointer;
       }
-      .addRow:hover, .addRow:focus-visible { outline: none; border-color: var(--muted); background: var(--raise); }
-      .addRow svg { flex: none; width: 16px; height: 16px; color: var(--muted); }
-      .addRowText { display: grid; min-width: 0; }
-      .addRowText small { color: var(--muted); font-size: 11px; }
+      .pickRow:hover, .pickRow:focus-visible { outline: none; border-color: var(--muted); background: var(--raise); }
+      .pickRow svg { flex: none; width: 16px; height: 16px; color: var(--muted); }
+      .pickRowText { display: grid; min-width: 0; }
+      .pickRowText small { color: var(--muted); font-size: 11px; }
+      dialog.picker > .sub, dialog.picker > form > .sub { margin: -6px 0 12px; }
+      .footEnd { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+      .pickList { max-height: 46vh; min-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 8px 0 0; }
+      .pickList .listRow { flex-direction: row; align-items: center; gap: 10px; }
+      .pickList .listRow:focus-visible { outline: none; border-color: var(--live); }
+      .pickList .listRow svg { flex: none; width: 16px; height: 16px; color: var(--muted); }
+      .pickList .rowText { display: grid; gap: 1px; min-width: 0; flex: 1; }
+      .pickList .rowText b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pickList .rowText .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .pickList .rowMeta { flex: none; font-size: 11px; color: var(--muted); white-space: nowrap; }
+      .pickList .listRow.known .rowMeta { color: var(--live); }
+      /* The remote address: one field and its button on a line. */
+      .addrRow { display: flex; align-items: center; gap: 8px; }
+      .addrRow svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
+      .addrRow input { flex: 1; min-width: 0; }
+      .addrRow button.go { flex: none; }
+      .pickList:empty, #remoteDialog .note:empty, #remoteWayNote:empty, #remoteProjectsNote:empty, #browseError:empty { display: none; }
       .exHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
       .exHead h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .exHead .sub { margin: 0; white-space: nowrap; }
@@ -1249,9 +1270,11 @@
       .note.good { color: var(--live); }
 
       /* --- folder browser --------------------------------------------- */
+      .browseBar { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+      .browseBar .exGhost { margin-left: 0; flex: none; }
       #browsePath {
         font-family: var(--sans); font-size: 11px; color: var(--muted);
-        word-break: break-all; margin: 4px 0 8px;
+        word-break: break-all; min-width: 0;
       }
       #browseList {
         height: 300px; overflow-y: auto; border: 1px solid var(--line);
@@ -1660,7 +1683,7 @@
       </form>
     </dialog>
 
-    <dialog id="executorDialog" aria-labelledby="executorTitle">
+    <dialog id="executorDialog" class="picker" aria-labelledby="executorTitle">
       <form method="dialog">
         <div class="exHead"><h2 id="executorTitle"></h2><span class="sub" id="executorWhere"></span></div>
         <!-- Only from "worktree에서 AI 추가": what is there now, and change it or add one beside it. -->
@@ -1702,22 +1725,22 @@
     </dialog>
 
     <!-- Built like the agent picker: two tiles, a quiet row, a footer. -->
-    <dialog id="addDialog" aria-labelledby="addTitle">
+    <dialog id="addDialog" class="picker" aria-labelledby="addTitle">
       <div class="exHead"><h2 id="addTitle" data-i18n="add.title"></h2><span class="sub" data-i18n="add.sub"></span></div>
-      <div class="exTiles addTiles" role="group" aria-labelledby="addTitle">
+      <div class="exTiles cardTiles" role="group" aria-labelledby="addTitle">
         <button type="button" class="exTile" id="addChooseLocal"><kbd>1</kbd>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-          <span class="exName" data-i18n="rail.addLocal"></span><span class="addHint" data-i18n="add.localHint"></span>
+          <span class="exName" data-i18n="rail.addLocal"></span><span class="tileHint" data-i18n="add.localHint"></span>
         </button>
         <button type="button" class="exTile" id="addChooseRemote"><kbd>2</kbd>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
-          <span class="exName" data-i18n="rail.addRemote"></span><span class="addHint" data-i18n="add.remoteHint"></span>
+          <span class="exName" data-i18n="rail.addRemote"></span><span class="tileHint" data-i18n="add.remoteHint"></span>
         </button>
       </div>
       <!-- The two things only a newcomer needs, kept below the action. -->
-      <button type="button" class="addRow" id="openImport">
+      <button type="button" class="pickRow" id="openImport">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/></svg>
-        <span class="addRowText"><span data-i18n="rail.import"></span><small data-i18n="add.importHint"></small></span>
+        <span class="pickRowText"><span data-i18n="rail.import"></span><small data-i18n="add.importHint"></small></span>
       </button>
       <div class="exFoot">
         <button type="button" class="exGhost" id="openGuide">
@@ -1728,38 +1751,70 @@
       </div>
     </dialog>
 
-    <dialog id="remoteDialog">
+    <!-- Adding a remote PC, in steps that look like the AI picker: the
+         address (here), then how to find the folder (remoteWayDialog: pick
+         it in browseDialog, or from the PC's own Claude Code / Codex
+         sessions in remoteProjectsDialog), then the AI picker opens it. -->
+    <dialog id="remoteDialog" class="picker" aria-labelledby="remoteTitle">
       <form id="remoteForm">
-        <h2 data-i18n="remote.title"></h2>
+        <div class="exHead"><h2 id="remoteTitle" data-i18n="remote.title"></h2></div>
         <p class="sub" data-i18n="remote.sub"></p>
-        <label for="remoteDest" data-i18n="remote.address"></label>
-        <input id="remoteDest" name="destination" type="text" placeholder="user@203.0.113.10" autofocus />
-        <label data-i18n="remote.agent"></label>
-        <div class="pick">
-          <label><input type="radio" name="agent" value="claude" checked /> Claude Code</label>
-          <label><input type="radio" name="agent" value="codex" /> Codex</label>
-          <label><input type="radio" name="agent" value="grok" /> Grok</label>
-          <label><input type="radio" name="agent" value="agy" /> Antigravity</label>
-          <label><input type="radio" name="agent" value="agent" /> Cursor</label>
+        <div class="addrRow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+          <input id="remoteDest" name="destination" type="text" placeholder="user@203.0.113.10" aria-labelledby="remoteTitle" autocomplete="off" autofocus />
+          <button type="submit" class="go" data-i18n="remote.connect"></button>
         </div>
-        <p class="guideHint" data-i18n="remote.agentHint"></p>
         <div id="remotePasswordBox" hidden>
           <label for="remotePassword" data-i18n="auth.passwordLabel"></label>
           <input id="remotePassword" type="password" autocomplete="off" />
           <p class="guideHint" data-i18n="auth.passwordHint"></p>
         </div>
         <div class="note" id="remoteNote"></div>
-        <div class="row">
-          <button type="submit" class="go" data-i18n="remote.connect"></button>
-          <button type="button" id="remoteCancel" data-i18n="common.cancel"></button>
+        <div class="exFoot">
+          <button type="button" class="exGhost" id="remoteBack"><span aria-hidden="true">&larr;</span> <span data-i18n="common.back"></span></button>
+          <button type="button" class="exEsc" id="remoteCancel"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
         </div>
       </form>
     </dialog>
 
-    <dialog id="browseDialog">
-      <h2 id="browseTitle"></h2>
+    <dialog id="remoteWayDialog" class="picker" aria-labelledby="remoteWayTitle">
+      <div class="exHead"><h2 id="remoteWayTitle" data-i18n="remoteWay.title"></h2><span class="sub" id="remoteWayWhere"></span></div>
+      <div class="exTiles cardTiles" role="group" aria-labelledby="remoteWayTitle">
+        <button type="button" class="exTile" id="remoteWayBrowse"><kbd>1</kbd>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.7 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v4.1"/><path d="m21 21-1.9-1.9"/><circle cx="17" cy="17" r="3"/></svg>
+          <span class="exName" data-i18n="remoteWay.browse"></span><span class="tileHint" data-i18n="remoteWay.browseHint"></span>
+        </button>
+        <button type="button" class="exTile" id="remoteWayImport"><kbd>2</kbd>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          <span class="exName" data-i18n="remoteWay.import"></span><span class="tileHint" data-i18n="remoteWay.importHint"></span>
+        </button>
+      </div>
+      <div class="note" id="remoteWayNote"></div>
+      <div class="exFoot">
+        <span></span>
+        <button type="button" class="exEsc" id="remoteWayClose"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+      </div>
+    </dialog>
+
+    <dialog id="remoteProjectsDialog" class="picker" aria-labelledby="remoteProjectsTitle">
+      <div class="exHead"><h2 id="remoteProjectsTitle" data-i18n="remoteProjects.title"></h2><span class="sub" id="remoteProjectsWhere"></span></div>
+      <p class="sub" data-i18n="remoteProjects.sub"></p>
+      <input type="search" id="remoteProjectsSearch" autocomplete="off" />
+      <div class="pickList" id="remoteProjectsList"></div>
+      <div class="note" id="remoteProjectsNote"></div>
+      <div class="exFoot">
+        <button type="button" class="exGhost" id="remoteProjectsBack"><span aria-hidden="true">&larr;</span> <span data-i18n="common.back"></span></button>
+        <button type="button" class="exEsc" id="remoteProjectsClose"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+      </div>
+    </dialog>
+
+    <dialog id="browseDialog" class="picker" aria-labelledby="browseTitle">
+      <div class="exHead"><h2 id="browseTitle" data-i18n="remoteWay.browse"></h2><span class="sub" id="browseWhere"></span></div>
       <p class="sub" data-i18n="browse.sub"></p>
-      <div id="browsePath"></div>
+      <div class="browseBar">
+        <button type="button" class="exGhost" id="browseUp"><span aria-hidden="true">&uarr;</span> <span data-i18n="browse.up"></span></button>
+        <div id="browsePath"></div>
+      </div>
       <div id="browseList"></div>
       <div class="note bad" id="browseError"></div>
       <!-- A folder to work in often does not exist yet at the moment it is
@@ -1768,10 +1823,12 @@
         <input id="browseNewName" type="text" autocomplete="off" />
         <button type="button" id="browseMake" data-i18n="browse.make"></button>
       </div>
-      <div class="row">
-        <button type="button" id="browseUp" data-i18n="browse.up"></button>
-        <button type="button" class="go" id="browseChoose" data-i18n="browse.choose"></button>
-        <button type="button" id="browseCancel" data-i18n="common.cancel"></button>
+      <div class="exFoot">
+        <button type="button" class="exGhost" id="browseBack"><span aria-hidden="true">&larr;</span> <span data-i18n="common.back"></span></button>
+        <span class="footEnd">
+          <button type="button" class="exEsc" id="browseCancel"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+          <button type="button" class="go" id="browseChoose" data-i18n="browse.choose"></button>
+        </span>
       </div>
     </dialog>
 

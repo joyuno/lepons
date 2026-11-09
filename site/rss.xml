@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Mon, 09 Nov 2026 18:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Mon, 09 Nov 2026 20:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.3: 원격 PC의 프로젝트를 불러와 바로 열어요</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.3</guid>
+      <pubDate>Mon, 09 Nov 2026 20:00:00 +0900</pubDate>
+      <description>원격 PC를 추가하면 그 PC에서 Claude Code나 Codex를 썼던 폴더 목록이 나와요. 하나를 고르고 AI를 고르면 바로 열려요. 원격 PC 추가 화면도 주소 입력, 폴더 고르기, AI 고르기 순서로 정리했어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.2: AI 사용량이 늘 최신으로 보여요</title>
       <link>https://lepons.app/#download</link>

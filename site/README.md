@@ -1,6 +1,6 @@
 # lepons.app 정적 사이트
 
-Lepons의 공개 홈이에요. 소개(`index.html`, 영어는 `en/index.html`)·개인정보 처리방침(`privacy.html`)·이용약관(`terms.html`)·지원(`support.html`)이 있어요. 빌드 단계 없는 HTML/CSS이고, 외부 글꼴·스크립트·추적기가 없어요. 개인정보 처리방침이 "웹사이트는 쿠키와 스크립트를 쓰지 않아요"라고 적고 있으니 JavaScript는 넣지 않아요. 움직임과 눌러 보는 데모는 전부 CSS예요.
+Lepons의 공개 홈이에요. 소개(`index.html`, 영어는 `en/index.html`)·개인정보 처리방침(`privacy.html`)·이용약관(`terms.html`)·지원(`support.html`)이 있어요. 빌드 단계 없는 HTML/CSS이고, 외부 글꼴·추적기가 없어요. 스크립트는 둘뿐이에요: `dl.js`(다운로드 버튼을 최신 릴리스 파일로)와 `reveal.js`(스크롤해 닿은 기능에 `in` 클래스를 붙여 나타나게). 둘 다 없거나 꺼져도 페이지는 다 보여요. 개인정보 처리방침의 웹사이트 문단이 이 둘을 적고 있으니, 스크립트를 더하면 그 문단도 고쳐요. 눌러 보는 데모는 전부 CSS예요.
 
 ## 올리기 (Cloudflare Workers 정적 자산)
 

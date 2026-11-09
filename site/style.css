@@ -374,3 +374,24 @@ body.doc table { width: 100%; border-collapse: collapse; font-size: .9375rem; }
 body.doc th, body.doc td { text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid var(--line); }
 body.doc .table { overflow-x: auto; }
 body.doc hr { border: 0; border-top: 1px solid var(--line); margin: 56px 0; }
+
+/* ---------- reveal.js: the pipe as one line that grows as you scroll, an arrow at its tip, and each
+   feature rising in as it is reached. Without the script nothing here applies: the borders draw it all. */
+main { position: relative; }
+.pipe-live .leg.left { border-left-color: transparent; }
+.pipe-live .leg.right { border-right-color: transparent; }
+.pipe-live .cross i { border-color: transparent; }
+.pipeline { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.pipe-line { fill: none; stroke: var(--pipe); stroke-width: var(--w); stroke-linecap: butt; }
+.pipe-head { fill: var(--pipe); transition: opacity 200ms ease-out; }
+.reveal .leg > .copy, .reveal .leg > .vis, .reveal .twin > .copy, .reveal .twin > .vis {
+  opacity: 0; transform: translateY(56px);
+  transition: opacity 700ms ease-out, transform 850ms cubic-bezier(.2, .7, .2, 1);
+}
+.reveal .leg.in > .copy, .reveal .leg.in .twin > .copy { opacity: 1; transform: none; transition-delay: 100ms; }
+.reveal .leg.in > .vis, .reveal .leg.in .twin > .vis { opacity: 1; transform: none; transition-delay: 320ms; }
+.reveal .leg.in .twin + .twin > .copy { transition-delay: 420ms; }
+.reveal .leg.in .twin + .twin > .vis { transition-delay: 640ms; }
+@media (max-width: 860px) {
+  .pipe-live .leg.right { border-left-color: transparent; }
+}

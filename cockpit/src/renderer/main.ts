@@ -449,6 +449,7 @@ const lucide = {
   terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
   plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
   minus: '<path d="M5 12h14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   arrowLeftRight: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
@@ -590,7 +591,7 @@ async function pcMenu(node: NodeConfig, pc: PcState): Promise<void> {
     ...(node.kind === "ssh" ? [{ id: "address", label: t("rail.editConnection") }, "-" as const, { id: "remove", label: t("rail.removeMachine") }] : []),
   ]);
   if (pick === "terminal") void activate(node.id, null, true);
-  else if (pick === "add") void (node.kind === "local" ? addLocalFolder() : pickRemoteFolder(node));
+  else if (pick === "add") void (node.kind === "local" ? addLocalFolder() : openRemoteWay(node));
   else if (pick === "clean") startCleanup(node);
   else if (pick === "reconnect") reconnectPc(node);
   else if (pick === "rename") openRenameDialog({ kind: "pc", node });
@@ -1068,7 +1069,7 @@ function renderRail(): void {
     addBtn.append(lucideIcon("plus"));
     addBtn.addEventListener("click", () => {
       if (node.kind === "local") void addLocalFolder();
-      else void pickRemoteFolder(node);
+      else openRemoteWay(node);
     });
 
     if (!managing) head.append(iconButton("terminal", t("rail.pcTerminal"), () => void activate(node.id, null, true)), addBtn);
@@ -3810,6 +3811,20 @@ function openRemoteDialog(): void {
   remoteDialog.showModal();
 }
 el<HTMLButtonElement>("remoteCancel").addEventListener("click", () => remoteDialog.close());
+el<HTMLButtonElement>("remoteBack").addEventListener("click", () => {
+  remoteDialog.close();
+  addDialog.showModal();
+});
+
+/** Number keys 1..n press a picker's tiles, as 1-5 pick the AI in its picker. Not while a field has the keys. */
+function tileKeys(dialog: HTMLDialogElement, tiles: readonly string[]): void {
+  dialog.addEventListener("keydown", (event) => {
+    const tile = tiles[Number(event.key) - 1];
+    if (!tile || event.ctrlKey || event.altKey || event.metaKey || event.target instanceof HTMLInputElement) return;
+    event.preventDefault();
+    el<HTMLButtonElement>(tile).click();
+  });
+}
 
 // A single rail button opens this chooser first: "add" used to mean two
 // differently-shaped buttons (one triggers the OS folder picker directly,
@@ -3818,13 +3833,7 @@ el<HTMLButtonElement>("remoteCancel").addEventListener("click", () => remoteDial
 const addDialog = el<HTMLDialogElement>("addDialog");
 el<HTMLButtonElement>("addMachine").addEventListener("click", () => addDialog.showModal());
 el<HTMLButtonElement>("addCancel").addEventListener("click", () => addDialog.close());
-// The tiles' numbers, as in the agent picker.
-addDialog.addEventListener("keydown", (event) => {
-  const tile = { "1": "addChooseLocal", "2": "addChooseRemote" }[event.key];
-  if (!tile || event.ctrlKey || event.altKey || event.metaKey) return;
-  event.preventDefault();
-  el<HTMLButtonElement>(tile).click();
-});
+tileKeys(addDialog, ["addChooseLocal", "addChooseRemote"]);
 
 // --- one prompt to many sessions -------------------------------------------
 
@@ -3917,7 +3926,9 @@ el<HTMLFormElement>("remoteForm").addEventListener("submit", async (event) => {
   remoteNote.className = "note";
   remoteNote.textContent = t("remote.connecting");
 
-  const agent = (new FormData(el<HTMLFormElement>("remoteForm")).get("agent") ?? "claude") as AgentKind;
+  // The PC's default AI only puts the focus on a tile in the picker; one
+  // already known keeps its own.
+  const agent = nodes.find((candidate) => candidate.id === destination)?.agent ?? "claude";
   // Read once and cleared at once: the password is for this one sign-in.
   const passwordInput = el<HTMLInputElement>("remotePassword");
   const password = passwordInput.value;
@@ -3936,26 +3947,117 @@ el<HTMLFormElement>("remoteForm").addEventListener("submit", async (event) => {
 
   nodes = await cockpit.listNodes();
   const node = nodes.find((candidate) => candidate.id === destination);
-
-  if (report.shellUnread && node) {
-    remoteNote.className = "note bad";
-    remoteNote.textContent = t("remote.shellUnread");
-    renderRail();
-    return;
-  }
-
-  // Connecting a machine must not install software on it.
-  if (report.agentVersions?.[agent] === undefined && node) {
-    remoteNote.className = "note bad";
-    remoteNote.textContent = t("remote.missingAgent", { agent: agentLabel(agent) });
-    renderRail();
-    return;
-  }
-
   remoteDialog.close();
   renderRail();
-  if (node) await pickRemoteFolder(node);
+  // A missing AI is not stopped here: the picker dims what the PC lacks.
+  if (node) openRemoteWay(node, report.shellUnread ? t("remote.shellUnread") : "");
 });
+
+// --- a remote PC's folder: picked by hand, or from its own sessions -------
+
+const remoteWayDialog = el<HTMLDialogElement>("remoteWayDialog");
+let wayNode: NodeConfig | undefined;
+
+/** How to find the folder to open on a connected PC; `note` says what the connection could not check. */
+function openRemoteWay(node: NodeConfig, note = ""): void {
+  wayNode = node;
+  el("remoteWayWhere").textContent = machineLabel(node);
+  const shown = el<HTMLDivElement>("remoteWayNote");
+  shown.className = note ? "note bad" : "note";
+  shown.textContent = note;
+  remoteWayDialog.showModal();
+  el<HTMLButtonElement>("remoteWayBrowse").focus();
+}
+tileKeys(remoteWayDialog, ["remoteWayBrowse", "remoteWayImport"]);
+el<HTMLButtonElement>("remoteWayClose").addEventListener("click", () => remoteWayDialog.close());
+el<HTMLButtonElement>("remoteWayBrowse").addEventListener("click", () => {
+  remoteWayDialog.close();
+  if (wayNode) void pickRemoteFolder(wayNode);
+});
+el<HTMLButtonElement>("remoteWayImport").addEventListener("click", () => {
+  remoteWayDialog.close();
+  if (wayNode) void openRemoteProjects(wayNode);
+});
+/** Back from a step after the choice: the choice again, for the same PC. */
+function backToWay(dialog: HTMLDialogElement): void {
+  dialog.close();
+  if (wayNode) openRemoteWay(wayNode);
+}
+
+/** A folder now on the PC's list, opened the way a click on it in the rail opens it: the AI picker first. */
+function openAddedFolder(nodeId: string, repoId: string): void {
+  void activate(nodeId, repoId);
+}
+
+const projectsDialog = el<HTMLDialogElement>("remoteProjectsDialog");
+const projectsList = el<HTMLDivElement>("remoteProjectsList");
+const projectsNote = el<HTMLDivElement>("remoteProjectsNote");
+const projectsSearch = el<HTMLInputElement>("remoteProjectsSearch");
+/** Bumped on every open, so a slow scan of one PC never fills the list opened for another. */
+let projectsGeneration = 0;
+
+/** The folders where Claude Code or Codex ran on the PC, newest first; one picked opens in the AI picker. */
+async function openRemoteProjects(node: NodeConfig): Promise<void> {
+  const generation = ++projectsGeneration;
+  wayNode = node;
+  el("remoteProjectsWhere").textContent = machineLabel(node);
+  projectsList.replaceChildren();
+  projectsSearch.value = "";
+  projectsSearch.placeholder = t("remoteProjects.search");
+  projectsSearch.hidden = true;
+  projectsNote.className = "note";
+  projectsNote.textContent = t("import.scanning");
+  projectsDialog.showModal();
+  const result = await cockpit.scanRemoteProjects(node.id).catch((error: unknown) => ({ ok: false as const, reason: String(error) }));
+  if (generation !== projectsGeneration || !projectsDialog.open) return;
+  if (!result.ok) {
+    projectsNote.className = "note bad";
+    projectsNote.textContent = result.reason;
+    return;
+  }
+  projectsNote.textContent = result.projects.length === 0 ? t("remoteProjects.none") : "";
+  projectsSearch.hidden = result.projects.length < 8;
+  for (const project of result.projects) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "listRow" + (project.known ? " known" : "");
+    row.dataset["search"] = project.path.toLowerCase();
+    row.append(lucideIcon("folder"));
+    const text = document.createElement("span");
+    text.className = "rowText";
+    const name = document.createElement("b");
+    name.textContent = project.path.split("/").filter(Boolean).at(-1) ?? project.path;
+    const where = document.createElement("span");
+    where.className = "sub";
+    where.textContent = project.path;
+    text.append(name, where);
+    const meta = document.createElement("span");
+    meta.className = "rowMeta";
+    meta.textContent = project.known
+      ? t("import.known")
+      : `${project.tools.map((tool) => agents[tool].short).join(" · ")} · ${formatDate(project.lastUsed, { month: "short", day: "numeric" })}`;
+    row.append(text, meta);
+    row.title = project.path;
+    row.addEventListener("click", () => void openRemoteProject(node, project.path));
+    projectsList.append(row);
+  }
+  (projectsSearch.hidden ? projectsList.querySelector<HTMLButtonElement>(".listRow") : projectsSearch)?.focus();
+}
+
+/** One found folder, added (one already there, a worktree too, is kept as it is) and opened. */
+async function openRemoteProject(node: NodeConfig, path: string): Promise<void> {
+  const result = await cockpit.addRemoteFolder(node.id, path);
+  nodes = result.nodes;
+  renderRail();
+  projectsDialog.close();
+  openAddedFolder(node.id, result.repoId);
+}
+projectsSearch.addEventListener("input", () => {
+  const query = projectsSearch.value.trim().toLowerCase();
+  for (const row of projectsList.querySelectorAll<HTMLButtonElement>(".listRow")) row.hidden = !row.dataset["search"]!.includes(query);
+});
+el<HTMLButtonElement>("remoteProjectsBack").addEventListener("click", () => backToWay(projectsDialog));
+el<HTMLButtonElement>("remoteProjectsClose").addEventListener("click", () => projectsDialog.close());
 
 // --- files in panes (markdown, images, pdf, text) ------------------------
 
@@ -4565,7 +4667,8 @@ let browsingPath = "";
 async function pickRemoteFolder(node: NodeConfig): Promise<void> {
   browsingNode = node;
   browsingPath = "";
-  el<HTMLHeadingElement>("browseTitle").textContent = t("browse.title", { machine: machineLabel(node) });
+  wayNode = node;
+  el("browseWhere").textContent = machineLabel(node);
   const nameField = el<HTMLInputElement>("browseNewName");
   nameField.value = "";
   nameField.placeholder = t("browse.newName");
@@ -4646,13 +4749,17 @@ newName.addEventListener("keydown", (event) => {
   void makeFolderHere();
 });
 el<HTMLButtonElement>("browseCancel").addEventListener("click", () => browseDialog.close());
-// Same reasoning as addLocalFolder: registering must not open a session.
+el<HTMLButtonElement>("browseBack").addEventListener("click", () => backToWay(browseDialog));
+// Registered, then asked which AI: nothing starts until one is picked, and
+// closing the picker leaves the folder on the list, unopened.
 el<HTMLButtonElement>("browseChoose").addEventListener("click", async () => {
   if (!browsingNode || browsingPath === "") return;
-  const result = await cockpit.addRemoteFolder(browsingNode.id, browsingPath);
+  const nodeId = browsingNode.id;
+  const result = await cockpit.addRemoteFolder(nodeId, browsingPath);
   nodes = result.nodes;
   browseDialog.close();
   renderRail();
+  openAddedFolder(nodeId, result.repoId);
 });
 
 // --- create-file dialog --------------------------------------------------
