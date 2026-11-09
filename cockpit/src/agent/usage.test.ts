@@ -20,6 +20,8 @@ import {
   parseAgyUsage,
   parseClaudeUsage,
   parseCodexUsage,
+  parseUsageCommand,
+  asStatusLineInput,
   remoteUsageScript,
   splitRemoteUsage,
   statusLineSettings,
@@ -314,4 +316,27 @@ test("the remote usage script finds Codex's record under a home with a space", (
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("Claude's /usage reads as a reading, its reset times in this PC's time", () => {
+  const now = new Date(2026, 10, 9, 16, 40);
+  const text = [
+    "You are currently using your subscription to power your Claude Code usage",
+    "",
+    "Current session: 12% used · resets 5pm (Asia/Seoul)",
+    "Current week (all models): 74% used · resets Nov 10, 12:59pm (Asia/Seoul)",
+    "Current week (Fable): 0% used · resets Nov 10, 1pm (Asia/Seoul)",
+  ].join("\n");
+  const read = parseUsageCommand(text, now)!;
+  assert.deepEqual(read, {
+    fiveHour: { usedPercent: 12, resetsAt: new Date(2026, 10, 9, 17, 0).getTime() / 1000 },
+    week: { usedPercent: 74, resetsAt: new Date(2026, 10, 10, 12, 59).getTime() / 1000 },
+  });
+  // Back through the usage file, as the status line's input.
+  assert.deepEqual(parseClaudeUsage(asStatusLineInput(read)), read);
+  // A time with no date that has passed is tomorrow's; a December reset read in January is this year's.
+  assert.equal(parseUsageCommand("Current session: 3% used · resets 9am", now)!.fiveHour!.resetsAt, new Date(2026, 10, 10, 9, 0).getTime() / 1000);
+  assert.equal(parseUsageCommand("Current week (all models): 1% used · resets Jan 2, 1am", new Date(2026, 11, 30))!.week!.resetsAt, new Date(2027, 0, 2, 1, 0).getTime() / 1000);
+  assert.equal(parseUsageCommand("Current week (all models): 5% used", now)!.week!.resetsAt, undefined);
+  assert.equal(parseUsageCommand("Not logged in · Please run /login", now), undefined);
 });

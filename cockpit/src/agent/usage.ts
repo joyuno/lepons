@@ -315,3 +315,45 @@ export class UsageGate {
     this.#later.clear();
   }
 }
+
+/**
+ * Claude Code's own `/usage` (`claude -p "/usage"`), read without a
+ * conversation: "Current session: 12% used · resets 5pm (Asia/Seoul)" and
+ * "Current week (all models): 74% used · resets Nov 10, 12:59pm (Asia/Seoul)".
+ * Not a documented format: undefined when neither line reads, and the status
+ * line's readings carry on. Reset times are in this PC's own time zone, the one
+ * Claude printed them in; one with no date is the next such time.
+ */
+export function parseUsageCommand(text: string, now = new Date()): AgentUsage | undefined {
+  const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+  const resetOf = (rest: string): number | undefined => {
+    const m = /resets\s+(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(rest);
+    if (!m) return undefined;
+    const hour = (Number(m[3]) % 12) + (m[5]!.toLowerCase() === "pm" ? 12 : 0);
+    const month = m[1] ? months.indexOf(m[1].toLowerCase()) : now.getMonth();
+    if (month < 0) return undefined;
+    const at = new Date(now.getFullYear(), month, m[2] ? Number(m[2]) : now.getDate(), hour, Number(m[4] ?? 0));
+    // A time with no date that has passed today is tomorrow's; a date well behind us is next year's.
+    if (!m[1] && at.getTime() <= now.getTime()) at.setDate(at.getDate() + 1);
+    if (m[1] && at.getTime() < now.getTime() - 2 * 86_400_000) at.setFullYear(at.getFullYear() + 1);
+    return Math.floor(at.getTime() / 1000);
+  };
+  const windowOf = (label: RegExp): UsageWindow | undefined => {
+    for (const line of text.split(/\r?\n/)) {
+      const m = label.exec(line);
+      if (!m) continue;
+      const reset = resetOf(line);
+      return { usedPercent: Number(m[1]), ...(reset === undefined ? {} : { resetsAt: reset }) };
+    }
+    return undefined;
+  };
+  const fiveHour = windowOf(/^\s*Current session\b[^\d%]*?(\d{1,3})% used/i);
+  const week = windowOf(/^\s*Current week \(all models\)[^\d%]*?(\d{1,3})% used/i);
+  return fiveHour || week ? { ...(fiveHour ? { fiveHour } : {}), ...(week ? { week } : {}) } : undefined;
+}
+
+/** A reading in the status line's own shape, so the usage file takes it as one of Claude's (parseClaudeUsage). */
+export function asStatusLineInput(usage: AgentUsage): string {
+  const window = (w: UsageWindow | undefined) => (w ? { used_percentage: w.usedPercent, ...(w.resetsAt === undefined ? {} : { resets_at: w.resetsAt }) } : undefined);
+  return JSON.stringify({ rate_limits: { ...(usage.fiveHour ? { five_hour: window(usage.fiveHour) } : {}), ...(usage.week ? { seven_day: window(usage.week) } : {}) }, source: "usage-command" });
+}

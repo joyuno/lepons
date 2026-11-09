@@ -99,7 +99,7 @@ import { parseCodexRollout } from "../workflow/codex.ts";
 import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
 import type { TurnEnd } from "../shared/status.ts";
-import { agySettingsFile, agyStatusLineWith, agyUsageFile, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
+import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
 import { collectTokenStats, type TokenStats } from "../agent/token-stats.ts";
 import { TranscriptWatchers, type TranscriptTarget, type WatchHandle } from "./transcript-watch.ts";
 import { posixQuote } from "../session/state.ts";
@@ -1754,6 +1754,50 @@ app.whenReady().then(() => {
   } catch {
     // No watch on this home: the minute timer and turn ends still read it.
   }
+
+  /**
+   * Claude Code's own `/usage`, so the rail's battery is right even when
+   * Claude was last used outside Lepons (the status line saves only on a reply
+   * here). Run on this PC only, and only while a Claude session of this PC is
+   * open: once when that first holds after Lepons starts, then every 4 hours,
+   * and once more after a window's reset time passes. No conversation, no
+   * tokens; no record is kept. What it reads goes into the usage file in the
+   * status line's shape, so the watch above shows it and the next reply's
+   * reading, being newer, takes over.
+   */
+  const USAGE_ASK_MS = 4 * 60 * 60 * 1000;
+  let usageAskedAt = 0;
+  let usageAsking = false;
+  const claudeOpenHere = () =>
+    [...sessions].some(([key, session]) => key.startsWith(`${localNodeId}::`) && !key.endsWith("::terminal") && sessionExecutor.get(key) === "claude" && session.state.kind === "ready");
+  const askClaudeUsage = () => new Promise<void>((done) => {
+    const launch = localLaunch(`claude -p --no-session-persistence --strict-mcp-config "/usage"`);
+    const child = spawn(launch.file, launch.args, { cwd: tmpdir(), env: sanitizedEnv(), shell: launch.shell, windowsHide: true });
+    let output = "";
+    const timer = setTimeout(() => child.kill(), 60_000);
+    child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+    child.on("error", () => { clearTimeout(timer); done(); });
+    child.on("close", () => {
+      clearTimeout(timer);
+      const read = parseUsageCommand(output);
+      if (!read) return done();
+      void writeFile(join(homedir(), claudeUsageFile), asStatusLineInput(read)).catch(() => undefined).finally(done);
+    });
+    child.stdin.end();
+  });
+  const usageTick = () => {
+    if (usageAsking || !claudeOpenHere()) return;
+    const now = Date.now();
+    const local = lastUsage.get("local")?.claude;
+    const resetSince = [local?.fiveHour, local?.week].some((w) => w?.resetsAt !== undefined && w.resetsAt * 1000 > usageAskedAt && w.resetsAt * 1000 <= now);
+    if (usageAskedAt !== 0 && now - usageAskedAt < USAGE_ASK_MS && !resetSince) return;
+    usageAskedAt = now;
+    usageAsking = true;
+    void askClaudeUsage().finally(() => { usageAsking = false; });
+  };
+  const usageTimer = setInterval(usageTick, 60_000);
+  usageTimer.unref();
+  app.once("will-quit", () => clearInterval(usageTimer));
 
   // Which agents on a PC get lepons, ticked on the map. Applied at once
   // where a share is open: registered for the ticked, removed for the rest.

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Lepons</title>
+    <link>https://lepons.app/</link>
+    <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
+    <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
+    <language>ko</language>
+    <lastBuildDate>Mon, 09 Nov 2026 18:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.2: AI 사용량이 늘 최신으로 보여요</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.2</guid>
+      <pubDate>Mon, 09 Nov 2026 18:00:00 +0900</pubDate>
+      <description>PC 왼쪽 목록의 사용량 막대가 Claude를 Lepons 밖에서 썼을 때도 최신 값으로 바뀌어요. Lepons를 켤 때와 4시간마다, 사용량 기간이 초기화된 뒤에 한 번씩 Claude Code에 직접 물어봐요.</description>
+    </item>
+    <item>
+      <title>Lepons 1.10.1: 폰에서 PC 세션을 열어요</title>
+      <link>https://lepons.app/#phone</link>
+      <guid isPermaLink="false">lepons-1.10.1</guid>
+      <pubDate>Mon, 09 Nov 2026 16:40:00 +0900</pubDate>
+      <description>폰 세션 목록의 "열지 않은 폴더"를 누르면 PC가 그 폴더에서 마지막에 쓴 AI로 지난 대화를 이어서 열어요. PC 앞에 없어도 돼요. 공유 맵과 워크플로우 버튼도 아이콘을 달아 잘 보이게 했어요.</description>
+    </item>
+    <item>
+      <title>Lepons 1.10.0: 사진·파일 첨부와 PC 사이 파일 옮기기</title>
+      <link>https://lepons.app/#share</link>
+      <guid isPermaLink="false">lepons-1.10.0</guid>
+      <pubDate>Mon, 09 Nov 2026 15:20:00 +0900</pubDate>
+      <description>폰에서 사진과 파일을 AI에게 첨부하고, 답변을 복사하거나 공유해요. PC에서는 탐색기에서 끌어다 놓아 다른 PC로 파일을 옮기고, AI가 출력한 파일 경로를 Ctrl+클릭해 바로 열어요.</description>
+    </item>
+    <item>
+      <title>개인정보 처리방침 (2026년 11월 9일)</title>
+      <link>https://lepons.app/privacy</link>
+      <guid isPermaLink="false">privacy-2026-11-09</guid>
+      <pubDate>Mon, 09 Nov 2026 15:00:00 +0900</pubDate>
+      <description>사진·파일 첨부를 반영했어요. 고른 사진과 파일은 종단간 암호화되어 페어링한 내 PC로만 가고, 개발자는 내용을 볼 수 없어요.</description>
+    </item>
+  </channel>
+</rss>
