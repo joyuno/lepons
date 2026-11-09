@@ -208,6 +208,9 @@ const api: CockpitApi = {
   onPhoneReconnect: (handler) => {
     ipcRenderer.on(channels.phoneReconnect, (_event, nodeId: string) => handler(nodeId));
   },
+  onPhoneOpen: (handler) => {
+    ipcRenderer.on(channels.phoneOpen, (_event, nodeId: string, repoId: string) => handler(nodeId, repoId));
+  },
   onPhoneTerminal: (handler) => {
     ipcRenderer.on(channels.phoneTerminal, (_event, nodeId: string, repoId: string) => handler(nodeId, repoId));
   },

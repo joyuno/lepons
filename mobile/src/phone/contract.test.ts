@@ -98,6 +98,8 @@ test("what the real server sends, every optional field filled, the phone's reade
     isAgent: () => true,
     screen: () => screen,
     pcs: () => [{ nodeId: "local", label: "이 PC", state: "live" }],
+    folders: () => [{ nodeId: "local", repoId: "C:/work/docs", pc: "이 PC", folder: "docs" }],
+    openFolder: () => {},
     accounts: async () => [{ pc: "이 PC", agents: [{ name: "Claude Code", version: "2", signedIn: true }] }],
     workflow: async () => ({ ok: true, workflow }),
     docs: async () => ["a.md"],

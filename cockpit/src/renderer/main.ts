@@ -1258,6 +1258,10 @@ function terminalFor(key: string) {
     // Option-drag selects on a Mac the way Shift-drag does elsewhere; the
     // rewrite below relies on it, and it also turns off Option's column mode.
     macOptionClickForcesSelection: true,
+    // Text drawn too close to the background is lifted until it reads: an
+    // agent set for a light terminal paints its question black, which the
+    // dark theme showed as nothing. 4.5 is WCAG AA; colours that read already stay.
+    minimumContrastRatio: 4.5,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -4774,7 +4778,6 @@ el<HTMLButtonElement>("fileCreate").addEventListener("click", async () => {
   const missing = [
     result.tracked === true ? t("browse.stillTracked") : "",
     result.gitignored === false ? t("browse.notIgnored") : "",
-    result.blocked === false ? t("browse.notBlocked") : "",
   ].filter((line) => line !== "");
   if (missing.length > 0) {
     // A protection that did not take hold is the one thing an operator must
@@ -5929,16 +5932,22 @@ cockpit.onPhoneReconnect((nodeId) => {
 
 // The phone's terminal tab, for a folder whose plain terminal is not open: the rail's "터미널 열기".
 cockpit.onPhoneTerminal((nodeId, repoId) => {
-  if (findByKey(sessionKey(nodeId, repoId, true))) void openTerminalQuietly(nodeId, repoId);
+  if (findByKey(sessionKey(nodeId, repoId, true))) void openQuietly(nodeId, repoId, true);
+});
+// A closed folder tapped on the phone: its AI, the one last used there (else the PC's), carrying on its last conversation. No question: nobody may be at the PC to answer it.
+cockpit.onPhoneOpen((nodeId, repoId) => {
+  if (findByKey(sessionKey(nodeId, repoId))) void openQuietly(nodeId, repoId, false);
 });
 
 /**
- * The phone's terminal tab, opened on the PC behind whatever is in front:
- * the tab joins its project's pane (sized there), then every pane shows and
- * focuses what it did before, so someone at the PC is not interrupted.
+ * What the phone opens on the PC (a folder's terminal, or its AI), behind
+ * whatever is in front: the tab joins its project's pane (sized there), then
+ * every pane shows and focuses what it did before, so someone at the PC is not interrupted.
  */
-async function openTerminalQuietly(nodeId: string, repoId: string): Promise<void> {
-  const key = sessionKey(nodeId, repoId, true);
+async function openQuietly(nodeId: string, repoId: string, terminal: boolean): Promise<void> {
+  const key = sessionKey(nodeId, repoId, terminal);
+  const last: Record<string, Executor> = JSON.parse(localStorage.getItem("lastExecutors") ?? "{}");
+  const executor: Executor = terminal ? "shell" : last[key] ?? nodes.find((node) => node.id === nodeId)?.agent ?? "claude";
   if (sessionRunning(key)) return;
   const shown = new Map(workspace.leaves().map((leaf) => [leaf.id, leaf.active]));
   const focused = workspace.focused, active = activeKey;
@@ -5954,14 +5963,17 @@ async function openTerminalQuietly(nodeId: string, repoId: string): Promise<void
   workspace.focus(focused);
   activeKey = active;
   renderPanes();
-  sessionExecutors.set(key, "shell");
+  sessionExecutors.set(key, executor);
   states.set(key, { kind: "connecting" });
   saveLayout();
   renderRail();
-  const opened = await cockpit.openSession(nodeId, repoId, cols, rows, "shell", false, false, true);
+  // An AI carries on its last conversation (a new one where there is none), with the bypass the operator chose for every opening.
+  const opened = terminal
+    ? await cockpit.openSession(nodeId, repoId, cols, rows, "shell", false, false, true)
+    : await cockpit.openSession(nodeId, repoId, cols, rows, executor, executor !== "shell", localStorage.getItem("bypassPermissions") === "1", false);
   states.set(key, opened);
   renderRail();
-  await afterOpen([{ key, opened, executor: "shell" }]);
+  await afterOpen([{ key, opened, executor }]);
 }
 
 // --- the phone once it is set up ---

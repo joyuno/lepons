@@ -90,7 +90,10 @@ export function stateOf(data: unknown): PhoneState | undefined {
       ? { ...(hexId(p.id) ? { id: p.id } : {}), label: p.label, state: p.state as PhoneState["pcs"][number]["state"] }
       : undefined);
   const usage = list(data.usage, 10, usageOf);
-  return sessions && pcs ? { sessions, pcs, ...(usage?.length ? { usage } : {}) } : undefined;
+  // A bad folder is dropped; a PC older than the route sends none.
+  const folders = list(data.folders, 1000, (f) =>
+    isObj(f) && hexId(f.id) && str(f.pc, 200) && str(f.folder, 500) ? { id: f.id, pc: f.pc, folder: f.folder } : undefined);
+  return sessions && pcs ? { sessions, pcs, ...(folders?.length ? { folders } : {}), ...(usage?.length ? { usage } : {}) } : undefined;
 }
 
 const hexId = (id: unknown): id is string => str(id, 64) && /^[0-9a-f]{16}$/.test(id);

@@ -21,6 +21,7 @@ function setup(t: TestContext, over: Partial<PhoneDeps> = {}, mood: () => PhoneS
     isAgent: () => true,
     screen: () => ({ data: "", cols: 80, rows: 24 }),
     pcs: () => [],
+    folders: () => [],
     signedIn: () => {},
     write: () => true,
     ...over,

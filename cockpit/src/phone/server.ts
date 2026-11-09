@@ -77,6 +77,10 @@ export interface PhoneDeps {
   pcs(): Array<{ nodeId: string; label: string; state: PcState }>;
   /** "다시 연결" from the PC's remote-PC list, for this node. */
   reconnectPc(nodeId: string): void;
+  /** Every registered folder, by PC: the ones with no session become the phone's `folders`. */
+  folders(): Array<{ nodeId: string; repoId: string; pc: string; folder: string }>;
+  /** Opens a folder's AI session on the PC, unasked: the AI last used there, its last conversation. */
+  openFolder(nodeId: string, repoId: string): void;
   /** Opens a folder's plain terminal on the PC, as its rail's "터미널 열기" does. */
   openTerminal(nodeId: string, repoId: string): void;
   /** Each PC's agents and their sign-ins, as the settings' AI accounts tab reads them. */
@@ -239,8 +243,16 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       }))
       .sort((a, b) => moodOrder.indexOf(a.mood) - moodOrder.indexOf(b.mood)),
     pcs: pcList().map(({ id, label, state }): PhonePc => ({ id, label, state })),
+    folders: closedFolders().map(({ id, pc, folder }) => ({ id, pc, folder })),
     ...(usage.length > 0 ? { usage } : {}),
   });
+  /** Registered folders whose AI session (sessionKey's "<node>::<repo>") is not in the list. */
+  const closedFolders = () => {
+    const open = new Set(deps.sessions().map((session) => session.key));
+    return deps.folders().map((one) => ({ ...one, key: `${one.nodeId}::${one.repoId}` }))
+      .filter((one) => !open.has(one.key))
+      .map((one) => ({ ...one, id: sessionId(one.key) }));
+  };
 
   const reportCount = () => {
     const count = auth.count(now());
@@ -485,6 +497,17 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       if (bin.length > MAX_UPLOAD) return fail(413, "too large");
       const saved = await deps.upload(key, uploadName(param(at, "n") ?? "", randomUUID().slice(0, 8)), bin);
       return saved === undefined ? fail(502, "upload") : ok(at, { path: saved });
+    }
+
+    // A closed folder from the phone's list: opened on the PC, its id answered at once.
+    if (at === "POST /api/open") {
+      if (body === "bad") return fail(400, "body");
+      const { f } = (body ?? {}) as Unproven<typeof at>;
+      const folder = deps.folders().find((one) => sessionId(`${one.nodeId}::${one.repoId}`) === f);
+      if (!folder) return fail(404, "folder");
+      const key = `${folder.nodeId}::${folder.repoId}`;
+      if (!deps.sessions().some((one) => one.key === key)) deps.openFolder(folder.nodeId, folder.repoId);
+      return ok(at, { id: sessionId(key) });
     }
 
     // Input: an agent session takes what inputFor lets through; a plain

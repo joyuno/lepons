@@ -74,7 +74,7 @@ function useSessionTheme() {
 }
 
 export default function SessionScreen() {
-  const params = useLocalSearchParams<{ id: string; tab?: string }>();
+  const params = useLocalSearchParams<{ id: string; tab?: string; opening?: string }>();
   const id = String(params.id ?? "");
   const c = useConnection();
   const { c: p, s } = useSessionTheme();
@@ -89,6 +89,13 @@ export default function SessionScreen() {
   const [question, setQuestion] = useState<string | undefined>();
   const [statusLine, setStatusLine] = useState("");
   const [limit, setLimit] = useState<string | undefined>();
+  // Asked open from the phone: "opening" until it reaches the list, and said plainly if it never does.
+  const [openGaveUp, setOpenGaveUp] = useState(false);
+  useEffect(() => {
+    if (!params.opening || session) return;
+    const timer = setTimeout(() => setOpenGaveUp(true), 30_000);
+    return () => clearTimeout(timer);
+  }, [params.opening, !session]);
   const folder = session?.folder;
   const openPath = useCallback((path: string) => {
     void openPrinted(c.request, id, folder, path).catch(() => false).then((opened) => {
@@ -274,7 +281,7 @@ export default function SessionScreen() {
       </View>
       <View style={{ paddingHorizontal: space.lg }}><LinkNotice /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
-        {c.phone && !session ? <Text style={s.empty}>{t.sessionGone}</Text> : null}
+        {c.phone && !session ? <Text style={s.empty}>{params.opening && !openGaveUp ? t.sessionOpening : params.opening ? t.openFolderFailed : t.sessionGone}</Text> : null}
         {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} /></PathOpen.Provider> : null}
         {sub === "term" ? <TerminalView key={id} id={id} /> : null}
         {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} list={list} request={c.request} /> : null}

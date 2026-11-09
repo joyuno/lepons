@@ -217,6 +217,14 @@
       /* A chevron like VS Code's section headers: down folds it away, up brings it back. */
       #usageToggle { display: inline-flex; align-self: flex-start; padding: 1px; margin-left: -4px; }
       .railTabs .railBtn { flex: 1; text-align: center; padding: 6px 4px; }
+      .railTabs .railTab {
+        display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+        padding: 8px 6px; border: 1px solid var(--line); color: var(--text);
+        font-size: 12.5px; font-weight: 600; position: relative;
+      }
+      .railTabs .railTab:hover { border-color: var(--muted); }
+      .railTabs .railTab.on { border-color: var(--live); }
+      .railTabIcon { flex: none; }
       #railToggle {
         border: 0; background: none; color: var(--muted); cursor: pointer;
         font-size: 12px; padding: 2px 7px; border-radius: 4px; letter-spacing: 0;
@@ -1556,9 +1564,12 @@
         <button class="railBtn" id="openBroadcast" data-i18n="broadcast.open" hidden></button>
         <button class="railBtn primary" id="addMachine" data-i18n="rail.addMachine"></button>
         <div class="railTabs">
-          <button class="railBtn" id="openMap" data-i18n="rail.map"></button>
-          <button class="railBtn" id="openWorkflow">
-            <span data-i18n="workflow.toggle"></span>
+          <!-- An icon beside each word: two plain words at the rail's foot went unseen. -->
+          <button class="railBtn railTab" id="openMap">
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg><span data-i18n="rail.map"></span>
+          </button>
+          <button class="railBtn railTab" id="openWorkflow">
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg><span data-i18n="workflow.toggle"></span>
             <span id="workflowBadge" class="notifyBadge" hidden></span>
           </button>
         </div>

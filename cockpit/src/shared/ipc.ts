@@ -659,6 +659,8 @@ export interface CockpitApi {
   /** A phone pressed "다시 연결" for this PC (node id). */
   onPhoneReconnect(handler: (nodeId: string) => void): void;
   /** A phone opened the terminal tab of a folder whose plain terminal is not open. */
+  /** The phone asked for a closed folder's AI to be opened (POST /api/open). */
+  onPhoneOpen(handler: (nodeId: string, repoId: string) => void): void;
   onPhoneTerminal(handler: (nodeId: string, repoId: string) => void): void;
 }
 
@@ -673,8 +675,6 @@ export interface MakeFileResult {
   gitignored?: boolean;
   /** Git already tracks it, so ignoring it will not help. */
   tracked?: boolean;
-  /** A deny rule now keeps the agent from reading it. */
-  blocked?: boolean;
 }
 
 export interface PassphraseRequest {
@@ -839,6 +839,7 @@ export const channels = {
   phoneInput: "phone:input",
   phoneReconnect: "phone:reconnect",
   phoneTerminal: "phone:terminal",
+  phoneOpen: "phone:open",
   phoneQr: "phone:qr",
   relayAction: "phone:relay",
 } as const;

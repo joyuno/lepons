@@ -356,6 +356,8 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
     timers.add(timer);
   };
 
+  /** The pretend PC's folders with nothing open: one tap opens a fresh session there, as the PC would. */
+  const closed = [{ id: "de0000000000000f", folder: "landing-page" }];
   const state = (): ReplyOf<"GET /api/state"> => ({
     sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents, worktreeOf }) => {
       const steps = events.flatMap((event): StepKind[] => (event.kind === "note" ? [] : [event.kind])).slice(-5);
@@ -366,6 +368,7 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       };
     }),
     pcs: pcs.map((pc) => ({ ...pc })),
+    folders: closed.map(({ id, folder }) => ({ id, pc: words.pc, folder })),
     usage: [
       { name: "Claude Code", fiveHour: { percent: 38, resetsAt: hours(2.5) }, week: { percent: 72, resetsAt: hours(80) } },
       { name: "Codex", fiveHour: { percent: 12, resetsAt: hours(4) }, week: { percent: 91, resetsAt: hours(30) } },
@@ -498,6 +501,18 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
         });
       }
       return ok(at, { ok: true });
+    }
+    // A closed folder: a new session there, idle until spoken to.
+    if (at === "POST /api/open") {
+      const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
+      const at2 = closed.findIndex((one) => one.id === fields.f);
+      if (at2 < 0) return find(fields.f) ? ok(at, { id: fields.f as string }) : fail(404, "folder");
+      const [one] = closed.splice(at2, 1);
+      later(1200, () => {
+        sessions.push({ id: one!.id, folder: one!.folder, mood: "idle", agent: true, preview: "", screen: "", events: [], docs: {} });
+        emit("state", state());
+      });
+      return ok(at, { id: one!.id });
     }
     // The terminal tab: the pretend laptop's one shell, which echoes what is typed (App Review 2.1: the demo shows every tab working).
     if (at === "POST /api/terminal") {

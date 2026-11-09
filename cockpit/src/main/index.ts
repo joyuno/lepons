@@ -44,7 +44,6 @@ import { openForEdit, saveEdited, type FileStore } from "./edit-file.ts";
 import { folderPath, resolveTarget } from "../browse/target.ts";
 import { containedBy } from "../read/wire-path.ts";
 import { isSecretName } from "../repo/protect.ts";
-import { withDenyRule, hasDenyRule, denyRule } from "../repo/deny.ts";
 import { removeFoldersAsk, validateRepoLabel } from "../repo/label.ts";
 import { setLocale, isLocale, t, type Locale } from "../i18n/i18n.ts";
 import { startMcpEndpoint, type McpEndpoint } from "../mcp/http.ts";
@@ -2432,36 +2431,6 @@ app.whenReady().then(() => {
   );
 
   /**
-   * Adds the deny rule to `.claude/settings.json` in the repo, so the agent
-   * running there cannot read the secret back into its own transcript. Only
-   * Claude has this mechanism -- Codex is left alone rather than implying a
-   * protection it does not have.
-   *
-   * Never throws: the file itself was already written by the time this
-   * runs, and that success must be reported regardless of what happens here.
-   * An unreadable existing settings file is left untouched rather than
-   * overwritten blind, since this cannot tell "empty" from "unreadable" and
-   * guessing wrong would destroy an operator's configuration.
-   */
-  const applyDenyRule = async (node: NodeConfig, repoPath: string, rule: string): Promise<boolean> => {
-    if (node.agent !== "claude") return false;
-    const claudeDir = `${repoPath}/.claude`;
-    const settingsPath = `${claudeDir}/settings.json`;
-
-    try {
-      const machine = machineOf(node);
-      await machine.makeDirs(claudeDir);
-      const read = await machine.readText(settingsPath);
-      if (!read.ok) return false;
-      const merged = withDenyRule(read.contents, rule);
-      if (merged === undefined) return hasDenyRule(read.contents, rule);
-      return (await machine.overwrite(settingsPath, merged)).ok;
-    } catch {
-      return false;
-    }
-  };
-
-  /**
    * A file with contents, inside a registered repository.
    *
    * Order matters: nothing is protected before it exists, and a failed write
@@ -2497,9 +2466,8 @@ app.whenReady().then(() => {
 
       const relative = target.path.slice(repo.path.replace(/\/+$/, "").length + 1);
       const seen = await machine.protect(repo.path, relative);
-      const blocked = await applyDenyRule(node, repo.path, denyRule(relative));
 
-      return { ok: true, path: target.path, gitignored: seen.ignored, tracked: seen.tracked, blocked };
+      return { ok: true, path: target.path, gitignored: seen.ignored, tracked: seen.tracked };
     },
   );
 

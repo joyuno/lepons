@@ -324,6 +324,10 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     reconnectPc: (nodeId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneReconnect, nodeId);
     },
+    folders: () => nodes.list().flatMap((node) => node.repos.map((repo) => ({ nodeId: node.id, repoId: repo.id, pc: machineLabel(node), folder: repo.label }))),
+    openFolder: (nodeId, repoId) => {
+      if (!window.isDestroyed()) window.webContents.send(channels.phoneOpen, nodeId, repoId);
+    },
     openTerminal: (nodeId, repoId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneTerminal, nodeId, repoId);
     },

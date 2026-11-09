@@ -27,6 +27,11 @@ const deps: PhoneDeps = {
   pcs: () => [{ nodeId: "local", label: "이 PC", state: "live" }, { nodeId: "node-7f3a", label: "10.0.0.5", state: "failed" }],
   reconnectPc: (nodeId) => void reconnects.push(nodeId),
   openTerminal: (nodeId, repoId) => void terminalsOpened.push([nodeId, repoId]),
+  folders: () => [
+    { nodeId: "local", repoId: "C:/work/web", pc: "이 PC", folder: "web" },
+    { nodeId: "local", repoId: "C:/work/docs", pc: "이 PC", folder: "docs" },
+  ],
+  openFolder: (nodeId, repoId) => void foldersOpened.push([nodeId, repoId]),
   accounts: async () => [
     { pc: "이 PC", agents: [{ name: "Claude Code", version: "2.1.0", signedIn: true }, { name: "Codex", version: "0.9", signedIn: false }, { name: "Grok" }] },
     // What a CLI might also say: none of it may reach the phone.
@@ -61,6 +66,7 @@ const writes: Array<[string, string[]]> = [];
 const uploads: Array<[string, string, number]> = [];
 const reconnects: string[] = [];
 const terminalsOpened: Array<[string, string]> = [];
+const foldersOpened: Array<[string, string]> = [];
 const pushDone: boolean[] = [];
 const pushTokens: Array<string | undefined> = [];
 
@@ -297,6 +303,22 @@ test("an upload's name keeps only safe letters and a short extension", () => {
   assert.equal(uploadName("a.tar.gz", "1a2b3c4d"), "lepons-phone-1a2b3c4d-a-tar.gz");
   assert.equal(uploadName("x.verylongext", "1a2b3c4d"), "lepons-phone-1a2b3c4d-x");
   assert.equal(uploadName("", "1a2b3c4d"), "lepons-phone-1a2b3c4d");
+});
+
+test("a folder with no session is listed, and the phone can have its PC open it", async () => {
+  const token = await signIn();
+  foldersOpened.length = 0;
+  const docs = sessionId("local::C:/work/docs");
+  // "web" has a session open already, so only "docs" is a closed folder.
+  assert.deepEqual(((await get("/api/state", token)).body as { folders: unknown }).folders, [{ id: docs, pc: "이 PC", folder: "docs" }]);
+  assert.deepEqual((await post("/api/open", { f: docs }, token)).body, { id: docs });
+  assert.deepEqual(foldersOpened, [["local", "C:/work/docs"]]);
+  // One already open is answered, not opened again.
+  const web = sessionId("local::C:/work/web");
+  assert.deepEqual((await post("/api/open", { f: web }, token)).body, { id: web });
+  assert.equal(foldersOpened.length, 1);
+  assert.equal((await post("/api/open", { f: "nope" }, token)).status, 404);
+  assert.equal((await post("/api/open", { f: docs })).status, 401);
 });
 
 test("the workflow and listed .md files are readable, nothing else", async () => {

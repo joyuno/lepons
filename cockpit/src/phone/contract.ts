@@ -57,9 +57,14 @@ export interface PhoneUsageWindow { percent: number; resetsAt?: number }
 /** The PC's usage readout per agent, compact: what the desktop already read, nothing fetched for the phone. */
 export type PhoneUsage = Array<{ name: string; fiveHour?: PhoneUsageWindow; week?: PhoneUsageWindow }>;
 
+/** A registered folder with no AI session open: the phone can ask its PC to open one (POST /api/open). `id` is the session's it would be. */
+export interface PhoneFolder { id: string; pc: string; folder: string }
+
 export interface PhoneState {
   sessions: PhoneSessionView[];
   pcs: PhonePc[];
+  /** Folders with no AI session open. Absent from a PC older than the route. */
+  folders?: PhoneFolder[];
   /** Absent when the PC has no usage reading. */
   usage?: PhoneUsage;
 }
@@ -110,6 +115,8 @@ export interface PhoneRoutes {
   "POST /api/input": { body: { s: string; key?: string; text?: string }; reply: Ok };
   /** The terminal tab: `s`'s project's plain terminal, asked open on the PC if it is not; its id may reach the list a moment later. */
   "POST /api/terminal": { body: { s: string }; reply: { id: string } };
+  /** A folder of `folders` opened on its PC with the AI last used there, carrying on its last conversation; the session's id, which reaches the list a moment later. */
+  "POST /api/open": { body: { f: string }; reply: { id: string } };
   /** A photo or file for `s`'s AI: the bytes in the message's `bin`, `n` its name on the phone; where the PC saved it. */
   "POST /api/upload": { query: "s&n"; reply: { path: string } };
   /**

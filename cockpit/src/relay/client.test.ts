@@ -323,6 +323,7 @@ test("over the relay: sign-in first, then the list, the live stream and a 20 MiB
     isAgent: () => true,
     screen: () => ({ data: "hello", cols: 80, rows: 24 }),
     pcs: () => [],
+    folders: () => [],
     docBytes: async (_key: string, relative: string) => (relative === "big.pdf" ? big : undefined),
     signedIn: () => {},
     pushToken: () => {},
