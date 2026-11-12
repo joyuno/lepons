@@ -93,10 +93,14 @@ import {
   type SettingsInfo,
   type ShareStatus,
   type TmuxInstallResult,
+  type WorktreeDiff,
 } from "../shared/ipc.ts";
 import { parseTranscript, projectSlug, transcriptDir } from "../workflow/transcript.ts";
+import { startLlmHost, type LlmHost, type LlmLaunch } from "./llm-host.ts";
+import { LLM_KEY_ENV } from "../agent/local-llm.ts";
 import { addWorktree, goneWorktrees, localHost, mergeWorktree, movedTranscript, pendingWork, remoteHost, removeWorktree, startRepo, type WorktreeHost } from "./worktree.ts";
 import { parseCodexRollout } from "../workflow/codex.ts";
+import { parseOpencodeExport } from "../workflow/opencode.ts";
 import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
 import type { TurnEnd } from "../shared/status.ts";
@@ -474,6 +478,10 @@ function sessionEnvFor(node: NodeConfig): Record<string, string> {
  */
 let localStatusLine: string | undefined;
 
+/** Each session's 내 LLM for OpenCode (llm-host.ts launchFor), set before it is built; asked again for a relaunch. */
+const llmLaunches = new Map<string, LlmLaunch>();
+let llmHost: LlmHost | undefined;
+
 function usageFlag(node: NodeConfig, shell: "posix" | "cmd"): string {
   if (agentSpec(node.agent).can.usage.limits !== "statusLineFlag") return "";
   if (node.kind === "local") {
@@ -614,25 +622,31 @@ function launchLine(
   name: string | undefined,
 ): string | undefined {
   const spec = agentSpec(node.agent);
+  const llm = node.agent === "opencode" ? llmLaunches.get(scope) : undefined;
+  const extra = (shell: "posix" | "cmd") => [usageFlag(node, shell), llm?.flags ?? ""].filter((flag) => flag !== "").join(" ");
   // Only a session that is started runs this: one reattached in tmux keeps
   // its own conversation, which is the better answer anyway. `wrap` is what
   // each launch needs on its way out -- an environment, on the remote nodes.
   // A plain terminal runs no command: the shell it lands in is the point.
   const agentLine = (wrap: (command: string) => string, shell: "posix" | "cmd"): string | undefined =>
     plain ? undefined
-      : resume !== false ? resumeLine(spec, wrap, shell, launchFlags(spec, shell, bypass, name, usageFlag(node, shell)), typeof resume === "string" ? resume : undefined)
-      : wrap(spec.sessionCommand + launchFlags(spec, shell, bypass, name, usageFlag(node, shell)));
+      : resume !== false ? resumeLine(spec, wrap, shell, launchFlags(spec, shell, bypass, name, extra(shell)), typeof resume === "string" ? resume : undefined)
+      : wrap(spec.sessionCommand + launchFlags(spec, shell, bypass, name, extra(shell)));
   const launch = (line: string | undefined, shell: "posix" | "cmd"): string | undefined =>
     line !== undefined && update ? withUpdate(node.agent, line, shell) : line;
-  const withEnv = (command: string): string => envPrefix(sessionEnvFor(node)) + command;
+  const withEnv = (command: string): string => envPrefix({ ...sessionEnvFor(node), ...llm?.env }) + command;
   if (node.kind === "local") {
     const shell = process.platform === "win32" ? "cmd" : "posix";
     return launch(agentLine((command) => command, shell), shell);
   }
+  // The key is read from its file into this line's own subshell, and the file removed: it is never on the line, nor left in the login shell.
+  const keyFile = llm?.keyFile;
+  const keyed = (line: string | undefined): string | undefined =>
+    line === undefined || keyFile === undefined ? line : `( export ${LLM_KEY_ENV}="$(cat ${posixQuote(keyFile)} 2>/dev/null; rm -f ${posixQuote(keyFile)})"; ${line} )`;
   // The update goes before tmux, not inside it: a reattach ignores the
   // command it is handed, and a run's first session is often one.
-  if (node.useTmux) return launch(tmuxCommand(tmuxSessionName(tmuxScope(scope, plain ? "shell" : node.agent)), cwd, agentLine(withEnv, "posix")), "posix");
-  return launch(agentLine(withEnv, "posix"), "posix");
+  if (node.useTmux) return launch(tmuxCommand(tmuxSessionName(tmuxScope(scope, plain ? "shell" : node.agent)), cwd, keyed(agentLine(withEnv, "posix"))), "posix");
+  return launch(keyed(agentLine(withEnv, "posix")), "posix");
 }
 
 function buildSession(
@@ -656,7 +670,8 @@ function buildSession(
         term,
         ...(cwd ? { cwd } : {}),
         command,
-        env: sessionEnvFor(node),
+        // The key, for 내 LLM: in this terminal's environment, never on its line.
+        env: { ...sessionEnvFor(node), ...(node.agent === "opencode" && !plain ? llmLaunches.get(scope)?.env : undefined) },
       }),
       survives: false,
     };
@@ -765,7 +780,7 @@ async function editAgentFile(
 
 /** An agent with no `mcp add`: lepons is written into its MCP file. Undefined entry takes it out. */
 async function registerMcpFile(agent: (typeof mcpFileAgents)[number], machine: Machine, entry: { url: string; token: string } | undefined): Promise<string | undefined> {
-  return editAgentFile(agent.kind, machine, agent.file, (existing) => mcpFileWith(existing, entry, agent.urlKey));
+  return editAgentFile(agent.kind, machine, agent.file, (existing) => mcpFileWith(existing, entry, agent.urlKey, agent.opencode === true));
 }
 
 /** The status line that saves Antigravity's quota for the usage readout (agent/usage.ts). */
@@ -1613,6 +1628,11 @@ app.whenReady().then(() => {
     const format = executor === "shell" ? null : agentSpec(executor).can.transcript;
     // Reading another agent's record would narrate some other session's work.
     if (format === null) return { ok: false, reason: "no_transcript" };
+    if (format === "opencode") {
+      const exported = await machineOf(node).record("opencode", repo.path);
+      if (!exported) return { ok: false, reason: "no_transcript" };
+      return { ok: true, workflow: parseOpencodeExport(exported, full) };
+    }
     if (format === "codex") {
       const rollout = await machineOf(node).record("codex", repo.path);
       if (!rollout) return { ok: false, reason: "no_transcript" };
@@ -2248,7 +2268,7 @@ app.whenReady().then(() => {
         }]
       : [];
     const groups: MenuItemConstructorOptions[][] = [
-      root && !root.worktree ? [{ label: t("worktree.add"), click: rail("worktree") }] : [],
+      root && !root.worktree ? [{ label: t("worktree.add"), click: rail("worktree") }, { label: t("compare.menu"), click: rail("compare") }] : [],
       root ? [{ label: t("rail.openTerminal"), click: rail("terminal") }] : [],
       isDirectory
         ? [{ label: t("files.newFile"), click: send("newFile") }, { label: t("files.newFolder"), click: send("newFolder") }, ...reveal]
@@ -2764,6 +2784,21 @@ app.whenReady().then(() => {
   // machine along -- this computer stays, folders or not.
   // One question for however many folders: the rail's cleanup mode picks
   // several, the folder menu one.
+  /** Folders off the list once asked (here or on the phone); the last of a remote PC's takes the PC along. */
+  const dropRepos = (nodeId: string, repoIds: string[]): NodeConfig[] => {
+    const node = requireNode(nodeId);
+    const leaving = node.repos.filter((candidate) => repoIds.includes(candidate.id));
+    if (node.kind === "ssh" && leaving.length === node.repos.length) return forgetNode(nodeId);
+    for (const repo of leaving) {
+      for (const key of [sessionKey(nodeId, repo.id), sessionKey(nodeId, repo.id, true)]) {
+        sessions.get(key)?.close();
+        sessions.delete(key);
+        sessionExecutor.delete(key);
+      }
+      revokeGrantsOn(wireRepoId(nodeId, repo.path));
+    }
+    return nodes.save({ ...node, repos: node.repos.filter((candidate) => !repoIds.includes(candidate.id)) });
+  };
   ipcMain.handle(channels.removeRepos, async (event, nodeId: string, repoIds: string[]): Promise<NodeConfig[]> => {
     const node = requireNode(nodeId);
     const leaving = node.repos.filter((candidate) => repoIds.includes(candidate.id));
@@ -2785,16 +2820,7 @@ app.whenReady().then(() => {
     }
     const { response } = await appDialog(window ?? undefined, ask);
     if (response !== 0) return nodes.list();
-    if (last) return forgetNode(nodeId);
-    for (const repo of leaving) {
-      for (const key of [sessionKey(nodeId, repo.id), sessionKey(nodeId, repo.id, true)]) {
-        sessions.get(key)?.close();
-        sessions.delete(key);
-        sessionExecutor.delete(key);
-      }
-      revokeGrantsOn(wireRepoId(nodeId, repo.path));
-    }
-    return nodes.save({ ...node, repos: node.repos.filter((candidate) => !repoIds.includes(candidate.id)) });
+    return dropRepos(nodeId, repoIds);
   });
 
   // --- worktrees: one more AI in a folder, each in its own git worktree ---
@@ -2933,6 +2959,26 @@ app.whenReady().then(() => {
     return nodes.list();
   });
 
+  // For D (여러 AI 비교): what each worktree changed since its start, uncommitted work included.
+  ipcMain.handle(channels.worktreeDiff, async (_event, nodeId: string, repoId: string): Promise<WorktreeDiff | null> => {
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    const repo = node?.repos.find((candidate) => candidate.id === repoId);
+    if (!node || !repo?.worktree) return null;
+    const git = worktreeHost(node).git;
+    // From where it branched, not the base's tip: the original folder may have moved on since.
+    const fork = await git(repo.path, ["merge-base", repo.worktree.base, "HEAD"]);
+    if (fork.code !== 0) return null;
+    // Names as they are (a Korean one is not octal-escaped), a rename as a deletion and an addition.
+    const stat = await git(repo.path, ["-c", "core.quotePath=false", "diff", "--numstat", "--no-renames", fork.out.trim()]);
+    if (stat.code !== 0) return null;
+    const files: WorktreeDiff["files"] = stat.out.split("\n").filter((line) => line.trim() !== "").map((line) => {
+      const [add, del, ...path] = line.split("\t");
+      return { path: path.join("\t"), add: Number(add) || 0, del: Number(del) || 0 };
+    });
+    const fresh = await git(repo.path, ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"]);
+    if (fresh.code === 0) for (const path of fresh.out.split("\n").filter((line) => line.trim() !== "")) files.push({ path, add: 0, del: 0, fresh: true });
+    return { files };
+  });
   ipcMain.handle(channels.removeWorktree, async (event, nodeId: string, repoId: string): Promise<NodeConfig[]> => {
     const found = worktreeOf(nodeId, repoId);
     if (!found) return nodes.list();
@@ -2987,6 +3033,7 @@ app.whenReady().then(() => {
     channels.browse,
     (_event, node: NodeConfig, path: string): Promise<BrowseResult> => machineOf(node).list(path),
   );
+  ipcMain.handle(channels.allFiles, (_event, node: NodeConfig, root: string): Promise<string[]> => machineOf(node).allFiles(root, true));
 
   /**
    * The AI in each session that can answer for it: a shell on this PC, or tmux on
@@ -3093,6 +3140,10 @@ app.whenReady().then(() => {
       return { kind: "closed", reason: "spawn_failed", detail: "Unknown conversation" };
     }
     forgetChangedKeyAnswers(node.id);
+    const key = sessionKey(nodeId, repoId, terminal);
+    // Known before it connects: a session still connecting, or one whose PC is off, is the phone's to see and close too.
+    // Not over a running one's: a restart that fails leaves that session, and stopping it needs its own agent's name.
+    if (!sessionExecutor.has(key)) sessionExecutor.set(key, plain ? "shell" : node.agent);
     const ready = await machineOf(node).ready();
     if (!ready.ok) return { kind: "closed", reason: "auth_failed", detail: ready.reason };
     void reconcileWorktrees(nodeId);
@@ -3119,7 +3170,11 @@ app.whenReady().then(() => {
     }
     // agy reads its status line at start; a failure only costs the readout.
     if (!plain && agentSpec(node.agent).can.usage.limits === "statusLineFile") await ensureAgyStatusLine(node);
-    const key = sessionKey(nodeId, repoId, terminal);
+    // A folder set to 내 LLM runs OpenCode on it, or not at all: never quietly on another model.
+    const llm = !plain && node.agent === "opencode" && llmHost ? await llmHost.launchFor(key, node) : "";
+    if (llm === "unreachable" || llm === "nokey") return { kind: "closed", reason: "spawn_failed", detail: t(llm === "nokey" ? "llm.nokeyOpen" : "llm.unreachable") };
+    if (llm) llmLaunches.set(key, llm);
+    else llmLaunches.delete(key);
     sessions.get(key)?.close();
     agentWatch.delete(key);
     setAgentGone(key, false);
@@ -3148,13 +3203,20 @@ app.whenReady().then(() => {
       tmux: node.kind === "ssh" ? tmuxSessionName(tmuxScope(key, node.agent)) : undefined,
       notBefore: Infinity,
       // Typed where it was left, its last conversation continued, as opening offers.
-      start: () => {
+      start: () => void (async () => {
+        // 내 LLM is asked again: its tunnel may have a new port by now, its server be off, or its key file be gone.
+        if (llmLaunches.has(key) && llmHost) {
+          const again = await llmHost.launchFor(key, node);
+          if (again === "unreachable" || again === "nokey") return;
+          if (again) llmLaunches.set(key, again);
+          else llmLaunches.delete(key);
+        }
         // The operator may have moved about in the shell the AI left. Over SSH this is tmux, which has its own -c.
         const back = node.kind !== "local" || !cwd ? "" : process.platform === "win32" ? `cd /d "${cwd}" && ` : `cd ${posixQuote(cwd)} && `;
         session.write(`${back}${launchLine(node, key, cwd, true, false, false, bypass === true, repo?.label)}\r`);
         const fork = agentSpec(node.agent).forkCommand;
         if (fork) typeWhenSettled(session, fork);
-      },
+      })(),
     } : undefined;
     if (watch) agentWatch.set(key, watch);
     let outputQuiet: NodeJS.Timeout | undefined;
@@ -3848,17 +3910,13 @@ app.whenReady().then(() => {
     }
   });
 
-  phoneHost = startPhoneHost({
-    userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages,
-    readTokenStats, workflowOf, accountsOf, machineOf,
-  });
-
-  // Off means off. A tmux-backed agent outlives this end of the connection
-  // by design -- that is what makes a dropped link survivable -- so letting
-  // go of the channel is not stopping the work, and an operator told "off"
-  // while the node keeps working would find out from their usage bill.
-  ipcMain.handle(channels.stopSession, async (_event, nodeId: string, repoId: string | null) => {
-    const key = sessionKey(nodeId, repoId);
+  /**
+   * Ends a session here and, over SSH with tmux, there. When its PC cannot be
+   * told it throws, leaving this side as it was -- or with `anyway` ends this
+   * side all the same and answers false.
+   */
+  const stopSessionKey = async (nodeId: string, key: string, anyway = false): Promise<boolean> => {
+    let told = true;
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     // The session's own executor, not the node's setting: they differ the
     // moment an operator picks the other agent, and each has its own tmux
@@ -3870,14 +3928,33 @@ app.whenReady().then(() => {
       // A node that cannot be reached cannot be told to stop. Say so rather
       // than tearing down this side and reporting success: the agent is
       // still running there, and the operator needs to know that.
-      if (!ready.ok) throw new Error(ready.reason);
-      const result = await machine.run(tmuxKillCommand(key, agent), { login: true });
-      if (result === undefined) throw new Error(t("err.stopUnreachable"));
+      const result = ready.ok ? await machine.run(tmuxKillCommand(key, agent), { login: true }).catch((error: unknown) => {
+        if (anyway) return undefined;
+        throw error;
+      }) : undefined;
+      if (result === undefined && !anyway) throw new Error(ready.ok ? t("err.stopUnreachable") : ready.reason);
+      told = result !== undefined;
     }
     sessions.get(key)?.close();
     sessions.delete(key);
     sessionExecutor.delete(key);
     survivesDisconnect.delete(key);
+    return told;
+  };
+
+  phoneHost = startPhoneHost({
+    userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages,
+    readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey, dropRepos,
+  });
+  const twoFactor = phoneHost.twoFactor;
+  llmHost = startLlmHost({ userData, ipcMain, nodes: () => nodes.list(), machineOf, sshOptions, vault: safeStorage, twoFactor });
+
+  // Off means off. A tmux-backed agent outlives this end of the connection
+  // by design -- that is what makes a dropped link survivable -- so letting
+  // go of the channel is not stopping the work, and an operator told "off"
+  // while the node keeps working would find out from their usage bill.
+  ipcMain.handle(channels.stopSession, async (_event, nodeId: string, repoId: string | null) => {
+    await stopSessionKey(nodeId, sessionKey(nodeId, repoId));
   });
 });
 
@@ -3895,6 +3972,7 @@ function teardown(): void {
   for (const nodeId of [...bridges.keys()]) closeBridgeFor(nodeId);
   for (const nodeId of [...shares.keys()]) closeShare(nodeId);
   phoneHost?.stop();
+  llmHost?.stop();
   signIn?.end();
   signIn = undefined;
   for (const stop of [...tmuxInstalls.values()]) stop();

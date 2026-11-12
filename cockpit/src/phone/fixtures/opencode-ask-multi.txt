@@ -1,0 +1,39 @@
+
+  ┃
+  ┃  Use the question tool now. Ask me two questions in ONE question tool call: 1) Favorite color, options Red, Green,
+  ┃   Blue (single choice). 2) Which sizes, options S, M, L, multiple selection allowed. Do nothing else.
+  ┃
+
+     + Thought: 1.3s
+
+     → Asked 2 questions
+
+     ▣  Build · Big Pickle
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃   Favorite color   Sizes   Confirm
+  ┃
+  ┃  Which sizes do you want? (select all that apply)
+  ┃
+  ┃  1. [ ] S
+  ┃     Small
+  ┃  2. [ ] M
+  ┃     Medium
+  ┃  3. [ ] L
+  ┃     Large
+  ┃  4. [ ] Type your own answer
+  ┃
+  ┃  ⇆ tab  ↑↓ select  enter toggle  esc dismiss
+  ┃

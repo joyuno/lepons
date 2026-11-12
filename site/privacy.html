@@ -12,7 +12,7 @@
 <header><a class="brand" href="/">Lepons</a><a href="/privacy">개인정보</a><a href="/terms">약관</a><a href="/support">지원</a></header>
 <main>
 <h1>개인정보 처리방침</h1>
-<p class="muted">시행일: 2026년 11월 9일 (이전 판: 2026년 11월 4일)</p>
+<p class="muted">시행일: 2026년 11월 13일 (이전 판: 2026년 11월 9일)</p>
 <p>Lepons 휴대폰 앱은 사용자의 정보를 모으지 않도록 만들었어요. 아래에 앱이 무엇을 주고받는지 그대로 적어 두었어요.</p>
 
 <h2>운영자와 개인정보 보호책임자</h2>
@@ -48,7 +48,7 @@
 <p>대화 입력란의 클립 버튼으로 사진(카메라나 사진 보관함)이나 파일을 고르면, 고른 그것만 페어링한 내 PC로 보내져요. 다른 연결과 똑같이 종단간 암호화돼 중계 서버를 지나가므로 개발자는 내용을 볼 수 없어요. 한 번에 20MB까지 보낼 수 있고, 받은 PC는 그 PC의 임시 폴더에 저장한 뒤 그 경로를 AI 세션에 전해요. 사진 보관함 전체를 읽지 않으며, 고르지 않은 사진이나 파일에는 접근하지 않아요. PC에서 연 사진을 사진 앱에 저장할 때만 사진 추가 권한을 물어요.</p>
 
 <h2>알림</h2>
-<p>알림을 허용하면 앱이 Expo 알림 서비스에서 이 휴대폰의 알림 토큰을 받아 내 PC에 저장해요. 이후 PC의 세션에서 AI가 선택지를 띄우면, PC가 Expo 알림 서비스를 거쳐 Apple(APNs) 또는 Google(FCM)로 알림을 보내요. 알림에는 “Lepons”라는 제목, 사용자가 붙인 PC 이름이나 일반적인 안내 문구, 그리고 앱이 해당 세션을 여는 데 쓰는 무작위 세션 ID만 들어가요. 폴더 이름이나 세션 내용은 들어가지 않아요. 설정에서 알림을 끄거나 휴대폰 설정에서 알림 권한을 거두면 보내지 않아요.</p>
+<p>알림을 허용하면 앱이 Expo 알림 서비스에서 이 휴대폰의 알림 토큰을 받아 내 PC에 저장해요. 이후 PC의 세션에서 AI가 선택지를 띄우거나, 오류나 사용량 한도로 멈추면, PC가 Expo 알림 서비스를 거쳐 Apple(APNs) 또는 Google(FCM)로 알림을 보내요. 알림에는 폴더 이름, AI 이름(예: Claude Code), 사용자가 붙인 PC 이름, 정해진 한 줄 안내(예: “실행·수정 허락을 기다려요”), 그리고 앱이 해당 세션을 여는 데 쓰는 무작위 세션 ID만 들어가요. 폴더의 전체 경로나 AI가 쓴 내용, 코드는 들어가지 않아요. 설정에서 알림을 끄거나 휴대폰 설정에서 알림 권한을 거두면 보내지 않아요.</p>
 
 <h2>외부 업체와 국외 이전</h2>
 <p>알림 전달과 중계 서버 연결에 아래 업체의 서비스를 써요. 이 업체들은 국외에 있어서, 알림을 켜거나 앱을 연결할 때 아래 정보가 국외로 전송돼요.</p>
@@ -97,7 +97,7 @@
 
 <section lang="en">
 <h2>Privacy Policy (English)</h2>
-<p class="muted">Effective: November 9, 2026 (previous version: November 4, 2026)</p>
+<p class="muted">Effective: November 13, 2026 (previous version: November 9, 2026)</p>
 <p>The Lepons phone app is built not to collect your information. This page describes exactly what the app sends and receives.</p>
 
 <h2>Operator and privacy officer</h2>
@@ -133,7 +133,7 @@
 <p>When you pick a photo (from the camera or your library) or a file with the clip button in the message box, only what you picked is sent, and only to the PC you paired. Like everything else on that connection it passes the relay end-to-end encrypted, so the developer cannot see it. Up to 20 MB at a time; your PC saves it in its temporary folder and passes that path to the AI session. The app does not read your photo library as a whole and has no access to photos or files you did not pick. It asks to add to Photos only when you save a photo you opened from your PC.</p>
 
 <h2>Notifications</h2>
-<p>If you allow notifications, the app gets this phone&#39;s push token from the Expo push service and stores it on your PC. When a session is waiting for you or all work is done, your PC sends a notification through the Expo push service to Apple (APNs) or Google (FCM). A notification contains only the title “Lepons”, the PC name you gave or a generic message, and a random session ID the app uses to open that session. It never contains folder names or session content. Turning notifications off in the app&#39;s settings, or revoking the permission in your phone&#39;s settings, stops them.</p>
+<p>If you allow notifications, the app gets this phone&#39;s push token from the Expo push service and stores it on your PC. When an AI puts a choice up, or stops on an error or its usage limit, your PC sends a notification through the Expo push service to Apple (APNs) or Google (FCM). A notification contains only the folder&#39;s name, the AI&#39;s name (such as Claude Code), the PC name you gave, a fixed one-line message (such as “Waiting for your OK to run or edit”), and a random session ID the app uses to open that session. It never contains the folder&#39;s full path, what the AI wrote, or code. Turning notifications off in the app&#39;s settings, or revoking the permission in your phone&#39;s settings, stops them.</p>
 
 <h2>Service providers and international transfers</h2>
 <p>The app uses the services below to deliver notifications and to reach the relay. They are based outside Korea, so the following data is transferred abroad when you turn notifications on or connect.</p>

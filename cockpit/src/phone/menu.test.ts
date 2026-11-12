@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { menuFrom } from "./menu.ts";
+import { menuFrom, menuTabs, withoutSidebar } from "./menu.ts";
 
 const screen = (text: string) => text.split("\n");
 /** Screens captured from the real CLIs under node-pty (src/phone/fixtures). */
@@ -154,4 +154,68 @@ test("Claude idle at its prompt after answering, captured: no menu", () => {
 test("up to nine options", () => {
   const nine = Array.from({ length: 9 }, (_, i) => `${i === 0 ? "❯" : " "} ${i + 1}. option ${i + 1}`).join("\n");
   assert.equal(menuFrom(screen(nine))?.length, 9);
+});
+
+test("Claude's multi-select question: each row's box, the Next line dropped, and the questions' tabs (Claude Code 2.1.322)", () => {
+  const lines = captured("claude-ask-multi.txt");
+  assert.deepEqual(menuFrom(lines), [
+    { n: 1, label: "Red", detail: "Red", checked: true },
+    { n: 2, label: "Green", detail: "Green", checked: false },
+    { n: 3, label: "Blue", detail: "Blue", checked: true },
+    { n: 4, label: "Type something", freeText: true, checked: false },
+    { n: 5, label: "Chat about this" },
+  ]);
+  assert.deepEqual(menuTabs(lines), [{ label: "Colors", done: true }, { label: "Size", done: false }, { label: "Submit", done: false }]);
+});
+
+test("the next question of several is a plain menu with the same tabs; the review asks to submit", () => {
+  assert.equal(menuFrom(captured("claude-ask-next.txt"))?.some((option) => option.checked !== undefined), false);
+  assert.deepEqual(menuTabs(captured("claude-ask-next.txt"))?.map((tab) => tab.label), ["Colors", "Size", "Submit"]);
+  assert.deepEqual(menuFrom(captured("claude-ask-review.txt"))?.map((option) => option.label), ["Submit answers", "Cancel"]);
+  assert.equal(menuTabs(captured("claude-ask-question.txt")), undefined, "a lone question has no tabs");
+});
+
+// OpenCode 1.19.5, captured under node-pty and a headless xterm (src/phone/fixtures/opencode-*).
+test("OpenCode's question: numbered options with descriptions, its free-text row, the tab line", () => {
+  const lines = captured("opencode-ask-question.txt");
+  assert.deepEqual(menuFrom(lines), [
+    { n: 1, label: "Red", detail: "Red color" },
+    { n: 2, label: "Green", detail: "Green color" },
+    { n: 3, label: "Blue", detail: "Blue color" },
+    { n: 4, label: "Type your own answer", freeText: true },
+  ]);
+  assert.deepEqual(menuTabs(lines)?.map((tab) => tab.label), ["Favorite color", "Sizes", "Submit"]);
+});
+
+test("OpenCode's multi-select question: boxes ticked as on screen", () => {
+  const menu = menuFrom(captured("opencode-ask-multi.txt"));
+  assert.deepEqual(menu?.map(({ label, checked }) => [label, checked]), [["S", false], ["M", false], ["L", false], ["Type your own answer", false]]);
+});
+
+test("OpenCode's permission prompt is two keys, not digits; its review step is no menu", () => {
+  assert.deepEqual(menuFrom(captured("opencode-permission.txt")), [
+    { n: 1, label: "Allow once", detail: "→ Edit a.txt", key: "enter" },
+    { n: 2, label: "Reject", key: "esc" },
+  ]);
+  assert.equal(menuFrom(captured("opencode-ask-review.txt")), undefined);
+  for (const name of ["opencode-working.txt", "opencode-idle.txt"]) assert.equal(menuFrom(captured(name)), undefined, name);
+});
+
+test("OpenCode in a wide pane: its sidebar shares the rows, and is cut off before reading", () => {
+  // Captured in a Lepons pane: the sidebar's folder and "• OpenCode 1.19.5" sit under and beside the buttons.
+  assert.deepEqual(menuFrom(captured("opencode-permission-wide.txt")), [
+    { n: 1, label: "Allow once", detail: "→ Edit a.txt", key: "enter" },
+    { n: 2, label: "Reject", key: "esc" },
+  ]);
+  // A Hangul option takes two cells a letter, so the cut is counted in cells, not letters.
+  const pad = (text: string, cells: number) => text + " ".repeat(cells - [...text].reduce((n, c) => n + (/[가-힣]/.test(c) ? 2 : 1), 0));
+  const korean = [
+    pad("  ┃  색을 고르세요", 92) + "Connect provider",
+    pad("  ┃  1. 빨강", 92) + "/connect",
+    pad("  ┃  2. 초록", 92) + "/C:\work\demo",
+    pad("  ┃  ⇆ tab  ↑↓ select  enter confirm  esc dismiss", 92) + "",
+    pad("  ┃", 92) + "• OpenCode 1.19.5",
+  ];
+  assert.deepEqual(menuFrom(korean)?.map((option) => option.label), ["빨강", "초록"]);
+  assert.deepEqual(withoutSidebar(korean)[1], "  ┃  1. 빨강");
 });

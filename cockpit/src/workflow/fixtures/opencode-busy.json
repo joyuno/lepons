@@ -1,0 +1,145 @@
+{
+  "info": {
+    "id": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+    "slug": "clever-comet",
+    "projectID": "global",
+    "directory": "C:\\work\\demo",
+    "path": "",
+    "title": "Ping localhost with 25 packets",
+    "agent": "build",
+    "model": {
+      "id": "glm-5.3-flash-free",
+      "providerID": "opencode"
+    },
+    "version": "1.19.5",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "time": {
+      "created": 1794362582847,
+      "updated": 1794362583078
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1794362582858
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "glm-5.3-flash-free"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_1c858274a001Vjk4ZEeg3IxksI",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Run the shell command: ping -n 25 127.0.0.1",
+          "id": "prt_1c858274c001nZxJ4uXPB2Oi79",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858274a001Vjk4ZEeg3IxksI"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858274a001Vjk4ZEeg3IxksI",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362582873
+        },
+        "id": "msg_1c8582759001DRvffC4TyPBh1i",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c85841e9001lY512G3x7hXsv3",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "reasoning",
+          "text": "The user wants me to run a ping command. This is a simple, safe request. `ping -n 25 127.0.0.1` sends 25 ICMP echo requests to localhost (the `-n` flag indicates Windows syntax). Since it pings 127.0.0.1 with a 1-second interval between pings, it will take roughly 25 seconds to complete, so I should set an appropriate timeout. The environment is Windows, and bash is the shell, but ping should still resolve to the Windows ping executable. No security concerns here — this is just a localhost ping, a common way to introduce a delay or test the shell.",
+          "time": {
+            "start": 1794362589675,
+            "end": 1794362592928
+          },
+          "id": "prt_1c85841eb001CyA63W5TCfcKM1",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "text",
+          "text": "I'll run that ping command. Since pinging 25 times takes roughly 25 seconds, I'll set a longer timeout.",
+          "time": {
+            "start": 1794362592930,
+            "end": 1794362593341
+          },
+          "id": "prt_1c8584ea2001HG7g2iaL23xZRv",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "chatcmpl-tool-a27e4cc31b5e5bf2",
+          "state": {
+            "metadata": {
+              "output": "\r\nPing 127.0.0.1 32����Ʈ ������ ���:\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n"
+            },
+            "status": "running",
+            "input": {
+              "command": "ping -n 25 127.0.0.1",
+              "timeout": 60000
+            },
+            "time": {
+              "start": 1794362593335
+            }
+          },
+          "id": "prt_1c8584edf001Rbxvj1M8zPBNP7",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        }
+      ]
+    }
+  ]
+}

@@ -5,9 +5,13 @@ import type { TokenStats } from "../agent/token-stats.ts";
 import { modelLabel, modelStacks, modelTotals, tokenDates, tokenTotals, usdCeiling, usdDays, usdText, usdTick } from "./token-totals.ts";
 import { agentKinds, agents, type AgentKind } from "../agent/agents.ts";
 import { accountAction } from "../agent/install.ts";
+import { AUTO_MINUTES, autoAnswerWait, autoMinutes } from "../phone/auto-answer.ts";
 import type { SetupStep } from "./phone-setup.ts";
 import { relayRow, relayStopped } from "./relay-state.ts";
 import { FONT_FAMILIES, FONT_SIZE, settingsTabs, type SettingsTab, type ThemeChoice } from "./settings-tabs.ts";
+import { LLM_PLATFORMS, type LlmPlatform } from "../agent/local-llm.ts";
+import type { LlmKey } from "../main/llm-keys.ts";
+import { platformLogos } from "./agent-logos.ts";
 
 /**
  * The settings window: one tab per setting down the left, that setting on
@@ -55,6 +59,8 @@ interface SettingsDeps {
   phoneSetupStep(): SetupStep;
   /** That walk from there, or one change of a phone that is set up. */
   phoneSetup(what: "walk" | "password" | "key" | "renew"): void;
+  /** The Authenticator step alone, waited out: true once it is set up. */
+  setupTwoFactor(): Promise<boolean>;
 }
 
 const cockpit = window.cockpit;
@@ -465,6 +471,244 @@ function remoteRow(deps: SettingsDeps, pc: ReturnType<SettingsDeps["remotes"]>[n
   return row;
 }
 
+/** A key in 내 API 키: its platform's mark, name and last four, how many connections use it, and a two-step remove. */
+function keyRow(t: typeof translate, key: LlmKey, used: number, open: boolean): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "setAccount";
+  const logo = document.createElement("span");
+  logo.className = "setKeyLogo";
+  logo.innerHTML = platformLogos[key.platform];
+  const name = document.createElement("strong");
+  name.textContent = key.label;
+  const hint = document.createElement("span");
+  hint.className = "setMuted";
+  hint.textContent = `${key.platform === "server" ? t("llm.server") : key.platform === "other" ? t("keys.other") : LLM_PLATFORMS[key.platform].label} · ${key.hint}`;
+  const badge = document.createElement("span");
+  badge.className = "setBadge";
+  badge.textContent = t("keys.used", { n: used });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "setLink";
+  remove.dataset.focus = `key:${key.id}`;
+  remove.textContent = t("keys.remove");
+  // Asked here, not in a box: a second click within the row is the confirmation.
+  let armed = false;
+  remove.addEventListener("click", () => {
+    if (!armed) {
+      armed = true;
+      remove.textContent = used > 0 ? t("keys.removeSureUsed", { n: used }) : t("keys.removeSure");
+      return;
+    }
+    void cockpit.llmKeyRemove(key.id).then(() => render());
+  });
+  row.append(logo, name, hint, badge);
+  if (key.sealed) {
+    const sealed = document.createElement("span");
+    sealed.className = "setBadge";
+    sealed.textContent = t("keys.sealed");
+    sealed.title = t("keys.sealedWhy");
+    row.append(sealed);
+  } else if (open) {
+    // The key itself, asked of main each time: it says no once the 30 minutes are up.
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "setEye";
+    eye.dataset.focus = `eye:${key.id}`;
+    eye.setAttribute("aria-pressed", "false");
+    eye.setAttribute("aria-label", t("keys.show"));
+    eye.title = t("keys.show");
+    eye.innerHTML = EYE;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "setLink";
+    copy.textContent = t("keys.copy");
+    copy.hidden = true;
+    eye.addEventListener("click", () => {
+      if (eye.getAttribute("aria-pressed") === "true") {
+        eye.setAttribute("aria-pressed", "false");
+        hint.textContent = shown;
+        hint.classList.remove("setKeyFull");
+        copy.hidden = true;
+        return;
+      }
+      void cockpit.llmKeyReveal(key.id).then((full) => {
+        if (full === "locked") return render();
+        eye.setAttribute("aria-pressed", "true");
+        hint.textContent = full;
+        hint.classList.add("setKeyFull");
+        copy.hidden = false;
+        copy.onclick = () => {
+          cockpit.writeClipboard(full);
+          copy.textContent = t("keys.copied");
+        };
+      });
+    });
+    const shown = hint.textContent;
+    row.append(eye, copy);
+  }
+  row.append(remove);
+  return row;
+}
+
+/** An eye, for 키 보기. */
+const EYE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+/** When the shown keys hide again: the panel is drawn once more then. */
+let lockTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Above the keys: without the Authenticator, the way to set it up (and, once
+ * it is, to the phone too); with it, a code to show the keys for 30 minutes,
+ * or until when they are shown and a way to hide them now.
+ */
+function keyGuard(deps: SettingsDeps, totpReady: boolean, paired: boolean, until: number | undefined): HTMLElement[] {
+  const { t } = deps;
+  clearTimeout(lockTimer);
+  if (!totpReady) {
+    const why = document.createElement("p");
+    why.className = "setNote";
+    why.textContent = t("keys.twoFactorWhy");
+    const go = buttons([t("keys.twoFactorSetup"), () => void deps.setupTwoFactor().then(() => render())]);
+    go.querySelector("button")?.classList.add("go");
+    return [why, go];
+  }
+  const out: HTMLElement[] = [];
+  if (until !== undefined) {
+    const time = new Date(until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const row = document.createElement("div");
+    row.className = "setSummary";
+    row.append(t("keys.openUntil", { time }));
+    const hide = document.createElement("button");
+    hide.type = "button";
+    hide.className = "setLink";
+    hide.textContent = t("keys.hideNow");
+    hide.addEventListener("click", () => void cockpit.llmKeyLock().then(() => render()));
+    row.append(hide);
+    out.push(row);
+    lockTimer = setTimeout(() => {
+      if (dialog.open && current === "llmKeys") render();
+    }, Math.max(0, until - Date.now()) + 500);
+  } else {
+    const box = document.createElement("div");
+    box.className = "setKeyFields";
+    const code = document.createElement("input");
+    code.type = "text";
+    code.inputMode = "numeric";
+    code.autocomplete = "one-time-code";
+    code.maxLength = 7;
+    code.placeholder = t("keys.codePlaceholder");
+    code.setAttribute("aria-label", t("keys.codePlaceholder"));
+    code.dataset.focus = "keyCode";
+    const said = document.createElement("p");
+    said.className = "setNote";
+    const open = () => void cockpit.llmKeyUnlock(code.value).then((answer) => {
+      if (typeof answer === "number") return render();
+      said.textContent = t(answer === "wrong" ? "setup.codeWrong" : "keys.nototp");
+      code.select();
+    });
+    code.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") open();
+    });
+    const go = buttons([t("keys.showAll"), open]);
+    box.append(code, go);
+    out.push(box, said);
+  }
+  // Set up for the keys, the phone is one step away: the same app's code logs it in.
+  if (!paired) {
+    const hint = document.createElement("p");
+    hint.className = "setNote";
+    hint.textContent = t("keys.phoneToo");
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "setLink";
+    link.textContent = t("keys.phoneConnect");
+    link.addEventListener("click", () => {
+      dialog.close();
+      deps.phoneSetup("walk");
+    });
+    out.push(hint, link);
+  }
+  return out;
+}
+
+/** Adds a key: its platform, a name, the key itself; the platform checks it before it is kept. */
+function keyForm(deps: SettingsDeps): HTMLElement {
+  const { t } = deps;
+  const box = document.createElement("div");
+  box.className = "setKeyForm";
+  const head = document.createElement("p");
+  head.className = "setNote";
+  head.textContent = t("keys.addHead");
+  let platform: LlmKey["platform"] = "openrouter";
+  const chips = document.createElement("div");
+  chips.className = "setChips";
+  const choices = [...Object.keys(LLM_PLATFORMS), "server", "other"] as Array<LlmKey["platform"]>;
+  const link = document.createElement("button");
+  link.type = "button";
+  link.className = "setLink";
+  link.textContent = t("llm.keyLink");
+  link.addEventListener("click", () => {
+    if (platform !== "server" && platform !== "other") void cockpit.openLink("", LLM_PLATFORMS[platform].keys);
+  });
+  const sync = () => {
+    for (const chip of chips.querySelectorAll("button")) chip.setAttribute("aria-pressed", String(chip.value === platform));
+    link.hidden = platform === "server" || platform === "other";
+  };
+  chips.append(...choices.map((id) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.value = id;
+    chip.innerHTML = platformLogos[id];
+    chip.append(id === "server" ? t("llm.server") : id === "other" ? t("keys.other") : LLM_PLATFORMS[id].label);
+    chip.addEventListener("click", () => {
+      platform = id;
+      sync();
+    });
+    return chip;
+  }));
+  const label = document.createElement("input");
+  label.type = "text";
+  label.maxLength = 40;
+  label.placeholder = t("keys.label");
+  label.setAttribute("aria-label", t("keys.label"));
+  const secret = document.createElement("input");
+  secret.type = "password";
+  secret.autocomplete = "off";
+  secret.spellcheck = false;
+  secret.placeholder = t("keys.paste");
+  secret.setAttribute("aria-label", t("keys.paste"));
+  const said = document.createElement("p");
+  said.className = "setNote";
+  const save = buttons([t("keys.save"), () => {
+    said.textContent = t("llm.checking");
+    void (async () => {
+      let made = await cockpit.llmKeyAdd(platform, label.value, secret.value).catch(() => "invalid" as const);
+      if (made === "nototp") {
+        said.textContent = t("keys.nototp");
+        if (!(await deps.setupTwoFactor())) return;
+        made = await cockpit.llmKeyAdd(platform, label.value, secret.value).catch(() => "invalid" as const);
+      }
+      if (typeof made === "string") {
+        said.textContent = t(`keys.${made}`);
+        return;
+      }
+      secret.value = "";
+      label.value = "";
+      render();
+    })();
+  }]);
+  save.querySelector("button")?.classList.add("go");
+  const fields = document.createElement("div");
+  fields.className = "setKeyFields";
+  fields.append(label, secret);
+  const safe = document.createElement("p");
+  safe.className = "setNote";
+  safe.textContent = t("keys.safe");
+  sync();
+  box.append(head, chips, fields, save, link, said, safe);
+  return box;
+}
+
 /**
  * The phone's usage chart (home.tsx UsdBars): a week of dollars a day, stacked by model, one colour per model
  * however the project changes. Nothing priced in view: no chart, or a note when some rows had no price.
@@ -635,6 +879,7 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
         useLocale(id);
         render();
       })),
+  // 일반: what Lepons does on its own -- at start, and while the operator is away.
   startup: ({ t, restoreAlways, setRestoreAlways }) => {
     const row = document.createElement("label");
     const box = document.createElement("input");
@@ -642,7 +887,34 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
     box.checked = restoreAlways();
     box.addEventListener("change", () => setRestoreAlways(box.checked));
     row.append(box, t("settings.startup.restoreAlways"));
-    return [row];
+    // 자리 비움 기본 답 (phone/auto-answer.ts): off until ticked; main.ts reads it on each new question.
+    const autoRow = document.createElement("label");
+    const autoBox = document.createElement("input");
+    autoBox.type = "checkbox";
+    autoBox.id = "setAutoAnswer";
+    autoBox.checked = autoAnswerWait(localStorage.getItem("autoAnswer"), null) > 0;
+    const wait = document.createElement("select");
+    wait.setAttribute("aria-label", t("settings.startup.autoWait"));
+    const minutes = autoMinutes(localStorage.getItem("autoAnswerMinutes"));
+    for (const value of AUTO_MINUTES) {
+      const option = new Option(t("settings.startup.autoMinutes", { n: value }), String(value));
+      option.selected = value === minutes;
+      wait.append(option);
+    }
+    wait.disabled = !autoBox.checked;
+    autoBox.addEventListener("change", () => {
+      localStorage.setItem("autoAnswer", autoBox.checked ? "1" : "0");
+      wait.disabled = !autoBox.checked;
+    });
+    wait.addEventListener("change", () => localStorage.setItem("autoAnswerMinutes", wait.value));
+    autoRow.append(autoBox, t("settings.startup.auto"));
+    const waitRow = document.createElement("div");
+    waitRow.className = "setRow";
+    waitRow.append(wait);
+    const autoHint = document.createElement("p");
+    autoHint.className = "setNote";
+    autoHint.textContent = t("settings.startup.autoHint");
+    return [row, autoRow, waitRow, autoHint];
   },
   agents: (deps, info) => {
     const { t, pcs, reconnectPc } = deps;
@@ -690,6 +962,20 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
         : [])),
     ));
     return [chips, list];
+  },
+  llmKeys: (deps) => {
+    const { t } = deps;
+    const guard = document.createElement("div");
+    const list = document.createElement("div");
+    list.append(line(t("settings.agents.checking")));
+    void Promise.all([cockpit.llmList(), cockpit.phoneSettings()]).then(([saved, phone]) => {
+      const open = saved.unlockedUntil !== undefined;
+      guard.replaceChildren(...keyGuard(deps, phone.totpReady, phone.relay.paired, saved.unlockedUntil));
+      list.replaceChildren(...(saved.keys.length
+        ? saved.keys.map((key) => keyRow(t, key, saved.llms.filter((llm) => llm.keyId === key.id).length, open))
+        : [line(t("keys.empty"))]));
+    });
+    return [guard, list, keyForm(deps)];
   },
   allow: ({ t }) => [buttons([t("settings.allow.on"), act("allowOn")], [t("settings.allow.off"), act("allowOff")])],
   key: ({ t }) => [buttons([t("settings.key.copy"), act("copyKey")])],
@@ -747,7 +1033,6 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
     // A sign-in that exists can change with no phone paired: a lost phone is let go first.
     const changes: Array<[string, () => void]> = view.hasPassword && view.totpReady ? [
       [t("settings.phone.changePassword"), () => phoneSetup("password")],
-      [t("settings.phone.totpShow"), () => phoneSetup("key")],
       [t("settings.phone.totpRenew"), () => phoneSetup("renew")],
     ] : [];
     if (phoneSetupStep() === "done") out.push(buttons([t("settings.phone.another"), pairPhone], ...changes));

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { onMenu, newActivity, onOutput, onTick, onTurnEnd } from "../renderer/pet.ts";
 import type { SessionState } from "../session/state.ts";
 import { sessionStatus, turnMark, type TurnEnd } from "../shared/status.ts";
-import { allDone, COALESCE_MS, donePush, LOOK_AGAIN_MS, newlyWaiting, pushGate, pushTokenGone, snapshotPushes, validPushToken, waitingPush, type Waiting } from "./push.ts";
+import { allDone, COALESCE_MS, donePush, limitOnScreen, LOOK_AGAIN_MS, menuAsks, newlyStopped, newlyWaiting, pushGate, pushTitle, pushTokenGone, snapshotPushes, stopPush, validPushToken, waitingPush, type Waiting } from "./push.ts";
 
 test("a push goes out on the turn to waiting, once, not while it stays waiting", () => {
   const a = (mood: string) => ({ key: "a", mood });
@@ -84,7 +84,7 @@ function gate(look = () => false) {
   };
   return { turn, advance, sent, timers, set: (list: Waiting[]) => void (waiting = list) };
 }
-const w = (session: string): Waiting => ({ pc: "이 PC", session });
+const w = (session: string): Waiting => ({ session, title: "lepons · Claude Code", asks: "approve" });
 
 test("coalescing: the first goes at once, the rest wait out the 60 s and go as one", () => {
   const g = gate();
@@ -193,7 +193,7 @@ function host(looking = () => false) {
     now: () => clock,
     later: (run, ms) => void timers.push({ at: clock + ms, run }),
     looking,
-    waiting: () => before.filter((one) => one.mood === "waiting").map((one) => ({ pc: "PC", session: one.key })),
+    waiting: () => before.filter((one) => one.mood === "waiting").map((one) => ({ session: one.key, title: "t", asks: "choose" as const })),
     send: (list) => void sent.push(`WAITING(${list.length})`),
   });
   return {
@@ -351,4 +351,42 @@ test("a menu with no record to ask still rings", () => {
   a.quiet("unknown", "Yes|No");
   h.snap([a.snap()]);
   assert.deepEqual(h.sent, ["WAITING(1)"]);
+});
+
+test("a menu asks for an approval when one of its options says yes, allow, approve or proceed", () => {
+  assert.equal(menuAsks([{ label: "Yes" }, { label: "Yes, and don't ask again for this command" }, { label: "No, and tell Claude what to do differently" }]), "approve");
+  assert.equal(menuAsks([{ label: "Allow once" }, { label: "Deny" }]), "approve");
+  assert.equal(menuAsks([{ label: "예" }, { label: "아니요" }]), "approve");
+  assert.equal(menuAsks([{ label: "Postgres" }, { label: "SQLite" }, { label: "Type something." }]), "choose");
+  assert.equal(menuAsks([{ label: "Yesterday's log" }, { label: "Today's log" }]), "choose", "a word that only starts with yes");
+});
+
+test("the title names the folder, its AI and a named PC; empty parts are left out", () => {
+  assert.equal(pushTitle("lepons", "Claude Code", "집 PC"), "lepons · Claude Code · 집 PC");
+  assert.equal(pushTitle("lepons", undefined, undefined), "lepons");
+  assert.equal(pushTitle("blog", "Codex", ""), "blog · Codex");
+});
+
+test("an AI that failed or hit its limit pushes once, in its own lock-screen slot; a plain terminal does not", () => {
+  const s = (key: string, mood: string, extra: { limited?: true; terminal?: boolean; turn?: "starting" } = {}) => ({ key, mood, ...extra });
+  assert.deepEqual(newlyStopped([s("a", "working")], [s("a", "failed")]).map((one) => one.why), ["failed"]);
+  assert.deepEqual(newlyStopped([s("a", "failed")], [s("a", "failed")]), [], "already failed");
+  assert.deepEqual(newlyStopped([s("a", "working")], [s("a", "idle", { limited: true })]).map((one) => one.why), ["limit"]);
+  assert.deepEqual(newlyStopped([s("a", "idle", { limited: true })], [s("a", "idle", { limited: true })]), [], "the line still on screen");
+  assert.deepEqual(newlyStopped([s("t", "working", { terminal: true })], [s("t", "failed", { terminal: true })]), []);
+  assert.deepEqual(newlyStopped([], [s("a", "failed")]), [], "a session just seen is not news");
+  assert.deepEqual(newlyStopped([s("a", "idle")], [s("a", "failed")]), [], "closed while idle: no work was lost");
+  assert.deepEqual(newlyStopped([s("a", "working", { turn: "starting" })], [s("a", "failed")]), [], "a reconnect that failed again");
+  const push = stopPush("ExpoPushToken[a]", "lepons · Codex", "오류로 멈췄어요", "0123abcd");
+  assert.equal(push.title, "lepons · Codex");
+  assert.equal(push.collapseId, "lepons-stop");
+  assert.equal(push.tag, "lepons-stop");
+  assert.deepEqual(push.data, { session: "0123abcd" });
+});
+
+test("the limit is read off the screen's foot, in the agent's own words, not from a usage readout", () => {
+  assert.equal(limitOnScreen(["● Working", "", "  ⎿  5-hour limit reached ∙ resets 3pm"]), true);
+  assert.equal(limitOnScreen(["■ You've hit your usage limit. Try again at 4:12 PM."]), true);
+  assert.equal(limitOnScreen(["Current session  5-hour limit  40% used", "Weekly limit 12%"]), false);
+  assert.equal(limitOnScreen(["Claude usage limit reached", ...Array.from({ length: 9 }, (_, i) => `line ${i}`)]), false, "scrolled up past the foot");
 });

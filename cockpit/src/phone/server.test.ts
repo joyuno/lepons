@@ -32,6 +32,14 @@ const deps: PhoneDeps = {
     { nodeId: "local", repoId: "C:/work/docs", pc: "이 PC", folder: "docs" },
   ],
   openFolder: (nodeId, repoId) => void foldersOpened.push([nodeId, repoId]),
+  closeSession: async (key) => {
+    closed.push(key);
+    return key === "local::C:/work/api" ? "here" : "stopped";
+  },
+  forgetFolder: async (nodeId, repoId) => {
+    forgotten.push([nodeId, repoId]);
+    return repoId === "C:/work/web" ? "worktree" : "ok";
+  },
   accounts: async () => [
     { pc: "이 PC", agents: [{ name: "Claude Code", version: "2.1.0", signedIn: true }, { name: "Codex", version: "0.9", signedIn: false }, { name: "Grok" }] },
     // What a CLI might also say: none of it may reach the phone.
@@ -51,6 +59,7 @@ const deps: PhoneDeps = {
     ["shot.png", "chart.svg", "report.pdf", "page.html", "README.md", "code.ts"].includes(relative) ? Buffer.from(`bytes of ${relative}`) : undefined,
   outside: async (_key, printed) =>
     printed === "~/.codex/config.toml" ? Buffer.from("model = 1") : printed === "~/.ssh/config" ? "secret" : printed === "/big.mp4" ? "big" : undefined,
+  keepWaiting: (key) => void kept.push(key),
   commands: async () => [{ name: "/compact", description: "Free up context" }],
   files: async () => ["src/auth.ts"],
   directory: async (_key, relative) => relative === "missing" ? undefined : [{ name: "src", directory: true }],
@@ -65,10 +74,13 @@ const deps: PhoneDeps = {
   },
 };
 const writes: Array<[string, string[]]> = [];
+const kept: string[] = [];
 const uploads: Array<[string, string, number]> = [];
 const reconnects: string[] = [];
 const terminalsOpened: Array<[string, string]> = [];
 const foldersOpened: Array<[string, string]> = [];
+const closed: string[] = [];
+const forgotten: Array<[string, string]> = [];
 const pushDone: boolean[] = [];
 const pushTokens: Array<string | undefined> = [];
 
@@ -323,6 +335,27 @@ test("a folder with no session is listed, and the phone can have its PC open it"
   assert.equal((await post("/api/open", { f: docs })).status, 401);
 });
 
+test("the phone closes a session, and says when its PC could not be told", async () => {
+  const token = await signIn();
+  closed.length = 0;
+  assert.deepEqual((await post("/api/close", { s: sessionId("local::C:/work/web") }, token)).body, { ok: true });
+  assert.deepEqual((await post("/api/close", { s: sessionId("local::C:/work/api") }, token)).body, { ok: true, here: true });
+  assert.deepEqual(closed, ["local::C:/work/web", "local::C:/work/api"]);
+  assert.equal((await post("/api/close", { s: "nope" }, token)).status, 404);
+  assert.equal((await post("/api/close", { s: sessionId("local::C:/work/web") })).status, 401);
+  assert.equal(closed.length, 2);
+});
+
+test("the phone takes a folder off the list, open or closed, but not an original a worktree still needs", async () => {
+  const token = await signIn();
+  forgotten.length = 0;
+  assert.deepEqual((await post("/api/forget", { f: sessionId("local::C:/work/docs") }, token)).body, { ok: true });
+  assert.equal((await post("/api/forget", { f: sessionId("local::C:/work/web") }, token)).status, 409);
+  assert.deepEqual(forgotten, [["local", "C:/work/docs"], ["local", "C:/work/web"]]);
+  assert.equal((await post("/api/forget", { f: "nope" }, token)).status, 404);
+  assert.equal((await post("/api/forget", { f: sessionId("local::C:/work/docs") })).status, 401);
+});
+
 test("the workflow and listed .md files are readable, nothing else", async () => {
   const token = await signIn();
   const web = sessionId("local::C:/work/web");
@@ -525,4 +558,13 @@ test("usage rides in the state, re-sent only when it changes", async () => {
   assert.equal("usage" in ((await get("/api/state", token)).body as object), false, "no data, no field");
   opened.stop();
   assert.equal(api.looking(), false, "no stream, nobody looking");
+});
+
+test("a question told to wait from the phone: the PC hears which session, nothing else", async () => {
+  const token = await signIn();
+  const web = sessionId("local::C:/work/web");
+  assert.equal((await post("/api/auto-keep", { s: web }, token)).status, 200);
+  assert.deepEqual(kept.at(-1), "local::C:/work/web");
+  assert.equal((await post("/api/auto-keep", { s: "nope" }, token)).status, 404);
+  assert.equal((await post("/api/auto-keep", { s: web })).status, 401);
 });

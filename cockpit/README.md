@@ -1,6 +1,6 @@
 # Lepons Cockpit
 
-내 PC와 원격 컴퓨터의 AI 코딩 도구(Claude Code, Codex) 세션을 하나의 창에서 열고 관리하는
+내 PC와 원격 컴퓨터의 AI 코딩 도구(Claude Code, Codex, Grok, Antigravity, Cursor, OpenCode) 세션을 하나의 창에서 열고 관리하는
 Electron 데스크톱 앱입니다. 한국어/English/中文 3개 언어를 지원합니다.
 
 화면을 나눠 여러 작업을 나란히 보고, 각 패널에서 AI·터미널·파일을 탭으로 전환할 수 있습니다. 공유 맵으로 컴퓨터 사이에 코드를 공유하고, 설정에서 원격 PC와 AI 도구의 설치·로그인 상태를 관리합니다.
@@ -10,8 +10,10 @@ Electron 데스크톱 앱입니다. 한국어/English/中文 3개 언어를 지�
 - Node.js 22 이상 (개발 환경: Node.js 24)
 - Windows / macOS / Linux 데스크톱 (Electron GUI 앱이라 헤드리스 서버에서는 실행할 수 없습니다)
 - 원격 머신에 연결하려면: 이 컴퓨터의 `~/.ssh`에 키가 있거나 `ssh-agent`가 떠 있어야 하고,
-  키·포트 설정은 `~/.ssh/config`에서 읽습니다. 원격에 Claude Code/Codex가 없으면 앱이 자동
-  설치를 시도합니다.
+  키·포트 설정은 `~/.ssh/config`에서 읽습니다. 고른 AI 도구가 그 PC에 없으면 앱이 설치를
+  물어보고 그 PC의 터미널에서 설치합니다.
+- 내 LLM(내 서버나 API 키의 모델)은 OpenCode로 실행합니다. 그 PC에 OpenCode가 없으면 위와 같이
+  설치를 물어봅니다.
 
 ## 실행
 

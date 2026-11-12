@@ -69,8 +69,8 @@ const make = (c: Palette) =>
     strong: { borderWidth: 2, borderColor: c.live },
     /** A round 44-point icon button on the page. */
     circle: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: c.card, borderWidth: 1, borderColor: c.line },
-    /** Where a file sits, in one box beside the circles or above the file. */
-    pathBox: { minHeight: 44, justifyContent: "center", backgroundColor: c.card, borderRadius: radius.md, borderCurve: "continuous", borderWidth: 1, borderColor: c.line, paddingHorizontal: space.md, paddingVertical: space.sm },
+    /** Where a file or folder sits, as a quiet trail: "lepons › src › app". */
+    crumbs: { ...font.regular, color: c.muted, fontSize: size.caption, lineHeight: 16 },
     row: { flexDirection: "row", alignItems: "center", gap: space.md },
     mono: { fontFamily: mono, fontSize: size.footnote, lineHeight: 19, color: c.text },
     empty: { ...font.regular, color: c.muted, fontSize: size.sub, textAlign: "center", paddingVertical: space.xxl },

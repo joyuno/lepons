@@ -275,3 +275,25 @@ test("on a Mac, a session's scratch space under /private/tmp/claude-<uid> counts
     await rm(box, { recursive: true, force: true });
   }
 });
+
+test("OpenCode's messages count from its database: cache in input, reasoning in output, its own cost", inHome(async (home) => {
+  const dir = join(home, ".local", "share", "opencode");
+  await mkdir(dir, { recursive: true });
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(join(dir, "opencode.db"));
+  db.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL); CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);");
+  const now = Date.now();
+  db.prepare("INSERT INTO session VALUES (?, ?)").run("ses_a", "/work/beta");
+  const message = (id: string, data: object) => db.prepare("INSERT INTO message VALUES (?, ?, ?, ?)").run(id, "ses_a", now, JSON.stringify(data));
+  message("m1", { role: "user", time: { created: now } });
+  message("m2", { role: "assistant", time: { created: now }, modelID: "big-pickle", cost: 0, tokens: { input: 100, output: 10, reasoning: 5, cache: { read: 40, write: 0 } } });
+  message("m3", { role: "assistant", time: { created: now }, modelID: "some-paid-model", cost: 0.25, tokens: { input: 50, output: 5, reasoning: 0, cache: { read: 0, write: 0 } } });
+  db.close();
+  const result = await collectTokenStats(home);
+  const rows = result.days.filter((day) => day.agent === "opencode").map(({ model, input, output, usd }) => ({ model, input, output, usd }));
+  assert.deepEqual(rows.sort((a, b) => a.model.localeCompare(b.model)), [
+    { model: "big-pickle", input: 140, output: 15, usd: 0 },
+    { model: "some-paid-model", input: 50, output: 5, usd: 0.25 },
+  ]);
+  assert.equal(result.incomplete, false);
+}));

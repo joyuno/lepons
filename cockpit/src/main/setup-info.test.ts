@@ -37,7 +37,7 @@ test("the Lepons key is made once, as an OpenSSH pair ssh2 can use", async () =>
 });
 
 test("a remote PC's agents from its probe: absent is missing only when the shell answered", () => {
-  const full = "home:/h\nos:Linux\ntmux:no\nclaude:2.1.0\ncodex:no\ngrok:no\nagy:no\nagent:no\n";
+  const full = "home:/h\nos:Linux\ntmux:no\nclaude:2.1.0\ncodex:no\ngrok:no\nagy:no\nagent:no\nopencode:no\n";
   const read = remoteAgentAccounts(full);
   assert.deepEqual(read.find((account) => account.kind === "claude"), { kind: "claude", version: "2.1.0" });
   assert.deepEqual(read.find((account) => account.kind === "codex"), { kind: "codex" });
@@ -46,7 +46,7 @@ test("a remote PC's agents from its probe: absent is missing only when the shell
 });
 
 test("a remote PC's sign-in from its login lines: killed, absent or no status command is unknown", () => {
-  const probe = "home:/h\nos:Linux\ntmux:no\nclaude:2.1.0\ncodex:0.5\ngrok:1.0\nagy:no\nagent:2.0\n";
+  const probe = "home:/h\nos:Linux\ntmux:no\nclaude:2.1.0\ncodex:0.5\ngrok:1.0\nagy:no\nagent:2.0\nopencode:no\n";
   const read = remoteAgentAccounts(probe + "claude-login:{ \"loggedIn\": true } rc:0\ncodex-login:Not logged in rc:1\nagent-login: rc:143\ngrok-login:x rc:0\n");
   assert.deepEqual(read.find((account) => account.kind === "claude"), { kind: "claude", version: "2.1.0", signedIn: true });
   assert.deepEqual(read.find((account) => account.kind === "codex"), { kind: "codex", version: "0.5", signedIn: false });

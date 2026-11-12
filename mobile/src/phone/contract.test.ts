@@ -76,6 +76,7 @@ test("what the real server sends, every optional field filled, the phone's reade
     summary: { goal: "g", now: { at: 5, kind: "action" as const, text: "t" }, result: "r", progress: { files: 1, fileNames: ["a.ts"], reads: 2, commands: 3, subagents: 1, running: 1, since: 4 } },
     subagents: [{ label: "l", running: false, since: 1, doneAt: 2, result: "r" }],
     agentName: "Claude Code", mainFree: true, worktreeOf: "lepons", worktree: "로그인 수정",
+    auto: { at: 1_800_000_000_000, n: 2, option: "SQLite (Recommended)" },
   };
   const workflow = {
     title: "t",

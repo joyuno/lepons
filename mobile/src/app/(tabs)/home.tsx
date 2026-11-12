@@ -14,8 +14,8 @@ import { font, Group, Lamp, radius, Screen, Section, SessionRow, size, Skeleton,
 const openSession = (session: PhoneSessionView) =>
   router.push({ pathname: "/session/[id]", params: { id: session.id } });
 
-/** The four the PC counts (cockpit/src/agent/token-stats.ts), named as its usage tab names them. */
-const agents = [["claude", "Claude Code"], ["codex", "Codex"], ["grok", "Grok"], ["agy", "Antigravity"]] as const;
+/** The five the PC counts (cockpit/src/agent/token-stats.ts), named as its usage tab names them. */
+const agents = [["claude", "Claude Code"], ["codex", "Codex"], ["grok", "Grok"], ["agy", "Antigravity"], ["opencode", "OpenCode"]] as const;
 
 /**
  * 홈: what the sessions are doing, who waits for an answer, what they cost, what is left, and the PCs.

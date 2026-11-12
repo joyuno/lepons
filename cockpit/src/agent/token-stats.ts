@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { modelKey, usdOf } from "./prices.ts";
 
-type Agent = "claude" | "codex" | "grok" | "agy";
+type Agent = "claude" | "codex" | "grok" | "agy" | "opencode";
 /**
  * One row per date, project, agent and model; `model` is "unknown" when the records do not name one.
  * `usd` is an estimate at API list prices, absent when there is no known price; such tokens get their own row, so a model can have two in a day.
@@ -27,6 +27,41 @@ const dayOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padSta
 const number = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const modelOf = (model: unknown): string => typeof model === "string" && model && model.length <= 80 ? modelKey(model) : "unknown";
+
+/**
+ * OpenCode keeps every session in one SQLite file, each assistant message with
+ * its tokens (input without the cache, reasoning apart from output) and the cost
+ * OpenCode itself worked out. `project` is the session's folder, for the caller to map.
+ * ponytail: the default data folder only; an XDG_DATA_HOME elsewhere is not followed.
+ */
+async function addOpencode(file: string, since: number, add: (row: TokenDay) => void, failed: () => void): Promise<void> {
+  const info = await stat(file).catch(() => undefined);
+  if (!info || info.mtimeMs < since) return;
+  try {
+    const lite = await import("node:sqlite");
+    const db = new lite.DatabaseSync(file, { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT s.directory AS dir, m.data AS data FROM message m JOIN session s ON s.id = m.session_id WHERE m.time_created >= ?").all(since);
+      for (const row of rows) {
+        const message = object(JSON.parse(String(row.data)));
+        if (message.role !== "assistant") continue;
+        const tokens = object(message.tokens), cache = object(tokens.cache);
+        const created = number(object(message.time).created);
+        const input = number(tokens.input), output = number(tokens.output);
+        const reasoning = number(tokens.reasoning) ?? 0, read = number(cache.read) ?? 0, write = number(cache.write) ?? 0;
+        if (created === undefined || input === undefined || output === undefined) { failed(); continue; }
+        const said = typeof message.cost === "number" && Number.isFinite(message.cost) && message.cost >= 0 ? message.cost : undefined;
+        // OpenCode's own price when it has one; ours when it says 0 for a model we know; a free or local model costs nothing.
+        const usd = said ? said : usdOf(message.modelID, { input, cached: read, write, output: output + reasoning }) ?? said;
+        add({ date: dayOf(new Date(created)), project: String(row.dir ?? ""), agent: "opencode", model: modelOf(message.modelID), input: input + read + write, output: output + reasoning, ...(usd === undefined ? {} : { usd }) });
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    failed();
+  }
+}
 
 /** Antigravity's transcript lines carry no folder; the conversation list does. Throws: a failure here means every folder is unknown. */
 function agyFolders(sqlite: typeof import("node:sqlite"), root: string): Map<string, string> {
@@ -319,6 +354,7 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
     } catch { result.incomplete = true; }
   }
   for (const reading of claudeMessages.values()) add(reading);
+  await addOpencode(join(home, ".local", "share", "opencode", "opencode.db"), start.getTime(), (row) => add({ ...row, project: project(row.project) }), () => { result.incomplete = true; });
   result.days = [...groups.values()].filter((day) => day.input || day.output).sort((a, b) => a.date.localeCompare(b.date) || a.project.localeCompare(b.project) || a.agent.localeCompare(b.agent) || a.model.localeCompare(b.model));
   for (const day of result.days) {
     if (day.usd === undefined) delete day.usd;

@@ -1,3 +1,4 @@
+import { withoutSidebar } from "./menu.ts";
 import type { Mood } from "./types.ts";
 
 /**
@@ -18,7 +19,8 @@ const rule = /^[\s─━═╌╍┄┅╭╮╰╯┌┐└┘├┤┬┴┼�
 const firstOption = /^\s*[│┃║]?\s*(?:[❯›>▶➜→*]\s*)?1[.)]\s/;
 
 /** What a menu asks: the nearest text on the agent's screen above its last "1." (menuFrom's start). None when nothing is close. */
-export function menuQuestion(lines: readonly string[]): string | undefined {
+export function menuQuestion(screen: readonly string[]): string | undefined {
+  const lines = withoutSidebar(screen);
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!firstOption.test(lines[i]!)) continue;
     for (let j = i - 1; j >= Math.max(0, i - 3); j--) {

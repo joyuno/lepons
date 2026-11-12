@@ -77,13 +77,17 @@ const subagentsOf = (a: unknown): { subagents?: PhoneSubagent[] } => {
 const named = (value: unknown): value is string => str(value, 500) && value !== "";
 const worktreeOf = (s: Obj): { worktreeOf?: string; worktree?: string } =>
   named(s.worktreeOf) ? { worktreeOf: s.worktreeOf, ...(named(s.worktree) ? { worktree: s.worktree } : {}) } : {};
+/** 자리 비움 기본 답: when the PC answers by itself, and with which option. */
+const autoOf = (value: unknown): { auto?: { at: number; n: number; option: string } } =>
+  isObj(value) && time(value.at) && typeof value.n === "number" && Number.isInteger(value.n) && value.n >= 1 && value.n <= 9 && str(value.option, 500)
+    ? { auto: { at: value.at as number, n: value.n, option: value.option } } : {};
 
 export function stateOf(data: unknown): PhoneState | undefined {
   if (!isObj(data)) return undefined;
   const sessions = list(data.sessions, 500, (s) =>
     isObj(s) && str(s.id, 64) && /^[0-9a-f]+$/.test(s.id) && str(s.pc, 200) && str(s.folder, 500) &&
     (moods as readonly unknown[]).includes(s.mood) && optStr(s.preview, 2000) && typeof s.agent === "boolean"
-      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s) }
+      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s), ...autoOf(s.auto) }
       : undefined);
   const pcs = list(data.pcs, 100, (p) =>
     isObj(p) && str(p.label, 200) && (pcStates as readonly unknown[]).includes(p.state)
@@ -92,7 +96,7 @@ export function stateOf(data: unknown): PhoneState | undefined {
   const usage = list(data.usage, 10, usageOf);
   // A bad folder is dropped; a PC older than the route sends none.
   const folders = list(data.folders, 1000, (f) =>
-    isObj(f) && hexId(f.id) && str(f.pc, 200) && str(f.folder, 500) ? { id: f.id, pc: f.pc, folder: f.folder } : undefined);
+    isObj(f) && hexId(f.id) && str(f.pc, 200) && str(f.folder, 500) ? { id: f.id, pc: f.pc, folder: f.folder, ...(str(f.worktreeOf, 500) ? { worktreeOf: f.worktreeOf } : {}) } : undefined);
   return sessions && pcs ? { sessions, pcs, ...(folders?.length ? { folders } : {}), ...(usage?.length ? { usage } : {}) } : undefined;
 }
 

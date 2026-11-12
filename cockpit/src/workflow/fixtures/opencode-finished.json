@@ -1,0 +1,684 @@
+{
+  "info": {
+    "id": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+    "slug": "clever-comet",
+    "projectID": "global",
+    "directory": "C:\\work\\demo",
+    "path": "",
+    "title": "Ping localhost with 25 packets",
+    "agent": "build",
+    "model": {
+      "id": "glm-5.3-flash-free",
+      "providerID": "opencode"
+    },
+    "version": "1.19.5",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 22643,
+      "output": 417,
+      "reasoning": 464,
+      "cache": {
+        "read": 91392,
+        "write": 0
+      }
+    },
+    "time": {
+      "created": 1794362582847,
+      "updated": 1794362675826
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1794362582858
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "glm-5.3-flash-free"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_1c858274a001Vjk4ZEeg3IxksI",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Run the shell command: ping -n 25 127.0.0.1",
+          "id": "prt_1c858274c001nZxJ4uXPB2Oi79",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858274a001Vjk4ZEeg3IxksI"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858274a001Vjk4ZEeg3IxksI",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 18098,
+          "input": 17905,
+          "output": 56,
+          "reasoning": 137,
+          "cache": {
+            "write": 0,
+            "read": 0
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362582873,
+          "completed": 1794362617969
+        },
+        "finish": "tool-calls",
+        "id": "msg_1c8582759001DRvffC4TyPBh1i",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c85841e9001lY512G3x7hXsv3",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "reasoning",
+          "text": "The user wants me to run a ping command. This is a simple, safe request. `ping -n 25 127.0.0.1` sends 25 ICMP echo requests to localhost (the `-n` flag indicates Windows syntax). Since it pings 127.0.0.1 with a 1-second interval between pings, it will take roughly 25 seconds to complete, so I should set an appropriate timeout. The environment is Windows, and bash is the shell, but ping should still resolve to the Windows ping executable. No security concerns here — this is just a localhost ping, a common way to introduce a delay or test the shell.",
+          "time": {
+            "start": 1794362589675,
+            "end": 1794362592928
+          },
+          "id": "prt_1c85841eb001CyA63W5TCfcKM1",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "text",
+          "text": "I'll run that ping command. Since pinging 25 times takes roughly 25 seconds, I'll set a longer timeout.",
+          "time": {
+            "start": 1794362592930,
+            "end": 1794362593341
+          },
+          "id": "prt_1c8584ea2001HG7g2iaL23xZRv",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "chatcmpl-tool-a27e4cc31b5e5bf2",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "ping -n 25 127.0.0.1",
+              "timeout": 60000
+            },
+            "output": "\r\nPing 127.0.0.1 32����Ʈ ������ ���:\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n\r\n127.0.0.1�� ���� Ping ���:\r\n    ��Ŷ: ���� = 25, ���� = 25, �ս� = 0 (0% �ս�),\r\n�պ� �ð�(�и���):\r\n    �ּ� = 0ms, �ִ� = 0ms, ��� = 0ms\r\n",
+            "metadata": {
+              "output": "\r\nPing 127.0.0.1 32����Ʈ ������ ���:\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128\r\n\r\n127.0.0.1�� ���� Ping ���:\r\n    ��Ŷ: ���� = 25, ���� = 25, �ս� = 0 (0% �ս�),\r\n�պ� �ð�(�и���):\r\n    �ּ� = 0ms, �ִ� = 0ms, ��� = 0ms\r\n",
+              "exit": 0,
+              "truncated": false
+            },
+            "title": "ping -n 25 127.0.0.1",
+            "time": {
+              "start": 1794362593335,
+              "end": 1794362617660
+            }
+          },
+          "id": "prt_1c8584edf001Rbxvj1M8zPBNP7",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-finish",
+          "tokens": {
+            "total": 18098,
+            "input": 17905,
+            "output": 56,
+            "reasoning": 137,
+            "cache": {
+              "write": 0,
+              "read": 0
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c858afdc001S9qvPzZjIhhLGu",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8582759001DRvffC4TyPBh1i"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858274a001Vjk4ZEeg3IxksI",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 18965,
+          "input": 1391,
+          "output": 99,
+          "reasoning": 67,
+          "cache": {
+            "write": 0,
+            "read": 17408
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362617972,
+          "completed": 1794362624350
+        },
+        "finish": "stop",
+        "id": "msg_1c858b074001aPtxiv4vT2gbD6",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c858be50001eXpec5Tlezd4mn",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858b074001aPtxiv4vT2gbD6"
+        },
+        {
+          "type": "reasoning",
+          "text": "The ping completed successfully — all 25 packets sent and received, 0% loss, all under 1ms, TTL=128. The output shows mojibake because the Windows ping output is in a Korean codepage (CP949) but the terminal rendered it differently. I can summarize the results concisely.",
+          "time": {
+            "start": 1794362621522,
+            "end": 1794362622771
+          },
+          "id": "prt_1c858be5200102dcZRvHbJoL5I",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858b074001aPtxiv4vT2gbD6"
+        },
+        {
+          "type": "text",
+          "text": "Done. All 25 pings to 127.0.0.1 succeeded:\n\n- Sent = 25, Received = 25, Lost = 0 (0% loss)\n- Time: min 0ms, max 0ms, average 0ms\n- TTL = 128, reply time < 1ms on every packet\n\n(The garbled text is just Windows ping's Korean output being rendered in the wrong codepage — the results themselves are clean.)",
+          "time": {
+            "start": 1794362622773,
+            "end": 1794362624054
+          },
+          "id": "prt_1c858c335001URFwgAiY03pqwA",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858b074001aPtxiv4vT2gbD6"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-finish",
+          "tokens": {
+            "total": 18965,
+            "input": 1391,
+            "output": 99,
+            "reasoning": 67,
+            "cache": {
+              "write": 0,
+              "read": 17408
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c858c8c7001s3XrxGDE5tn0d1",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858b074001aPtxiv4vT2gbD6"
+        }
+      ]
+    },
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1794362636081
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "glm-5.3-flash-free"
+        },
+        "summary": {
+          "diffs": [
+            {
+              "file": "a.txt",
+              "patch": "Index: a.txt\n===================================================================\n--- a.txt\t\n+++ a.txt\t\n@@ -1,2 +1,3 @@\n hello\n world\n+more\n",
+              "additions": 1,
+              "deletions": 0,
+              "status": "modified"
+            }
+          ]
+        },
+        "id": "msg_1c858f731001YImsd5awswls0U",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Now append a line 'more' to a.txt with the edit tool.",
+          "id": "prt_1c858f731002u0gVLMVhWk6DPk",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858f731001YImsd5awswls0U"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858f731001YImsd5awswls0U",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 19158,
+          "input": 486,
+          "output": 63,
+          "reasoning": 113,
+          "cache": {
+            "write": 0,
+            "read": 18496
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362636088,
+          "completed": 1794362642065
+        },
+        "finish": "tool-calls",
+        "id": "msg_1c858f7380011X4XaLwSGAh17Z",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c859034c001zyfwTIiJdo49BC",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858f7380011X4XaLwSGAh17Z"
+        },
+        {
+          "type": "reasoning",
+          "text": "The user wants to append a line 'more' to a.txt using the edit tool. The edit tool does exact string replacement, not appends. To append, I'd need to read the file first (required by the edit tool) and then replace the last portion... Actually, the simplest approach: read a.txt to see its content, then use edit to append by replacing the tail of the content with itself plus the new line. But if a.txt doesn't exist, I need to check. Let me first check if the file exists and read it.",
+          "time": {
+            "start": 1794362639182,
+            "end": 1794362641231
+          },
+          "id": "prt_1c859034e001EtWyJjy34eK9hg",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858f7380011X4XaLwSGAh17Z"
+        },
+        {
+          "type": "tool",
+          "tool": "read",
+          "callID": "chatcmpl-tool-95f7ca65b635efe9",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "C:\\work\\demo\\a.txt"
+            },
+            "output": "<path>C:\\work\\demo\\a.txt</path>\n<type>file</type>\n<content>\n1: hello\n2: world\n\n(End of file - total 2 lines)\n</content>",
+            "metadata": {
+              "preview": "hello\nworld",
+              "truncated": false,
+              "loaded": [],
+              "display": {
+                "type": "file",
+                "path": "C:\\work\\demo\\a.txt",
+                "text": "hello\nworld",
+                "lineStart": 1,
+                "lineEnd": 2,
+                "totalLines": 2,
+                "truncated": false
+              }
+            },
+            "title": "a.txt",
+            "time": {
+              "start": 1794362641756,
+              "end": 1794362641766
+            }
+          },
+          "id": "prt_1c8590b51001d9eB4QXstGkXWi",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858f7380011X4XaLwSGAh17Z"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-finish",
+          "tokens": {
+            "total": 19158,
+            "input": 486,
+            "output": 63,
+            "reasoning": 113,
+            "cache": {
+              "write": 0,
+              "read": 18496
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c8590dff00108x7lVUB8l6kjK",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c858f7380011X4XaLwSGAh17Z"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858f731001YImsd5awswls0U",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 19462,
+          "input": 754,
+          "output": 79,
+          "reasoning": 133,
+          "cache": {
+            "write": 0,
+            "read": 18496
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362642067,
+          "completed": 1794362669095
+        },
+        "finish": "tool-calls",
+        "id": "msg_1c8590e93001jGIE2kGZSBP5uB",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c85915b3001yohnCHECsDNuy6",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8590e93001jGIE2kGZSBP5uB"
+        },
+        {
+          "type": "reasoning",
+          "text": "The file has \"hello\\nworld\" (line 2 \"world\" — unclear if trailing newline exists). To append 'more', I'll edit by replacing \"world\" with \"world\\nmore\". If there's a trailing newline, the result would be \"world\\nmore\\n\"? No — edit does exact string replacement. If file content is \"hello\\nworld\\n\", replacing \"world\" with \"world\\nmore\" yields \"hello\\nworld\\nmore\\n\". That works. If content is \"hello\\nworld\" (no trailing newline), result is \"hello\\nworld\\nmore\". Either way, 'more' gets appended as a new line.",
+          "time": {
+            "start": 1794362643892,
+            "end": 1794362646363
+          },
+          "id": "prt_1c85915b4001xz55h1k1Y1R3uV",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8590e93001jGIE2kGZSBP5uB"
+        },
+        {
+          "type": "tool",
+          "tool": "edit",
+          "callID": "chatcmpl-tool-b3d40541beab86d3",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "C:\\work\\demo\\a.txt",
+              "newString": "world\nmore",
+              "oldString": "world"
+            },
+            "output": "Edit applied successfully.",
+            "metadata": {
+              "diagnostics": {},
+              "diff": "Index: C:\\work\\demo\\a.txt\n===================================================================\n--- C:\\work\\demo\\a.txt\n+++ C:\\work\\demo\\a.txt\n@@ -1,2 +1,3 @@\n hello\n world\n+more\n",
+              "filediff": {
+                "file": "C:\\work\\demo\\a.txt",
+                "patch": "Index: C:\\work\\demo\\a.txt\n===================================================================\n--- C:\\work\\demo\\a.txt\n+++ C:\\work\\demo\\a.txt\n@@ -1,2 +1,3 @@\n hello\n world\n+more\n",
+                "additions": 1,
+                "deletions": 0
+              },
+              "truncated": false
+            },
+            "title": "a.txt",
+            "time": {
+              "start": 1794362647288,
+              "end": 1794362668588
+            }
+          },
+          "id": "prt_1c8591f5d001o5D9xXj498cKCR",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8590e93001jGIE2kGZSBP5uB"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-finish",
+          "tokens": {
+            "total": 19462,
+            "input": 754,
+            "output": 79,
+            "reasoning": 133,
+            "cache": {
+              "write": 0,
+              "read": 18496
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c859775e001jfyM3oB5B2pdYH",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8590e93001jGIE2kGZSBP5uB"
+        },
+        {
+          "type": "patch",
+          "hash": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "files": [
+            "C:/work/demo/a.txt"
+          ],
+          "id": "prt_1c8597824001IlclANWW6hPE5Q",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8590e93001jGIE2kGZSBP5uB"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858f731001YImsd5awswls0U",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 19533,
+          "input": 974,
+          "output": 63,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 18496
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362669097,
+          "completed": 1794362672695
+        },
+        "finish": "tool-calls",
+        "id": "msg_1c8597829001LG3Hq9LH46qfok",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-start",
+          "id": "prt_1c85981de001vbIQ6MsLAvXjhG",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8597829001LG3Hq9LH46qfok"
+        },
+        {
+          "type": "tool",
+          "tool": "read",
+          "callID": "chatcmpl-tool-99dde961d39151a1",
+          "state": {
+            "status": "completed",
+            "input": {
+              "filePath": "C:\\work\\demo\\a.txt"
+            },
+            "output": "<path>C:\\work\\demo\\a.txt</path>\n<type>file</type>\n<content>\n1: hello\n2: world\n3: more\n\n(End of file - total 3 lines)\n</content>",
+            "metadata": {
+              "preview": "hello\nworld\nmore",
+              "truncated": false,
+              "loaded": [],
+              "display": {
+                "type": "file",
+                "path": "C:\\work\\demo\\a.txt",
+                "text": "hello\nworld\nmore",
+                "lineStart": 1,
+                "lineEnd": 3,
+                "totalLines": 3,
+                "truncated": false
+              }
+            },
+            "title": "a.txt",
+            "time": {
+              "start": 1794362672384,
+              "end": 1794362672397
+            }
+          },
+          "id": "prt_1c859829d0015noRDqIRfYVLz2",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8597829001LG3Hq9LH46qfok"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-finish",
+          "tokens": {
+            "total": 19533,
+            "input": 974,
+            "output": 63,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 18496
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c85985a30012LHtAQx8dt4dVd",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c8597829001LG3Hq9LH46qfok"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c858f731001YImsd5awswls0U",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 19700,
+          "input": 1133,
+          "output": 57,
+          "reasoning": 14,
+          "cache": {
+            "write": 0,
+            "read": 18496
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794362672698,
+          "completed": 1794362675823
+        },
+        "finish": "stop",
+        "id": "msg_1c859863a001fteeMX7OleWfhW",
+        "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3"
+      },
+      "parts": [
+        {
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-start",
+          "id": "prt_1c8598d5e001P2lUE3gBLgMUmJ",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c859863a001fteeMX7OleWfhW"
+        },
+        {
+          "type": "reasoning",
+          "text": "Done. 'more' appended as line 3. Confirm briefly.",
+          "time": {
+            "start": 1794362674529,
+            "end": 1794362674756
+          },
+          "id": "prt_1c8598d610015nPaANIqSioX32",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c859863a001fteeMX7OleWfhW"
+        },
+        {
+          "type": "text",
+          "text": "Appended. `a.txt` now contains:\n\n```\nhello\nworld\nmore\n```\n\nThe edit tool does string replacement rather than appends, so I replaced the last line `world` with `world\\nmore` to add the new line at the end.",
+          "time": {
+            "start": 1794362674758,
+            "end": 1794362675515
+          },
+          "id": "prt_1c8598e46001PA2i3NNBysHox9",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c859863a001fteeMX7OleWfhW"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-finish",
+          "tokens": {
+            "total": 19700,
+            "input": 1133,
+            "output": 57,
+            "reasoning": 14,
+            "cache": {
+              "write": 0,
+              "read": 18496
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c85991d4001xLyH2U19NblOxk",
+          "sessionID": "ses_e37a7d8c1ffeUi3dovFtyDClc3",
+          "messageID": "msg_1c859863a001fteeMX7OleWfhW"
+        }
+      ]
+    }
+  ]
+}

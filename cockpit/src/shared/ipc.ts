@@ -128,7 +128,10 @@ export interface ShareStatus {
 }
 
 /** What a folder row's settings menu can ask the page to do. */
-export type RepoAction = "rename" | "remove" | "terminal" | "pin" | "worktree";
+export type RepoAction = "rename" | "remove" | "terminal" | "pin" | "worktree" | "compare";
+
+/** What a worktree changed from where it started: files with lines added and taken out; `fresh` for a new file not yet added. */
+export interface WorktreeDiff { files: Array<{ path: string; add: number; del: number; fresh?: true }> }
 
 /**
  * Identifies one terminal: a node, optionally scoped to a repository. A
@@ -262,6 +265,19 @@ export type EditSaveResult =
  * is the rail's status word (shared/status.ts), worked out in the page (pet.ts),
  * so main learns it from here rather than working it out twice.
  */
+/** 내 LLM connections (agent/local-llm.ts), which folder's OpenCode runs on which by session key, and 내 API 키 without the keys. */
+export interface LlmSaved {
+  llms: import("../agent/local-llm.ts").LocalLlm[];
+  folders: Record<string, string>;
+  keys: import("../main/llm-keys.ts").LlmKey[];
+  /** While an Authenticator code shows the keys themselves: until when (ms). */
+  unlockedUntil?: number;
+}
+/** Whether a connection can work from a PC: "nokey" its key was removed, "notools" its model cannot call tools. */
+export type LlmState = "up" | "down" | "nokey" | "notools";
+/** A server found at a usual port, with the models it lists. */
+export interface LlmFound { baseUrl: string; models: string[] }
+
 export interface PhoneSession {
   key: string;
   nodeId: string;
@@ -274,6 +290,12 @@ export interface PhoneSession {
   mood: Exclude<SessionStatus, "shellOnly">;
   /** Its terminal is up and its AI has gone (shared/status.ts). Absent otherwise. */
   agentGone?: boolean;
+  /** What its menu asks, for the waiting push: a yes to run or edit, or another choice. Only while waiting; the phone is not sent it. */
+  asks?: "approve" | "choose";
+  /** Its screen shows the agent's own usage-limit line (limit.ts), for the push; the phone is not sent it. */
+  limited?: true;
+  /** 자리 비움 기본 답 armed on its question (phone/auto-answer.ts); the phone shows it. */
+  auto?: { at: number; n: number; option: string };
   /** For the "all done" push only (turnMark); the phone is not sent it. */
   turn?: "starting" | "finished";
   /** The last line the terminal shows. */
@@ -482,6 +504,8 @@ export interface CockpitApi {
    */
   /** Lists a directory on the node. Same shape for local and remote. */
   browse(node: NodeConfig, path: string): Promise<BrowseResult>;
+  /** Every file under a folder, relative to it (the phone's "@" listing): what the file tree's search looks through. */
+  allFiles(node: NodeConfig, root: string): Promise<string[]>;
   /** What the setup guide needs, checked live rather than described. */
   setupInfo(): Promise<SetupInfo>;
   /** Everything the map draws: nodes, their repositories, and the grants. */
@@ -550,8 +574,34 @@ export interface CockpitApi {
   mergeWorktree(nodeId: string, repoId: string): Promise<NodeConfig[]>;
   /** Takes a worktree away, asking first if work would be lost. */
   removeWorktree(nodeId: string, repoId: string): Promise<NodeConfig[]>;
+  /** 내 LLM (main/llm-host.ts). */
+  llmList(): Promise<LlmSaved>;
+  /** Saves one (new without an id); "invalid" when its address, model, key or name will not do. */
+  llmSave(llm: Partial<import("../agent/local-llm.ts").LocalLlm>): Promise<LlmSaved | "invalid">;
+  llmRemove(id: string): Promise<LlmSaved>;
+  /** Which connection this folder's OpenCode runs on; null for OpenCode's own choice. */
+  setFolderLlm(nodeId: string, repoId: string, id: string | null): Promise<void>;
+  /** The models a server lists, asked from that PC (or through a tunnel from this one; from here with a key); undefined when it does not answer. */
+  llmModels(nodeId: string, address: string, tunnel?: { nodeId: string; port: number }, keyId?: string): Promise<string[] | undefined>;
+  /** Servers at the usual ports, seen from that PC. */
+  llmFind(nodeId: string): Promise<LlmFound[]>;
+  /** Whether that one can work, seen from that PC. */
+  llmUp(nodeId: string, id: string): Promise<LlmState>;
+  /** Keeps a key on this PC, after its platform takes it; "refused": the platform turned it down, "locked": no OS lock to keep it under, "nototp": the Authenticator is not set up yet. */
+  llmKeyAdd(platform: string, label: string, key: string): Promise<import("../main/llm-keys.ts").LlmKey | "invalid" | "locked" | "refused" | "nototp">;
+  /** An Authenticator code shows the keys for 30 minutes: until when, or why not. */
+  llmKeyUnlock(code: string): Promise<number | "wrong" | "nototp">;
+  llmKeyLock(): Promise<void>;
+  /** One key itself, while they are shown. */
+  llmKeyReveal(id: string): Promise<string | "locked">;
+  /** Forgets a key, and the connections that use it. */
+  llmKeyRemove(id: string): Promise<LlmSaved>;
+  /** A platform's chat models, asked with that key. */
+  llmPlatformModels(platform: string, keyId: string): Promise<string[] | "refused" | "nokey" | undefined>;
   /** Commits and changed files a worktree has beyond its base; null when git could not say. */
   worktreeChanges(nodeId: string, repoId: string): Promise<number | null>;
+  /** The worktree's changes file by file, for comparing AIs side by side; null when git could not say. */
+  worktreeDiff(nodeId: string, repoId: string): Promise<WorktreeDiff | null>;
   /** A plain native menu at the pointer: the picked item's id, or undefined when it closed without a pick. "-" is a separator. */
   popupMenu(items: ReadonlyArray<{ id: string; label: string } | "-">): Promise<string | undefined>;
   /** A terminal's right-click menu; the pick comes back through onTerminalAction with the same key. */
@@ -656,7 +706,8 @@ export interface CockpitApi {
   /** An error message when refused; the password itself never comes back. */
   setPhonePassword(password: string): Promise<string | undefined>;
   /** The Authenticator key, as a QR and as text; `renew` makes a new one. */
-  phoneTotp(renew: boolean): Promise<{ secret: string; uri: string; qr: string }>;
+  /** The Authenticator key to scan; undefined for one already confirmed, which is never shown again. */
+  phoneTotp(renew: boolean): Promise<{ secret: string; uri: string; qr: string } | undefined>;
   /** Whether this code is right for the key now; right, the key counts as registered. */
   phoneTotpCheck(code: string): Promise<boolean>;
   /** "끊기": signs every phone out. */
@@ -674,6 +725,10 @@ export interface CockpitApi {
   /** The phone asked for a closed folder's AI to be opened (POST /api/open). */
   onPhoneOpen(handler: (nodeId: string, repoId: string) => void): void;
   onPhoneTerminal(handler: (nodeId: string, repoId: string) => void): void;
+  /** A session the phone closed: already ended in main, for the window to let go of. */
+  onPhoneForgot(handler: (key: string) => void): void;
+  /** The phone said a session's question waits for the person (POST /api/auto-keep). */
+  onPhoneAutoKeep(handler: (key: string) => void): void;
 }
 
 /** What creating a secret-bearing file inside a repository found out. */
@@ -786,6 +841,7 @@ export const channels = {
   reorderRepos: "nodes:reorder-repos",
   setLocale: "app:set-locale",
   browse: "nodes:browse",
+  allFiles: "nodes:all-files",
   setupInfo: "setup:info",
   mapState: "map:state",
   setGrant: "grants:set",
@@ -823,6 +879,20 @@ export const channels = {
   addWorktree: "worktree:add",
   mergeWorktree: "worktree:merge",
   removeWorktree: "worktree:remove",
+  worktreeDiff: "worktree:diff",
+  llmList: "llm:list",
+  llmSave: "llm:save",
+  llmRemove: "llm:remove",
+  setFolderLlm: "llm:folder",
+  llmModels: "llm:models",
+  llmFind: "llm:find",
+  llmUp: "llm:up",
+  llmKeyAdd: "llm:key-add",
+  llmKeyRemove: "llm:key-remove",
+  llmKeyUnlock: "llm:key-unlock",
+  llmKeyLock: "llm:key-lock",
+  llmKeyReveal: "llm:key-reveal",
+  llmPlatformModels: "llm:platform-models",
   worktreeChanges: "worktree:changes",
   terminalMenu: "terminal:menu",
   terminalAction: "terminal:action",
@@ -852,7 +922,9 @@ export const channels = {
   phoneInput: "phone:input",
   phoneReconnect: "phone:reconnect",
   phoneTerminal: "phone:terminal",
+  phoneAutoKeep: "phone:auto-keep",
   phoneOpen: "phone:open",
+  phoneForgot: "phone:forgot",
   phoneQr: "phone:qr",
   relayAction: "phone:relay",
 } as const;

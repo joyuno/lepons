@@ -1,0 +1,130 @@
+{
+  "info": {
+    "id": "ses_e379fc1e2ffezaKGi6VXxmM3d8",
+    "slug": "curious-meadow",
+    "projectID": "global",
+    "directory": "C:\\work\\demo",
+    "path": "",
+    "title": "Echo hello-bash command",
+    "agent": "build",
+    "model": {
+      "id": "glm-5.3-flash-free",
+      "providerID": "opencode"
+    },
+    "version": "1.19.5",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "reasoning": 0,
+      "cache": {
+        "read": 0,
+        "write": 0
+      }
+    },
+    "time": {
+      "created": 1794363112989,
+      "updated": 1794363113217
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1794363113002
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "glm-5.3-flash-free"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_1c8603e2a0012owyDyJ9ET4uwp",
+        "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Run the shell command: echo hello-bash",
+          "id": "prt_1c8603e2c001JagyKCJW9wQczN",
+          "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8",
+          "messageID": "msg_1c8603e2a0012owyDyJ9ET4uwp"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c8603e2a0012owyDyJ9ET4uwp",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "input": 0,
+          "output": 0,
+          "reasoning": 0,
+          "cache": {
+            "read": 0,
+            "write": 0
+          }
+        },
+        "modelID": "glm-5.3-flash-free",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794363113021
+        },
+        "id": "msg_1c8603e3d001hiPrrNAzQ7oD8I",
+        "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8"
+      },
+      "parts": [
+        {
+          "snapshot": "90b4296313f8380ad7e41c5576a141a5dd738d9c",
+          "type": "step-start",
+          "id": "prt_1c86054b80016iihaPiDc5VeLv",
+          "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8",
+          "messageID": "msg_1c8603e3d001hiPrrNAzQ7oD8I"
+        },
+        {
+          "type": "reasoning",
+          "text": "The user wants me to run a simple shell command: `echo hello-bash`. This is a trivial, single-step task, so no todo list or planning is needed. I'll execute it directly with the bash tool and return the result.",
+          "time": {
+            "start": 1794363118778,
+            "end": 1794363119588
+          },
+          "id": "prt_1c86054ba001NJFkA6w3TNzUjh",
+          "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8",
+          "messageID": "msg_1c8603e3d001hiPrrNAzQ7oD8I"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "chatcmpl-tool-94d2de4e82d99dcc",
+          "state": {
+            "status": "running",
+            "input": {
+              "command": "echo hello-bash"
+            },
+            "time": {
+              "start": 1794363119596
+            }
+          },
+          "id": "prt_1c86057e7001ODfxGQ4uQHun1x",
+          "sessionID": "ses_e379fc1e2ffezaKGi6VXxmM3d8",
+          "messageID": "msg_1c8603e3d001hiPrrNAzQ7oD8I"
+        }
+      ]
+    }
+  ]
+}

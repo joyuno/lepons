@@ -13,6 +13,8 @@ const MD_DEPTH = 4;
 const MD_FILES = 300;
 const skippedDirs = new Set(["node_modules", "dist", "build", "out", "target", "coverage", "__pycache__", "release", "vendor"]);
 const skipped = (name: string) => name.startsWith(".") || skippedDirs.has(name);
+/** With `hidden`, the PC's own file search: dot files and folders are listed too, all but .git. */
+const skippedHere = (name: string, hidden: boolean) => (hidden ? name === ".git" || skippedDirs.has(name) : skipped(name));
 
 /**
  * A listed path the phone may name: relative, no `..`, no control
@@ -43,14 +45,14 @@ export function parseFindOutput(output: string, accept: (path: string) => boolea
 }
 
 /** The folder's files `accept` takes, breadth by depth, `maxFiles` at most. */
-export async function listFiles(root: string, accept: (name: string) => boolean, maxDepth: number, maxFiles: number): Promise<string[]> {
+export async function listFiles(root: string, accept: (name: string) => boolean, maxDepth: number, maxFiles: number, hidden = false): Promise<string[]> {
   const found: string[] = [];
   const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (found.length >= maxFiles) return;
-      if (entry.isFile() && !entry.name.startsWith(".") && accept(entry.name)) found.push(prefix + entry.name);
-      else if (entry.isDirectory() && !skipped(entry.name) && depth < maxDepth) {
+      if (entry.isFile() && (hidden || !entry.name.startsWith(".")) && accept(entry.name)) found.push(prefix + entry.name);
+      else if (entry.isDirectory() && !skippedHere(entry.name, hidden) && depth < maxDepth) {
         await walk(join(dir, entry.name), `${prefix}${entry.name}/`, depth + 1);
       }
     }
@@ -65,8 +67,8 @@ export const markdownFiles = (root: string) => listFiles(root, (name) => name.to
  * The same listing on another PC, run in the folder; `find` does not follow
  * symlinks. NUL-separated, since a file name may contain a newline.
  */
-export function findScript(maxDepth: number, namePatterns: string[] = []): string {
-  const prune = ["'.?*'", ...[...skippedDirs].map((name) => `'${name}'`)].map((name) => `-name ${name}`).join(" -o ");
+export function findScript(maxDepth: number, namePatterns: string[] = [], hidden = false): string {
+  const prune = [hidden ? "'.git'" : "'.?*'", ...[...skippedDirs].map((name) => `'${name}'`)].map((name) => `-name ${name}`).join(" -o ");
   const names = namePatterns.length === 0 ? "" : `\\( ${namePatterns.map((pattern) => `-iname '${pattern}'`).join(" -o ")} \\) `;
   return `find . -maxdepth ${maxDepth} \\( ${prune} \\) -prune -o -type f ${names}-print0 2>/dev/null`;
 }

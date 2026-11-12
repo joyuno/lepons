@@ -67,6 +67,8 @@ function setup(t: TestContext, options: { kind?: "local" | "ssh"; saved?: object
     workflowOf: async () => ({ ok: false, reason: "no_transcript" }),
     accountsOf: async () => [],
     machineOf: (machine) => machineFor(machine, reach),
+    stopSessionKey: async () => true,
+    dropRepos: () => [node],
     ...options.overrides,
   });
   t.after(() => host.stop());
@@ -263,6 +265,46 @@ test("a plain terminal is never an agent, and a session not ready takes no typin
   assert.match(readFileSync(audit, "utf8"), /pc::ready\t2\n$/);
 });
 
+// ---- closing and forgetting from the phone --------------------------------
+
+test("a session closed from the phone is let go of by the window, said 'here' when its PC was not told", async (t) => {
+  const stops: Array<[string, string, boolean]> = [];
+  const { deps, sent, snapshot } = setup(t, {
+    overrides: { stopSessionKey: async (nodeId, key, anyway) => (stops.push([nodeId, key, anyway]), key !== "pc::repo") },
+  });
+  snapshot([{ ...session("failed"), key: "pc::repo", nodeId: "pc", repoId: "repo" }, { ...session("done"), key: "pc::other", nodeId: "pc", repoId: "other" }]);
+  assert.equal(await deps.closeSession("pc::repo"), "here");
+  assert.equal(await deps.closeSession("pc::other"), "stopped");
+  assert.deepEqual(stops, [["pc", "pc::repo", true], ["pc", "pc::other", true]]);
+  assert.deepEqual(sent.filter(([channel]) => channel === channels.phoneForgot).map(([, key]) => key), ["pc::repo", "pc::other"]);
+});
+
+test("a folder is forgotten from the phone unless a worktree of it is still listed, its sessions ended first", async (t) => {
+  const dropped: string[][] = [];
+  const repos = [{ id: "repo", label: "repo", path: "/r" }, { id: "wt", label: "작업 1", path: "/w", worktree: { of: "repo", branch: "lepons/1", base: "main" } }];
+  const node = { id: "pc", kind: "local", label: "pc", home: "/", repos } as unknown as NodeConfig;
+  const stopped: string[] = [];
+  const { deps, snapshot } = setup(t, { overrides: { nodes: { list: () => [node] }, dropRepos: (_nodeId, ids) => (dropped.push(ids), [node]), stopSessionKey: async (_nodeId, key) => (stopped.push(key), true) } });
+  snapshot([{ ...session("working"), key: "pc::wt", nodeId: "pc", repoId: "wt" }]);
+  assert.equal(await deps.forgetFolder("pc", "repo"), "worktree");
+  assert.equal(await deps.forgetFolder("pc", "nope"), "gone");
+  assert.equal(await deps.forgetFolder("pc", "wt"), "ok");
+  assert.deepEqual(dropped, [["wt"]]);
+  assert.deepEqual(stopped, ["pc::wt"]);
+  assert.deepEqual(deps.folders().map((one) => one.worktreeOf), [undefined, "repo"]);
+});
+
+test("the Authenticator check stops listening after five wrong codes in a row", async (t) => {
+  const { host, handlers } = setup(t, { saved: { allowed: false } });
+  await handlers.get(channels.setPhonePassword)!({}, "long enough now");
+  const { secret } = await handlers.get(channels.phoneTotp)!({}, false) as { secret: string };
+  const step = stepOf(Date.now());
+  assert.equal(await handlers.get(channels.phoneTotpCheck)!({}, totpAt(secret, step)), true);
+  assert.equal(host.twoFactor.check(totpAt(secret, step)), true);
+  for (let i = 0; i < 5; i++) assert.equal(host.twoFactor.check("000000"), false);
+  assert.equal(host.twoFactor.check(totpAt(secret, step + 1)), false, "even the right code waits out the lock");
+});
+
 // ---- what the phone reads off a session ----------------------------------
 
 test("a session says which AI it runs; a plain terminal says nothing", (t) => {
@@ -431,17 +473,45 @@ const fakeFetch = (t: TestContext, reply: unknown = { data: {} }) => {
 };
 const pairedWithPush = { allowed: true, relay: { phone: { key: "a2V5", label: "폰", pushToken: TOKEN } } };
 
-test("a session turning to waiting pushes its opaque id, never its folder, and no all-done beside it", async (t) => {
+test("a session turning to waiting pushes its folder's name, a named PC and why, never the folder's path", async (t) => {
   const bodies = fakeFetch(t);
   const { snapshot, root } = setup(t, { kind: "ssh", saved: pairedWithPush });
-  snapshot([session("working")]);
+  const named = (mood: PhoneSession["mood"], extra: Partial<PhoneSession> = {}) => ({ ...session(mood), folder: "lepons", ...extra });
+  snapshot([named("working")]);
   assert.equal(bodies.length, 0);
-  snapshot([session("waiting")]);
+  snapshot([named("waiting", { asks: "approve" })]);
   assert.equal(bodies.length, 1);
   assert.equal(bodies[0]!.to, TOKEN);
   assert.deepEqual(bodies[0]!.data, { session: sessionId(KEY) });
-  assert.match(String(bodies[0]!.body), /내 서버/);
+  assert.match(String(bodies[0]!.title), /^lepons · .*내 서버$/);
+  assert.equal(bodies[0]!.body, "실행·수정 허락을 기다려요");
   assert.ok(!JSON.stringify(bodies[0]).includes(root.replaceAll("\\", "\\\\")));
+});
+
+test("an AI that fails or hits its limit pushes once, in its own slot", async (t) => {
+  const bodies = fakeFetch(t);
+  const { snapshot } = setup(t, { kind: "ssh", saved: pairedWithPush });
+  snapshot([{ ...session("working"), folder: "lepons" }]);
+  snapshot([{ ...session("idle"), folder: "lepons", limited: true }]);
+  snapshot([{ ...session("idle"), folder: "lepons", limited: true }]);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0]!.body, "사용량 한도에 걸려 멈췄어요");
+  assert.equal(bodies[0]!.tag, "lepons-stop");
+  snapshot([{ ...session("failed"), folder: "lepons" }]);
+  assert.equal(bodies.length, 1, "it was not at work when it closed");
+  snapshot([{ ...session("working"), folder: "lepons" }]);
+  snapshot([{ ...session("failed"), folder: "lepons" }]);
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[1]!.body, "오류로 멈췄어요");
+});
+
+test("a limit menu rings once: the stop push, not a waiting push beside it", async (t) => {
+  const bodies = fakeFetch(t);
+  const { snapshot } = setup(t, { kind: "ssh", saved: pairedWithPush });
+  snapshot([{ ...session("working"), folder: "lepons" }]);
+  snapshot([{ ...session("waiting"), folder: "lepons", asks: "choose", limited: true }]);
+  await new Promise((done) => setTimeout(done, 20));
+  assert.deepEqual(bodies.map((body) => body.body), ["사용량 한도에 걸려 멈췄어요"]);
 });
 
 test("no push with the phone switch off, with no token, or while someone is at the desk", async (t) => {
@@ -614,8 +684,8 @@ test("a key an earlier build kept in the clear is sealed on start, and stays the
   const { handlers, settings } = setup(t, { saved: { totpSecret: "JBSWY3DPEHPK3PXP" }, overrides: { safeStorage } });
   assert.match(settings().totpSecret, /^safe:/);
   assert.equal(JSON.stringify(settings()).includes("JBSWY3DPEHPK3PXP"), false);
-  assert.equal((await handlers.get(channels.phoneTotp)!({}, false) as { secret: string }).secret, "JBSWY3DPEHPK3PXP");
-  assert.equal(await handlers.get(channels.phoneTotpCheck)!({}, totpAt("JBSWY3DPEHPK3PXP", stepOf(Date.now()))), true);
+  assert.equal(await handlers.get(channels.phoneTotp)!({}, false), undefined, "a confirmed key is never shown again");
+  assert.equal(await handlers.get(channels.phoneTotpCheck)!({}, totpAt("JBSWY3DPEHPK3PXP", stepOf(Date.now()))), true, "the same key opens");
   const renewed = await handlers.get(channels.phoneTotp)!({}, true) as { secret: string };
   assert.equal(JSON.stringify(settings()).includes(renewed.secret), false, "a new key is sealed too");
 });

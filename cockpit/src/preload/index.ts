@@ -79,6 +79,7 @@ const api: CockpitApi = {
   reorderRepos: (nodeId: string, repoIds: string[]) => ipcRenderer.invoke(channels.reorderRepos, nodeId, repoIds),
   browse: (node: NodeConfig, path: string): Promise<BrowseResult> =>
     ipcRenderer.invoke(channels.browse, node, path),
+  allFiles: (node: NodeConfig, root: string): Promise<string[]> => ipcRenderer.invoke(channels.allFiles, node, root),
   setupInfo: () => ipcRenderer.invoke(channels.setupInfo),
   mapState: () => ipcRenderer.invoke(channels.mapState),
   setGrant: (nodeId: string, repoWireId: string, allowed: boolean) =>
@@ -109,6 +110,20 @@ const api: CockpitApi = {
   addWorktree: (nodeId: string, repoId: string, task: string, carry?: AgentKind) => ipcRenderer.invoke(channels.addWorktree, nodeId, repoId, task, carry),
   mergeWorktree: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.mergeWorktree, nodeId, repoId),
   removeWorktree: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.removeWorktree, nodeId, repoId),
+  worktreeDiff: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.worktreeDiff, nodeId, repoId),
+  llmList: () => ipcRenderer.invoke(channels.llmList),
+  llmSave: (llm) => ipcRenderer.invoke(channels.llmSave, llm),
+  llmRemove: (id: string) => ipcRenderer.invoke(channels.llmRemove, id),
+  setFolderLlm: (nodeId: string, repoId: string, id: string | null) => ipcRenderer.invoke(channels.setFolderLlm, nodeId, repoId, id),
+  llmModels: (nodeId: string, address: string, tunnel?: { nodeId: string; port: number }, keyId?: string) => ipcRenderer.invoke(channels.llmModels, nodeId, address, tunnel, keyId),
+  llmFind: (nodeId: string) => ipcRenderer.invoke(channels.llmFind, nodeId),
+  llmUp: (nodeId: string, id: string) => ipcRenderer.invoke(channels.llmUp, nodeId, id),
+  llmKeyAdd: (platform: string, label: string, key: string) => ipcRenderer.invoke(channels.llmKeyAdd, platform, label, key),
+  llmKeyRemove: (id: string) => ipcRenderer.invoke(channels.llmKeyRemove, id),
+  llmKeyUnlock: (code: string) => ipcRenderer.invoke(channels.llmKeyUnlock, code),
+  llmKeyLock: () => ipcRenderer.invoke(channels.llmKeyLock),
+  llmKeyReveal: (id: string) => ipcRenderer.invoke(channels.llmKeyReveal, id),
+  llmPlatformModels: (platform: string, keyId: string) => ipcRenderer.invoke(channels.llmPlatformModels, platform, keyId),
   worktreeChanges: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.worktreeChanges, nodeId, repoId),
   onRepoAction: (handler: (action: RepoAction, nodeId: string, repoId: string) => void) => {
     ipcRenderer.on(channels.repoAction, (_event, action: RepoAction, nodeId: string, repoId: string) =>
@@ -212,8 +227,14 @@ const api: CockpitApi = {
   onPhoneOpen: (handler) => {
     ipcRenderer.on(channels.phoneOpen, (_event, nodeId: string, repoId: string) => handler(nodeId, repoId));
   },
+  onPhoneForgot: (handler) => {
+    ipcRenderer.on(channels.phoneForgot, (_event, key: string) => handler(key));
+  },
   onPhoneTerminal: (handler) => {
     ipcRenderer.on(channels.phoneTerminal, (_event, nodeId: string, repoId: string) => handler(nodeId, repoId));
+  },
+  onPhoneAutoKeep: (handler) => {
+    ipcRenderer.on(channels.phoneAutoKeep, (_event, key: string) => handler(key));
   },
   onPhoneChanged: (handler) => {
     ipcRenderer.on(channels.phoneChanged, (_event, view) => handler(view));

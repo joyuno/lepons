@@ -12,10 +12,10 @@ import type { Machine } from "../machine/machine.ts";
 import { maskForEgress } from "../mask/mask.ts";
 import { phoneMayOpen, viewable } from "../phone/docs.ts";
 import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/outside.ts";
-import { EXPO_PUSH_URL, pushGate, pushTokenGone, snapshotPushes, waitingPush, type Waiting } from "../phone/push.ts";
+import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
 import type { OutputRing } from "../phone/screen.ts";
 import { auditLine, createPhoneApi, sessionId, type PhoneApi, type PhoneDeps } from "../phone/server.ts";
-import { claudeBuiltins, codexBuiltins, mergeCommands } from "../phone/suggest.ts";
+import { claudeBuiltins, codexBuiltins, mergeCommands, opencodeBuiltins } from "../phone/suggest.ts";
 import { matchTotp, newTotpSecret, otpauthUri } from "../phone/totp.ts";
 import { readTurnOver } from "../workflow/turn.ts";
 import { relayBridge } from "../relay/bridge.ts";
@@ -43,12 +43,19 @@ export interface PhoneHostDeps {
   workflowOf(nodeId: string, repoId: string, full?: boolean): Promise<SessionWorkflowResult>;
   accountsOf(node: NodeConfig): ReturnType<typeof agentAccounts>;
   machineOf(node: NodeConfig): Machine;
+  /** Ends a session here and on its PC; throws when the PC cannot be told. */
+  stopSessionKey(nodeId: string, key: string, anyway: true): Promise<boolean>;
+  /** Takes folders off the list, unasked: the asking was done where this was called from. */
+  dropRepos(nodeId: string, repoIds: string[]): NodeConfig[];
 }
 
 /** How long a session can show the stop button after only background work is left. */
 const MAIN_FREE_MS = 10_000;
 /** A record read this soon after the phone told a session something may not show it yet: the prompt takes about 0.5 s to get there. */
 const MAIN_TOLD_MS = 2000;
+/** Wrong Authenticator codes in a row before the PC stops taking any, and for how long. */
+const TWO_FACTOR_TRIES = 5;
+const TWO_FACTOR_LOCK_MS = 5 * 60_000;
 
 export interface PhoneHost {
   api: PhoneApi;
@@ -56,11 +63,25 @@ export interface PhoneHost {
   deps: PhoneDeps;
   /** Takes the relay link down when the app quits. */
   stop(): void;
+  /**
+   * The PC's one Authenticator key -- the phone's login -- as a second check
+   * for anything else: set up from either side, it is done for both.
+   */
+  twoFactor: TwoFactor;
+}
+
+export interface TwoFactor {
+  /** A key is set and its code was once typed back right. */
+  ready(): boolean;
+  /** This code is the app's now, and was not used for this before. */
+  check(code: string): boolean;
+  /** A confirmed key was replaced: what it guarded was opened under a key that may not be the owner's. */
+  onRenew(listener: () => void): void;
 }
 
 /** The phone side of the app: pushes, what a phone may read, pairing and the relay link, and their IPC handlers. */
 export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
-  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, readTokenStats, workflowOf, accountsOf, machineOf } = deps;
+  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey, dropRepos } = deps;
 
   // The sessions as the window sees them (see PhoneSession). A session that
   // turns to "waiting" here is the same turn the desktop notification fires
@@ -77,6 +98,12 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     const sealed = phone.get().totpSecret;
     return sealed === undefined ? undefined : openSecret(sealed, safeStorage)?.toString("utf8");
   };
+  /** The last 30-second step a twoFactor code was taken for: one code opens once. */
+  let usedStep = -1;
+  let twoFactorMisses = 0;
+  let twoFactorLockedUntil = 0;
+  /** Told when a key whose code was typed back is replaced. */
+  const renewed = new Set<() => void>();
   const phoneAuth = new PhoneAuth(phone.get().sessions, (sessions) => phone.set({ sessions }));
   let phoneSessions: PhoneSession[] = [];
   let phoneProblem: PhoneSettingsView["problem"];
@@ -138,32 +165,53 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
 
   /** The phone app is open on a live link. Typing at the PC holds nothing back: the owner answers on whichever is at hand. */
   const looking = (): boolean => api.looking() === true;
-  // Only a name the operator gave goes out through Expo, Apple and Google;
-  // an unnamed remote PC's label is its address.
-  const pushPc = (session: PhoneSession): string | undefined => {
+  // The folder and its AI (the owner's choice, 11/10), and another PC only by a
+  // name the operator gave it: an unnamed remote PC's label is its address.
+  // Never what the AI wrote: the push goes through Expo, Apple and Google.
+  const titleOf = (session: PhoneSession): string => {
     const node = nodes.list().find((candidate) => candidate.id === session.nodeId);
-    return node?.kind === "local" ? t("machine.thisComputer") : node?.name?.trim() || undefined;
+    const kind = sessionExecutor.get(session.key);
+    return pushTitle(session.folder, isAgentKind(kind) ? agents[kind].label : undefined, node?.kind === "local" ? undefined : node?.name?.trim() || undefined);
   };
+  const asksLine = { approve: "phone.pushApprove", choose: "phone.pushChoose" } as const;
   // Best effort: a phone that misses one push still has the list.
   const waitingTurned = pushGate({
     now: Date.now,
     later: (run, ms) => void setTimeout(run, ms).unref(),
     looking,
-    waiting: () => phoneSessions.filter((session) => session.mood === "waiting").map((session): Waiting => ({ pc: pushPc(session), session: sessionId(session.key) })),
+    // One whose limit is on screen has the stop push instead: one ring, not two.
+    waiting: () => phoneSessions.filter((session) => session.mood === "waiting" && !session.limited)
+      .map((session): Waiting => ({ session: sessionId(session.key), title: titleOf(session), asks: session.asks ?? "choose", ...(session.auto ? { autoAt: session.auto.at } : {}) })),
     send: (list) => {
       const [first] = list;
-      if (list.length > 1) sendPush((to) => waitingPush(to, t("phone.pushBodyMany", { n: list.length })));
-      else if (first) sendPush((to) => waitingPush(to, first.pc === undefined ? t("phone.pushBodyPlain") : t("phone.pushBody", { pc: first.pc }), first.session));
+      if (list.length > 1) {
+        const count = (asks: Waiting["asks"]) => list.filter((one) => one.asks === asks).length;
+        const kinds = [["approve", "phone.pushKindApprove"], ["choose", "phone.pushKindChoose"]] as const;
+        const tally = kinds.filter(([asks]) => count(asks) > 0).map(([asks, key]) => t(key, { n: count(asks) })).join(", ");
+        sendPush((to) => waitingPush(to, `${t("phone.pushBodyMany", { n: list.length })} · ${tally}`));
+      } else if (first) {
+        // When it answers itself, if nobody does: the time only, never the option's words.
+        const auto = first.autoAt === undefined ? "" : ` · ${t("phone.pushAuto", { time: new Date(first.autoAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) })}`;
+        sendPush((to) => waitingPush(to, `${t(asksLine[first.asks])}${auto}`, first.session, first.title));
+      }
     },
   });
 
   ipcMain.on(channels.phoneSnapshot, (_event, list: PhoneSession[]) => {
     if (!Array.isArray(list)) return;
     const pushes = snapshotPushes(phoneSessions, list);
+    const stopped = newlyStopped(phoneSessions, list);
     phoneSessions = list;
     for (const { key, mood } of list) if (mood !== "working") mainFree.delete(key);
     api.changed();
     if (pushes.waiting) waitingTurned();
+    // An AI that stopped on its own (the owner's choice, 11/10): at once, unless the phone is open.
+    const [one] = stopped;
+    if (one && !looking()) {
+      sendPush((to) => stopped.length > 1
+        ? stopPush(to, "Lepons", t("phone.pushStoppedMany", { n: stopped.length }))
+        : stopPush(to, titleOf(one.session), t(one.why === "failed" ? "phone.pushFailed" : "phone.pushLimit"), sessionId(one.session.key)));
+    }
   });
   const phoneView = (): PhoneSettingsView => {
     const settings = phone.get();
@@ -298,7 +346,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const home = node.home.replace(/\\/g, "/").replace(/\/+$/, "");
       const dirs = commands.folders(repo.path, home);
       const custom = await machineOf(node).customCommands(dirs);
-      return mergeCommands(commands.builtins === "codex" ? codexBuiltins : claudeBuiltins, custom.slice(0, 300));
+      return mergeCommands(commands.builtins === "codex" ? codexBuiltins : commands.builtins === "opencode" ? opencodeBuiltins : claudeBuiltins, custom.slice(0, 300));
     }),
     directory: async (key, relative) => {
       const found = phoneSessionPlace(key);
@@ -343,9 +391,35 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     reconnectPc: (nodeId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneReconnect, nodeId);
     },
-    folders: () => nodes.list().flatMap((node) => node.repos.map((repo) => ({ nodeId: node.id, repoId: repo.id, pc: machineLabel(node), folder: repo.label }))),
+    folders: () => nodes.list().flatMap((node) => node.repos.map((repo) => {
+      const original = repo.worktree && node.repos.find((candidate) => candidate.id === repo.worktree!.of);
+      return { nodeId: node.id, repoId: repo.id, pc: machineLabel(node), folder: repo.label, ...(original ? { worktreeOf: original.label } : {}) };
+    })),
+    // Asked on the phone: its PC told to stop it if it can be reached, and gone from this one either way.
+    closeSession: async (key) => {
+      const session = phoneSessions.find((candidate) => candidate.key === key);
+      if (!session) return "stopped";
+      const told = await stopSessionKey(session.nodeId, key, true).catch(() => false);
+      if (!window.isDestroyed()) window.webContents.send(channels.phoneForgot, key);
+      return told ? "stopped" : "here";
+    },
+    // A worktree's original stays while the worktree does: it could not be merged back otherwise.
+    // Its sessions are ended on their PC first: taking the folder off only lets go of the connection, and tmux would keep the AI.
+    forgetFolder: async (nodeId, repoId) => {
+      const node = nodes.list().find((candidate) => candidate.id === nodeId);
+      if (!node?.repos.some((repo) => repo.id === repoId)) return "gone";
+      if (node.repos.some((repo) => repo.worktree?.of === repoId)) return "worktree";
+      for (const key of [`${nodeId}::${repoId}`, `${nodeId}::${repoId}::terminal`]) {
+        if (phoneSessions.some((session) => session.key === key)) await stopSessionKey(nodeId, key, true).catch(() => false);
+      }
+      dropRepos(nodeId, [repoId]);
+      return "ok";
+    },
     openFolder: (nodeId, repoId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneOpen, nodeId, repoId);
+    },
+    keepWaiting: (key) => {
+      if (!window.isDestroyed()) window.webContents.send(channels.phoneAutoKeep, key);
     },
     openTerminal: (nodeId, repoId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneTerminal, nodeId, repoId);
@@ -490,13 +564,19 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     void syncPhone();
     return undefined;
   });
-  // The key the Authenticator app scans. Shown again on request, made new
-  // on request -- a new one signs every phone out, the old codes being void.
+  // The key the Authenticator app scans, made new on request -- a new one
+  // signs every phone out, the old codes being void. Once its code was typed
+  // back it is never shown again: whoever saw it could make the codes that
+  // open the phone and 내 API 키. A new phone registers anew.
   ipcMain.handle(channels.phoneTotp, async (_event, renew: boolean) => {
     let secret = totpSecret();
+    if (secret !== undefined && renew !== true && phoneView().totpReady) return undefined;
     if (secret === undefined || renew === true) {
+      const confirmed = secret !== undefined && phoneView().totpReady;
       secret = newTotpSecret();
       phone.set({ totpSecret: sealSecret(Buffer.from(secret), safeStorage), totpUnconfirmed: true });
+      usedStep = -1;
+      if (confirmed) for (const listener of renewed) listener();
       api.dropAll();
       void syncPhone();
     }
@@ -555,6 +635,26 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   return {
     api,
     deps: phoneDeps,
+    twoFactor: {
+      ready: () => phoneView().totpReady,
+      // Five wrong codes and it stops listening for five minutes: six digits are few, and the window asking may not be the owner's.
+      check: (code) => {
+        if (Date.now() < twoFactorLockedUntil) return false;
+        const secret = totpSecret();
+        const step = secret === undefined || !phoneView().totpReady ? undefined : matchTotp(secret, code.replace(/\s/g, ""), Date.now());
+        if (step === undefined || step <= usedStep) {
+          if (++twoFactorMisses >= TWO_FACTOR_TRIES) {
+            twoFactorMisses = 0;
+            twoFactorLockedUntil = Date.now() + TWO_FACTOR_LOCK_MS;
+          }
+          return false;
+        }
+        twoFactorMisses = 0;
+        usedStep = step;
+        return true;
+      },
+      onRenew: (listener) => void renewed.add(listener),
+    },
     stop: () => {
       clearInterval(mainFreeTimer);
       relay?.stop();

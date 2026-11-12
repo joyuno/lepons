@@ -1,8 +1,8 @@
 // The settings window's left tabs and the theme choice. Pure, so it is tested.
 
-export type SettingsTab = "theme" | "font" | "language" | "startup" | "agents" | "tokens" | "allow" | "key" | "remotes" | "phone" | "pet" | "update" | "tour" | "about";
+export type SettingsTab = "theme" | "font" | "language" | "startup" | "agents" | "llmKeys" | "tokens" | "allow" | "key" | "remotes" | "phone" | "pet" | "update" | "tour" | "about";
 
-const TABS: SettingsTab[] = ["agents", "tokens", "update", "remotes", "phone", "theme", "font", "language", "startup", "pet", "allow", "key", "tour", "about"];
+const TABS: SettingsTab[] = ["agents", "llmKeys", "tokens", "update", "remotes", "phone", "theme", "font", "language", "startup", "pet", "allow", "key", "tour", "about"];
 
 // Allowing other PCs in (sshd) is only set up by Lepons on Windows.
 export function settingsTabs(platform: string): SettingsTab[] {

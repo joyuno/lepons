@@ -78,9 +78,15 @@ export interface PhoneDeps {
   /** "다시 연결" from the PC's remote-PC list, for this node. */
   reconnectPc(nodeId: string): void;
   /** Every registered folder, by PC: the ones with no session become the phone's `folders`. */
-  folders(): Array<{ nodeId: string; repoId: string; pc: string; folder: string }>;
+  folders(): Array<{ nodeId: string; repoId: string; pc: string; folder: string; worktreeOf?: string }>;
+  /** Ends a session on its PC and here; "here" when its PC could not be told. */
+  closeSession(key: string): Promise<"stopped" | "here">;
+  /** Takes a folder off its PC's list, unasked: the phone asked. */
+  forgetFolder(nodeId: string, repoId: string): Promise<"ok" | "worktree" | "gone">;
   /** Opens a folder's AI session on the PC, unasked: the AI last used there, its last conversation. */
   openFolder(nodeId: string, repoId: string): void;
+  /** The question a session shows is not to be answered by itself (자리 비움 기본 답). */
+  keepWaiting(key: string): void;
   /** Opens a folder's plain terminal on the PC, as its rail's "터미널 열기" does. */
   openTerminal(nodeId: string, repoId: string): void;
   /** Each PC's agents and their sign-ins, as the settings' AI accounts tab reads them. */
@@ -242,10 +248,11 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         ...(session.agentName ? { agentName: session.agentName } : {}),
         ...(session.mainFree ? { mainFree: true } : {}),
         ...(session.worktreeOf === undefined ? {} : { worktreeOf: session.worktreeOf, ...(session.worktree === undefined ? {} : { worktree: session.worktree }) }),
+        ...(session.auto ? { auto: session.auto } : {}),
       }))
       .sort((a, b) => moodOrder.indexOf(a.mood) - moodOrder.indexOf(b.mood)),
     pcs: pcList().map(({ id, label, state }): PhonePc => ({ id, label, state })),
-    folders: closedFolders().map(({ id, pc, folder }) => ({ id, pc, folder })),
+    folders: closedFolders().map(({ id, pc, folder, worktreeOf }) => ({ id, pc, folder, ...(worktreeOf === undefined ? {} : { worktreeOf }) })),
     ...(usage.length > 0 ? { usage } : {}),
   });
   /** Registered folders whose AI session (sessionKey's "<node>::<repo>") is not in the list. */
@@ -484,6 +491,14 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
 
     // The terminal tab: the project's plain terminal ("<node>::<repo>::terminal",
     // sessionKey's), asked open on the PC when it is not in the list yet.
+    if (at === "POST /api/auto-keep") {
+      if (body === "bad") return fail(400, "body");
+      const key = keyFor(((body ?? {}) as Unproven<typeof at>).s);
+      if (key === undefined) return fail(404, "session");
+      deps.keepWaiting(key);
+      return ok(at, { ok: true });
+    }
+
     if (at === "POST /api/terminal") {
       if (body === "bad") return fail(400, "body");
       const { s } = (body ?? {}) as Unproven<typeof at>;
@@ -513,6 +528,24 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       const key = `${folder.nodeId}::${folder.repoId}`;
       if (!deps.sessions().some((one) => one.key === key)) deps.openFolder(folder.nodeId, folder.repoId);
       return ok(at, { id: sessionId(key) });
+    }
+
+    // A session closed from the phone, its AI or its terminal: no question on the PC, the phone asked.
+    if (at === "POST /api/close") {
+      if (body === "bad") return fail(400, "body");
+      const key = keyFor(((body ?? {}) as Unproven<typeof at>).s);
+      if (key === undefined) return fail(404, "session");
+      return ok(at, (await deps.closeSession(key)) === "here" ? { ok: true, here: true } : { ok: true });
+    }
+
+    // A folder taken off the list from the phone: open or closed, by the id its AI's session has.
+    if (at === "POST /api/forget") {
+      if (body === "bad") return fail(400, "body");
+      const { f } = (body ?? {}) as Unproven<typeof at>;
+      const folder = deps.folders().find((one) => sessionId(`${one.nodeId}::${one.repoId}`) === f);
+      if (!folder) return fail(404, "folder");
+      const done = await deps.forgetFolder(folder.nodeId, folder.repoId);
+      return done === "worktree" ? fail(409, "worktree") : done === "gone" ? fail(404, "folder") : ok(at, { ok: true });
     }
 
     // Input: an agent session takes what inputFor lets through; a plain

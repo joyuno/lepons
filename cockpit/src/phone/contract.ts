@@ -43,6 +43,8 @@ export interface PhoneSessionView {
   /** A worktree's session: the original folder's name, and the task's. */
   worktreeOf?: string;
   worktree?: string;
+  /** 자리 비움 기본 답: when the PC answers the question on screen by itself (epoch ms), and with which option. POST /api/auto-keep holds it. */
+  auto?: { at: number; n: number; option: string };
 }
 
 export interface PhonePc {
@@ -58,7 +60,13 @@ export interface PhoneUsageWindow { percent: number; resetsAt?: number }
 export type PhoneUsage = Array<{ name: string; fiveHour?: PhoneUsageWindow; week?: PhoneUsageWindow }>;
 
 /** A registered folder with no AI session open: the phone can ask its PC to open one (POST /api/open). `id` is the session's it would be. */
-export interface PhoneFolder { id: string; pc: string; folder: string }
+export interface PhoneFolder {
+  id: string;
+  pc: string;
+  folder: string;
+  /** A worktree's: its original folder's name. */
+  worktreeOf?: string;
+}
 
 export interface PhoneState {
   sessions: PhoneSessionView[];
@@ -121,8 +129,20 @@ export interface PhoneRoutes {
   "POST /api/input": { body: { s: string; key?: string; text?: string }; reply: Ok };
   /** The terminal tab: `s`'s project's plain terminal, asked open on the PC if it is not; its id may reach the list a moment later. */
   "POST /api/terminal": { body: { s: string }; reply: { id: string } };
+  /** The question `s` shows waits for the person after all: no answer by itself (PhoneSessionView.auto). */
+  "POST /api/auto-keep": { body: { s: string }; reply: Ok };
   /** A folder of `folders` opened on its PC with the AI last used there, carrying on its last conversation; the session's id, which reaches the list a moment later. */
   "POST /api/open": { body: { f: string }; reply: { id: string } };
+  /**
+   * Ends `s` on its PC and takes it off the list; `here` when its PC could not
+   * be reached, so only Lepons let go of it and it may still run there.
+   */
+  "POST /api/close": { body: { s: string }; reply: { ok: true; here?: true } };
+  /**
+   * Takes folder `f` off its PC's list -- nothing on disk -- ending its sessions;
+   * a remote PC's last folder takes the PC along. 409 "worktree" while a worktree of it is listed.
+   */
+  "POST /api/forget": { body: { f: string }; reply: Ok };
   /** A photo or file for `s`'s AI: the bytes in the message's `bin`, `n` its name on the phone; where the PC saved it. */
   "POST /api/upload": { query: "s&n"; reply: { path: string } };
   /**

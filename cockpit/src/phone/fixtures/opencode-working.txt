@@ -1,0 +1,39 @@
+
+  ┃
+  ┃  Run the shell command: ping -n 25 127.0.0.1
+  ┃
+
+     + Thought: 3.3s
+
+     I'll run that ping command. Since pinging 25 times takes roughly 25 seconds, I'll set a longer timeout.
+
+  ┃
+  ┃  ⠋ ping -n 25 127.0.0.1
+  ┃
+  ┃  Ping 127.0.0.1 32����Ʈ ������ ���:
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  127.0.0.1�� ����: ����Ʈ=32 �ð�<1ms TTL=128
+  ┃  …
+  ┃
+  ┃  Click to expand
+  ┃
+
+     ▣  Build · GLM-5.3-Flash Free
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GLM-5.3-Flash Free OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt                                                                 tab agents  ctrl+p commands

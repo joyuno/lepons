@@ -61,8 +61,10 @@ SOFTWARE.
 
 The agent marks in the desktop app's agent picker (Claude, Codex, Grok,
 Antigravity, Cursor) are copied from Lobe Icons (https://github.com/lobehub/lobe-icons,
-`@lobehub/icons-static-svg` 1.102.0). The marks themselves are their owners'
-trademarks, shown only to name the agent each button starts.
+`@lobehub/icons-static-svg` 1.102.0), and so are the API platform marks for 내 LLM
+(OpenRouter, OpenAI, Anthropic, Google Gemini, DeepSeek, Groq; 1.80.0). The marks
+themselves are their owners' trademarks, shown only to name the agent each button
+starts or the platform a key is for.
 
 ```
 MIT License

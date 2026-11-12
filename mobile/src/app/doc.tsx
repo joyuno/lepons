@@ -1,15 +1,16 @@
 import { setStringAsync } from "expo-clipboard";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
 import { useConnection, useTermSize } from "@/connection";
 import { t } from "@/i18n";
-import { inlineRuns, markdownBlocks } from "@/phone/chat";
+import { inlineRuns } from "@/phone/chat";
 import { codeLines, langOf, ROW_CHARS, type CodeLine, type TokenKind } from "@/phone/code-tokens";
 import { canRenderMarkdown, documentKind } from "@/phone/document-kind";
+import { replyBlocks } from "@/phone/reply";
 import { fetchFile, fetchOutside, openInViewer, type FetchedFile, type OutsideRefusal } from "@/open-file";
 import { utf8 } from "@/relay/protocol";
 import { Button, font, mono, monoSizes, radius, Screen, size, space, useTheme } from "@/ui";
@@ -102,10 +103,7 @@ export default function Doc() {
 
   return (
     <Screen>
-      <View style={s.pathBox}>
-        <Text style={s.mono} selectable>{outside ? path : path.split("/").join(" / ")}</Text>
-        {outside ? <Text style={s.dim}>{t.outsideNote}</Text> : null}
-      </View>
+      <Text style={s.crumbs} numberOfLines={2} ellipsizeMode="head" selectable>{crumbs(path)}{outside ? `  ·  ${t.outsideNote}` : ""}</Text>
       {view.kind === "loading" ? <Text style={s.empty}>{t.loading}</Text> : null}
       {view.kind === "gone" ? <Text style={s.empty}>{why(view.why) ?? t.docGone}</Text> : null}
       {view.kind === "text" ? <Markdown text={view.text} /> : null}
@@ -115,13 +113,31 @@ export default function Doc() {
   );
 }
 
+/** "src/app/doc.tsx" as "src › app › doc.tsx". */
+const crumbs = (path: string) => path.replace(/\\/g, "/").split("/").filter(Boolean).join(" › ");
+
+/** About how wide a cell's text runs: wide (CJK) characters count double (the chat's Table). */
+const cellWidth = (text: string) => Math.min(240, Math.max(56, [...text].reduce((sum, ch) => sum + (ch.charCodeAt(0) > 0x2e7f ? 14 : 8), 0) + 2 * space.sm));
+
 /** Render only text and existing inline styles; Markdown cannot run scripts. */
 function Markdown({ text }: { text: string }) {
   const { c: p, s } = useTheme();
   const inline = (value: string) => inlineRuns(value).map((run, i) => run.kind === "text" ? run.text
     : <Text key={i} style={run.kind === "bold" ? font.bold : { fontFamily: mono, backgroundColor: p.raise }}>{run.text}</Text>);
   return <View style={{ gap: space.md }}>
-    {markdownBlocks(text).map((block, i) => {
+    {replyBlocks(text).map((block, i) => {
+      if (block.type === "hr") return <View key={i} style={{ height: StyleSheet.hairlineWidth, backgroundColor: p.line }} />;
+      if (block.type === "table") {
+        const all = [block.head, ...block.rows];
+        const widths = Array.from({ length: Math.max(...all.map((row) => row.length)) }, (_, j) => Math.max(...all.map((row) => cellWidth(row[j] ?? ""))));
+        return <ScrollView key={i} horizontal style={{ flexGrow: 0 }} showsHorizontalScrollIndicator={false}>
+          <View style={{ borderWidth: StyleSheet.hairlineWidth, borderColor: p.line, borderRadius: radius.sm, borderCurve: "continuous", overflow: "hidden" }}>
+            {all.map((row, r) => <View key={r} style={{ flexDirection: "row", backgroundColor: r === 0 ? p.raise : undefined, borderTopWidth: r === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: p.line }}>
+              {widths.map((width, j) => <Text key={j} selectable style={[s.text, { width, fontSize: size.sub, lineHeight: 20, paddingHorizontal: space.sm, paddingVertical: space.xs }, r === 0 && font.semibold]}>{inline(row[j] ?? "")}</Text>)}
+            </View>)}
+          </View>
+        </ScrollView>;
+      }
       if (block.type === "code") return <ScrollView key={i} horizontal style={{ backgroundColor: p.raise, borderRadius: radius.sm }} contentContainerStyle={{ padding: space.md }}><Text selectable style={s.mono}>{block.text}</Text></ScrollView>;
       if (block.type === "list") return <View key={i} style={{ gap: space.xs }}>{block.items.map((item, n) => <View key={n} style={{ flexDirection: "row", gap: space.sm }}><Text style={s.text}>{block.ordered ? `${n + 1}.` : "•"}</Text><Text selectable style={[s.text, { flex: 1 }]}>{inline(item)}</Text></View>)}</View>;
       return <Text key={i} selectable accessibilityRole={block.type === "h" ? "header" : undefined} style={[s.text, block.type === "h" && font.bold, block.type === "quote" && { color: p.muted, borderLeftWidth: 3, borderLeftColor: p.line, paddingLeft: space.md }]}>{inline(block.text)}</Text>;
@@ -177,7 +193,7 @@ function Code({ path, text, outside }: { path: string; text: string; outside?: b
   return (
     <SafeAreaView style={s.safe} edges={["bottom", "left", "right"]}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: p.line, backgroundColor: p.card }}>
-        <Text style={[s.dim, { flex: 1, fontFamily: mono, fontSize: size.caption }]} numberOfLines={1} ellipsizeMode="head">{path}</Text>
+        <Text style={[s.crumbs, { flex: 1 }]} numberOfLines={1} ellipsizeMode="head">{crumbs(path)}</Text>
         {html ? tool(page ? t.viewCode : t.viewPage, () => setPage((on) => !on)) : null}
         {page ? null : tool(t.codeWrap, () => setWrap((on) => !on), wrap)}
         {tool(copied ? t.copied : t.copy, () => void setStringAsync(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }))}

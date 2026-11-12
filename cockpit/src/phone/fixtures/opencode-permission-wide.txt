@@ -1,0 +1,47 @@
+
+     ▣  Build · GLM-5.3-Flash Free · 40.6s                                                     Create delegated.txt with ok (fork
+                                                                                               #3)
+  ┃
+  ┃  Append a line e2e to a.txt using the edit tool.                                           Context
+  ┃                                                                                            8,853 tokens
+                                                                                               4% used
+     → Read a.txt                                                                              $0.00 spent
+
+  ┃                                                                                            LSP
+  ┃  ← Edit a.txt                                                                              LSPs are disabled
+  ┃
+  ┃    2   world
+  ┃    3   more
+  ┃    4   1234567890
+  ┃    5   e2e
+  ┃    6 + e2e
+  ┃
+
+     Done — appended another e2e line to a.txt.
+
+     ▣  Build · GLM-5.3-Flash Free · 42.3s
+
+  ┃
+  ┃  Append a line e2e to a.txt using the edit tool.
+  ┃
+
+     → Read a.txt
+     ← Edit a.txt
+                                                                                                 ⬖ Getting started                ✕
+     ▣  Build · GLM-5.3-Flash Free
+                                                                                                   OpenCode includes free models
+  ┃                                                                                                so you can start immediately.
+  ┃  △ Permission required
+  ┃    → Edit a.txt                                                                                Connect from 75+ providers to
+  ┃                                                                                                use other models, including
+  ┃  3 more                                    3   more                                            Claude, GPT, Gemini etc
+  ┃  4 1234567890                              4   1234567890
+  ┃  5 e2e                                     5   e2e                                             Connect provider        /connect
+  ┃  6 e2e                                     6   e2e
+  ┃                                            7 + e2e
+  ┃                                                                                            /C:\work\demo:master
+  ┃
+  ┃
+  ┃
+  ┃   Allow once   Allow always   Reject      ctrl+f fullscreen  ⇆ select  enter confirm
+  ┃                                                                                            • OpenCode 1.19.5

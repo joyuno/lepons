@@ -198,6 +198,17 @@ test("lepons goes into Antigravity's MCP file, beside the operator's own servers
   for (const unsafe of ["{", "[]", '{"mcpServers":[]}']) assert.equal(mcpFileWith(unsafe, entry, "serverUrl"), undefined, unsafe);
 });
 
+test("lepons goes into OpenCode's config under mcp, as a remote server, beside its other settings", () => {
+  const entry = { url: "http://127.0.0.1:41880/", token: "tok-1" };
+  const lepons = { type: "remote", url: "http://127.0.0.1:41880/", headers: { Authorization: "Bearer tok-1" }, enabled: true };
+  const own = JSON.stringify({ $schema: "https://opencode.ai/config.json", model: "x/y", mcp: { mine: { type: "local", command: ["node", "x.js"] } } });
+  assert.deepEqual(JSON.parse(mcpFileWith(own, entry, "url", true)!), { $schema: "https://opencode.ai/config.json", model: "x/y", mcp: { mine: { type: "local", command: ["node", "x.js"] }, lepons } });
+  assert.equal(mcpFileWith(mcpFileWith(own, entry, "url", true), entry, "url", true), undefined, "nothing to write when nothing changed");
+  assert.deepEqual(JSON.parse(mcpFileWith(mcpFileWith(own, entry, "url", true), undefined, "url", true)!).mcp, { mine: { type: "local", command: ["node", "x.js"] } });
+  // JSONC with comments is OpenCode's too: not understood, so not rewritten.
+  assert.equal(mcpFileWith('{ // mine\n "model": "x/y" }', entry, "url", true), undefined);
+});
+
 test("lepons goes into Cursor's MCP file as url and headers", () => {
   const entry = { url: "http://127.0.0.1:41880/", token: "tok-1" };
   assert.deepEqual(JSON.parse(mcpFileWith(undefined, entry, "url")!), {
@@ -236,16 +247,17 @@ test("every agent is reachable by kind", () => {
 // view and check_delegation narrate from it, so a wrong format makes them
 // replay some earlier session's steps under this session's name.
 const capabilities: Array<[string, (can: AgentCapabilities) => unknown, Record<AgentKind, unknown>]> = [
-  ["transcript", (can) => can.transcript, { claude: "claude", codex: "codex", grok: null, agy: null, agent: null }],
-  ["status", (can) => can.status, { claude: "record", codex: "record", grok: "rhythm", agy: "rhythm", agent: "rhythm" }],
-  ["mcp", (can) => ("add" in can.mcp ? "command" : "file"), { claude: "command", codex: "command", grok: "command", agy: "file", agent: "file" }],
-  ["commands", (can) => can.commands?.builtins ?? null, { claude: "claude", codex: "codex", grok: null, agy: null, agent: null }],
+  ["transcript", (can) => can.transcript, { claude: "claude", codex: "codex", grok: null, agy: null, agent: null, opencode: "opencode" }],
+  ["status", (can) => can.status, { claude: "record", codex: "record", grok: "rhythm", agy: "rhythm", agent: "rhythm", opencode: "record" }],
+  ["mcp", (can) => ("add" in can.mcp ? "command" : "file"), { claude: "command", codex: "command", grok: "command", agy: "file", agent: "file", opencode: "file" }],
+  ["commands", (can) => can.commands?.builtins ?? null, { claude: "claude", codex: "codex", grok: null, agy: null, agent: null, opencode: "opencode" }],
   ["delegate", (can) => can.delegate, {
     claude: "claude --effort high --dangerously-skip-permissions -p",
     codex: 'codex exec -c model_reasoning_effort="high" --dangerously-bypass-approvals-and-sandbox -',
     grok: null,
     agy: null,
     agent: null,
+    opencode: "opencode run --auto",
   }],
   ["usage", (can) => can.usage, {
     claude: { tokens: true, limits: "statusLineFlag" },
@@ -253,6 +265,7 @@ const capabilities: Array<[string, (can: AgentCapabilities) => unknown, Record<A
     grok: { tokens: true, limits: null },
     agy: { tokens: true, limits: "statusLineFile" },
     agent: { tokens: false, limits: null },
+    opencode: { tokens: true, limits: null },
   }],
 ];
 for (const [name, read, expected] of capabilities) {
@@ -262,10 +275,10 @@ for (const [name, read, expected] of capabilities) {
 }
 
 test("the lists callers ask come from the declarations", () => {
-  assert.deepEqual(delegateAgents, ["claude", "codex"]);
+  assert.deepEqual(delegateAgents, ["claude", "codex", "opencode"]);
   assert.deepEqual(usageLimitAgents, ["claude", "codex", "agy"]);
   assert.deepEqual(mcpCommandAgents.map(({ kind }) => kind), ["claude", "codex", "grok"]);
-  assert.deepEqual(mcpFileAgents.map(({ kind }) => kind), ["agy", "agent"]);
+  assert.deepEqual(mcpFileAgents.map(({ kind }) => kind), ["agy", "agent", "opencode"]);
   assert.deepEqual(toolsBridgeAgents, ["claude"]);
 });
 

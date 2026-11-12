@@ -7,14 +7,17 @@ import { findPaths, resolvePath } from "../shared/term-paths.ts";
 import { localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
 import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
+import { treeHits } from "./tree-search.ts";
 import { base64Bytes, decodeText, fileKind, imageMime } from "./file-view.ts";
 import { renderCode } from "./code-view.ts";
 import { createEditor } from "./editor.ts";
 import { agents, isAgentKind, usageLimitAgents } from "../agent/agents.ts";
 import type { AgentKind, Executor } from "../agent/agents.ts";
 import type { BrowseResult } from "../browse/types.ts";
+import { LLM_PLATFORMS, type LlmPlatform, type LocalLlm } from "../agent/local-llm.ts";
 import type {
   AgentAccount,
+  LlmSaved,
   CockpitApi,
   DelegationInfo,
   DialogRequest,
@@ -54,11 +57,15 @@ import { relayLamp, relayRow } from "./relay-state.ts";
 import { APP_PAGE, cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
-import { agentLogos } from "./agent-logos.ts";
+import { agentLogos, platformLogos } from "./agent-logos.ts";
+import { urlsAt } from "./wrapped-url.ts";
 import type { MapInput } from "./workflowmap/model.ts";
 import type { Question } from "./workflowmap/panel.ts";
 import { forPhone, stepsOf } from "./workflowmap/summary.ts";
-import { menuFrom } from "../phone/menu.ts";
+import { menuFrom, withoutSidebar } from "../phone/menu.ts";
+import { limitOnScreen, menuAsks } from "../phone/push.ts";
+import { autoAnswerWait, autoChoice } from "../phone/auto-answer.ts";
+import type { MenuOption } from "../phone/menu.ts";
 import { reflow } from "../phone/screen.ts";
 
 declare global {
@@ -144,6 +151,10 @@ interface SessionMeta {
   waiting: boolean;
   /** Recent distinct activity lines, oldest first -- the workflow view's timeline. */
   history: Array<{ text: string; at: number }>;
+  /** What the menu on screen asks (menuAsks), for the waiting push. */
+  asks?: "approve" | "choose";
+  /** The agent's usage-limit line is on screen, for the stop push. */
+  limited?: boolean;
 }
 const sessionMeta = new Map<string, SessionMeta>();
 /** Each session's output rhythm: working, or waiting on the operator. */
@@ -213,13 +224,76 @@ function schedulePreviewCapture(key: string): void {
   );
 }
 
+/** 자리 비움 기본 답 (phone/auto-answer.ts): each session's armed question, by its menu's labels. */
+const autoAnswers = new Map<string, { menu: string; at: number; n: number; option: string; timer: ReturnType<typeof setTimeout> }>();
+/** Questions told to wait for the person: session and menu. */
+const autoKept = new Set<string>();
+
+/** Arms the answer for a new question, drops it when the question goes or changes. */
+function syncAutoAnswer(key: string, menu: MenuOption[] | undefined): void {
+  const labels = menu?.map((option) => option.label).join("|");
+  // The question is gone: one told to wait is over, and a later one with the same options is a new question.
+  if (labels === undefined) for (const held of [...autoKept]) if (held.startsWith(`${key}\0`)) autoKept.delete(held);
+  const armed = autoAnswers.get(key);
+  if (armed && armed.menu === labels) return;
+  if (armed) {
+    clearTimeout(armed.timer);
+    autoAnswers.delete(key);
+  }
+  const minutes = autoAnswerWait(localStorage.getItem("autoAnswer"), localStorage.getItem("autoAnswerMinutes"));
+  const choice = menu && labels !== undefined && minutes > 0 && !autoKept.has(`${key}\0${labels}`) ? autoChoice(menu) : undefined;
+  if (choice && labels !== undefined) {
+    const ms = minutes * 60_000;
+    autoAnswers.set(key, { menu: labels, at: Date.now() + ms, n: choice.n, option: choice.label, timer: setTimeout(() => fireAutoAnswer(key, labels), ms) });
+  }
+  if (armed || choice) {
+    renderPanes();
+    sendPhoneSnapshot();
+  }
+}
+
+/** Time is up: the option's digit, if the same question is still on a running session's screen. */
+function fireAutoAnswer(key: string, labels: string): void {
+  const armed = autoAnswers.get(key);
+  autoAnswers.delete(key);
+  if (armed && activityOf(key).menu === labels && states.get(key)?.kind === "ready") {
+    cockpit.writeSession(key, String(armed.n));
+    showToast(t("auto.answered", { folder: findByKey(key)?.repo.label ?? "", n: armed.n }));
+  }
+  renderPanes();
+  sendPhoneSnapshot();
+}
+
+/** 취소, on the PC or the phone: this question waits for the person. */
+function keepWaiting(key: string): void {
+  const armed = autoAnswers.get(key);
+  if (!armed) return;
+  clearTimeout(armed.timer);
+  autoAnswers.delete(key);
+  autoKept.add(`${key}\0${armed.menu}`);
+  renderPanes();
+  sendPhoneSnapshot();
+}
+
 function capturePreview(key: string): void {
   const entry = terminals.get(key);
   if (!entry) return;
   const lines = screenLines(entry.term);
   // A plain terminal's numbered list is nobody asking.
-  const menu = sessionExecutors.get(key) === "shell" || findByKey(key)?.terminal ? undefined : menuFrom(reflow(lines.map((text, y) => ({ text, wrapped: entry.term.buffer.active.getLine(entry.term.buffer.active.length - lines.length + y)?.isWrapped ?? false }))));
+  // A full-screen app (OpenCode) draws on the alternate screen, row by row to the edge: xterm marks
+  // nearly every row as wrapped there, but its rows are the screen, so nothing is joined.
+  const buffer = entry.term.buffer.active;
+  const menu = sessionExecutors.get(key) === "shell" || findByKey(key)?.terminal ? undefined : menuFrom(reflow(lines.map((text, y) => ({ text, wrapped: buffer.type === "normal" && (buffer.getLine(buffer.length - lines.length + y)?.isWrapped ?? false) }))));
   if (onMenu(activityOf(key), menu?.map((option) => option.label).join("|"), Date.now())) turnEnded(key);
+  const agentScreen = sessionExecutors.get(key) !== "shell" && !findByKey(key)?.terminal;
+  const asks = menu && menuAsks(menu);
+  const limited = agentScreen && limitOnScreen(lines);
+  const seen = sessionMeta.get(key) ?? { waiting: false, history: [] };
+  if (seen.asks !== asks || (seen.limited ?? false) !== limited) sessionMeta.set(key, { ...seen, asks, limited });
+  // The limit line came or went: the note over the pane follows it.
+  if ((seen.limited ?? false) !== limited) noteLimits();
+  // After asks is set: the snapshot this may send rings with this menu's line, not the last one's.
+  if (agentScreen) syncAutoAnswer(key, menu);
   const text = statusFrom(lines);
   if (text === undefined) return;
   const current = sessionMeta.get(key) ?? { waiting: false, history: [] };
@@ -387,6 +461,10 @@ function fileTree(node: NodeConfig, repo: RepoConfig, path: string, key: string,
     // From Explorer: into the folder, or the folder a file sits in.
     filesDrop(item, node, entry.isDirectory ? childPath : path);
     box.append(item);
+    if (childKey === revealKey) {
+      revealKey = undefined;
+      requestAnimationFrame(() => item.scrollIntoView({ block: "nearest" }));
+    }
     if (entry.isDirectory && expanded) box.append(fileTree(node, repo, childPath, childKey, depth + 1));
   }
   if (listing.entries.length === 0) {
@@ -407,6 +485,7 @@ function fileTree(node: NodeConfig, repo: RepoConfig, path: string, key: string,
 function treeBar(node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "treeBar";
+  if (treeSearches.has(treeKey)) return searchBar(bar, node, repo, treeKey);
   const under = (key: string) => {
     const path = key.slice(key.indexOf("\0") + 1);
     return key.startsWith(`${node.id}\0`) && isUnder(path, repo.path);
@@ -423,9 +502,15 @@ function treeBar(node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLEleme
     });
     bar.append(b);
   };
+  button(treeIcons.search, t("files.search"), () => {
+    treeSearches.set(treeKey, "");
+    searchTyping = { key: treeKey, at: 0 };
+    renderRail();
+  });
   button(treeIcons.newFile, t("browse.newFile"), () => void openFileDialog(node, repo));
   button(treeIcons.newFolder, t("files.newFolder"), () => newFolderIn(node, repo.path));
   button(treeIcons.refresh, t("rail.refreshFiles"), () => {
+    treeFileLists.delete(treeKey);
     listings.delete(treeKey);
     for (const key of [...listings.keys()]) if (under(key)) listings.delete(key);
     renderRail();
@@ -435,6 +520,153 @@ function treeBar(node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLEleme
     renderRail();
   });
   return bar;
+}
+
+/** Open searches over a file tree, by tree key: what is typed so far. */
+const treeSearches = new Map<string, string>();
+/** Every file under a searched folder, read once while its search is open. */
+const treeFileLists = new Map<string, Promise<string[]>>();
+/** The search box that had the keyboard, and where its caret was: renderRail rebuilds the box. */
+let searchTyping: { key: string; at: number } | undefined;
+/** A folder found by search, scrolled to once the tree has drawn its row (its listing may still be coming). */
+let revealKey: string | undefined;
+
+const resultsBox = (treeKey: string) => [...rail.querySelectorAll<HTMLElement>(".treeSearchResults")].find((each) => each.dataset.treeKey === treeKey);
+const searchInput = (treeKey: string) => [...rail.querySelectorAll<HTMLInputElement>(".treeSearchInput")].find((each) => each.dataset.treeKey === treeKey);
+
+function closeSearch(treeKey: string): void {
+  treeSearches.delete(treeKey);
+  treeFileLists.delete(treeKey);
+  searchTyping = undefined;
+  renderRail();
+}
+
+/**
+ * The bar while searching: back, then the box. What matches shows as it is
+ * typed, so Enter only opens the first hit; Esc and back return to the tree.
+ */
+function searchBar(bar: HTMLElement, node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLElement {
+  bar.classList.add("searching");
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "iconBtn";
+  back.innerHTML = treeIcons.back;
+  attachHover(back, () => t("files.searchBack"));
+  back.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeSearch(treeKey);
+  });
+  const input = document.createElement("input");
+  input.className = "treeSearchInput";
+  input.dataset.treeKey = treeKey;
+  input.type = "search";
+  input.spellcheck = false;
+  input.placeholder = t("files.searchPlaceholder");
+  input.value = treeSearches.get(treeKey) ?? "";
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("input", () => {
+    treeSearches.set(treeKey, input.value);
+    searchTyping = { key: treeKey, at: input.selectionStart ?? input.value.length };
+    const box = resultsBox(treeKey);
+    if (box) void fillSearch(box, node, repo, treeKey);
+  });
+  input.addEventListener("keyup", () => { searchTyping = { key: treeKey, at: input.selectionStart ?? input.value.length }; });
+  input.addEventListener("blur", () => { if (searchTyping?.key === treeKey && input.isConnected) searchTyping = undefined; });
+  input.addEventListener("keydown", (event) => {
+    // The Enter that ends a Hangul syllable is the IME's, not a pick.
+    if (event.isComposing) return;
+    if (event.key === "Escape") closeSearch(treeKey);
+    else if (event.key === "Enter") resultsBox(treeKey)?.querySelector<HTMLButtonElement>(".fileRow")?.click();
+    else if (event.key === "ArrowDown") resultsBox(treeKey)?.querySelector<HTMLButtonElement>(".fileRow")?.focus();
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  bar.append(back, input);
+  if (searchTyping?.key === treeKey) {
+    const at = searchTyping.at;
+    queueMicrotask(() => {
+      input.focus();
+      input.setSelectionRange(at, at);
+    });
+  }
+  return bar;
+}
+
+/** Where the matches go, under the search bar, filled as the list arrives. */
+function searchResults(node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "fileTree treeSearchResults";
+  box.style.paddingLeft = "18px";
+  box.dataset.treeKey = treeKey;
+  void fillSearch(box, node, repo, treeKey);
+  return box;
+}
+
+async function fillSearch(box: HTMLElement, node: NodeConfig, repo: RepoConfig, treeKey: string): Promise<void> {
+  const query = treeSearches.get(treeKey) ?? "";
+  const note = (text: string) => {
+    const line = document.createElement("div");
+    line.className = "fileNote";
+    line.textContent = text;
+    box.replaceChildren(line);
+  };
+  if (query.trim() === "") return void box.replaceChildren();
+  let list = treeFileLists.get(treeKey);
+  if (!list) {
+    list = cockpit.allFiles(node, repo.path).catch(() => []);
+    treeFileLists.set(treeKey, list);
+  }
+  const pending = setTimeout(() => note(t("rail.loadingFiles")), 150);
+  const files = await list;
+  clearTimeout(pending);
+  // Typed on, or closed, while the list was coming: that later fill answers.
+  if (treeSearches.get(treeKey) !== query || !box.isConnected) return;
+  const hits = treeHits(files, query);
+  // The listing stops at 3000 files (machine.allFiles): say so, rather than "nothing" for what lies past it.
+  const capped = files.length >= 3000;
+  if (hits.length === 0) return note(t(capped ? "files.searchNoneCapped" : "files.searchNone"));
+  const base = repo.path.replace(/\/$/, "");
+  box.replaceChildren(...hits.map((hit) => {
+    const row = document.createElement("button");
+    row.className = "fileRow" + (hit.isDirectory ? "" : " leaf");
+    const icon = document.createElement("img");
+    icon.className = "fileIcon";
+    icon.alt = "";
+    icon.draggable = false;
+    icon.src = `icons/${iconFile(fileIcons, hit.name, hit.isDirectory, false)}`;
+    const label = document.createElement("span");
+    label.className = "fileName";
+    label.textContent = hit.name;
+    const where = document.createElement("span");
+    where.className = "fileWhere";
+    where.textContent = hit.path.includes("/") ? hit.path.slice(0, hit.path.lastIndexOf("/")) : "";
+    row.append(icon, label, where);
+    attachHover(row, () => hit.path);
+    const full = `${base}/${hit.path}`;
+    row.addEventListener("click", () => {
+      if (!hit.isDirectory) return openFileInPane(node, full, hit.name, repo);
+      // A folder: back to the tree, opened down to it.
+      const parts = hit.path.split("/");
+      for (let i = 1; i <= parts.length; i++) openTrees.add(`${node.id}\0${base}/${parts.slice(0, i).join("/")}`);
+      revealKey = `${node.id}\0${full}`;
+      closeSearch(treeKey);
+    });
+    row.addEventListener("keydown", (event) => {
+      const step = event.key === "ArrowDown" ? row.nextElementSibling : event.key === "ArrowUp" ? row.previousElementSibling : undefined;
+      if (step === undefined) return;
+      event.preventDefault();
+      if (step instanceof HTMLElement) step.focus();
+      else if (event.key === "ArrowUp") searchInput(treeKey)?.focus();
+    });
+    return row;
+  }));
+  if (capped) {
+    const more = document.createElement("div");
+    more.className = "fileNote";
+    more.textContent = t("files.searchCapped");
+    box.append(more);
+  }
 }
 
 /**
@@ -455,6 +687,7 @@ const lucide = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   rotateCw: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  gitMerge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
   gitBranchPlus: '<path d="M6 3v12"/><path d="M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M15 6a9 9 0 0 0-9 9"/><path d="M18 15v6"/><path d="M21 18h-6"/>',
   settings: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
 };
@@ -473,6 +706,8 @@ const treeIcons = {
   newFolder: svg('<path d="M8 13.5H2.5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3.6l1.4 1.6h6a1 1 0 0 1 1 1V8"/><path d="M12 10v4.5M9.75 12.25h4.5"/>'),
   refresh: svg('<path d="M13.5 8A5.5 5.5 0 1 1 11.9 4.1"/><path d="M13.5 2v3.5H10"/>'),
   collapse: svg('<rect x="2.5" y="2.5" width="11" height="11" rx="1"/><path d="M5.5 8h5"/>'),
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>'),
+  back: svg('<path d="M13.5 8h-11"/><path d="M6.5 4 2.5 8l4 4"/>'),
 };
 
 /** Asks for a name and makes a folder in `path`, then re-reads it. */
@@ -829,6 +1064,12 @@ ${t("status.shellOnlyHint")}` : ""));
     row.append(branchOff);
   }
 
+  if (wt) {
+    const merge = iconButton("gitMerge", t("worktree.merge"), () => void mergeIntoOriginal(node, repo, true));
+    merge.addEventListener("click", (event) => event.stopPropagation()); // the row itself opens a terminal
+    row.append(merge);
+  }
+
   // Everything else the folder offers -- terminal, files, pin, rename,
   // remove -- is one menu, the same one a right-click opens: one place to
   // look, and room left for the name.
@@ -853,7 +1094,12 @@ ${t("status.shellOnlyHint")}` : ""));
   disclose.addEventListener("click", (event) => {
     event.stopPropagation();
     if (open) openTrees.delete(treeKey);
-    else openTrees.add(treeKey);
+    else {
+      // A project and its worktrees hold the same files: one of their views open at a time, never two alike.
+      const family = repo.worktree?.of ?? repo.id;
+      for (const each of node.repos) if (each.id !== repo.id && (each.id === family || each.worktree?.of === family)) openTrees.delete(`${node.id}\0${each.id}`);
+      openTrees.add(treeKey);
+    }
     renderRail();
   });
   // Chevron first, as in a file explorer and as on the machine's head; the
@@ -861,9 +1107,9 @@ ${t("status.shellOnlyHint")}` : ""));
   row.prepend(disclose);
   row.append(lamp);
   group.append(row);
-  // Both open: the worktrees first, then the files.
+  // The files right under the row they are for, then its worktrees.
+  if (open) group.append(treeBar(node, repo, treeKey), treeSearches.has(treeKey) ? searchResults(node, repo, treeKey) : fileTree(node, repo, repo.path, treeKey));
   if (!wtFolded) for (const each of worktrees) repoRow(group, node, each);
-  if (open) group.append(treeBar(node, repo, treeKey), fileTree(node, repo, repo.path, treeKey));
 }
 
 /**
@@ -917,14 +1163,25 @@ async function worktreeMenu(node: NodeConfig, repo: RepoConfig): Promise<void> {
     "-",
     { id: "remove", label: t("worktree.remove") },
   ]);
-  if (pick === "merge") {
-    const key = sessionKey(node.id, repo.id);
-    // Not under an AI still writing: what it writes next would be left behind.
-    if (sessionStatus(states.get(key), activityOf(key)) === "working") return showToast(t("worktree.busy"), 5000);
-    await worktreeGone(node.id, repo.id, cockpit.mergeWorktree(node.id, repo.id));
-  } else if (pick === "terminal") void activate(node.id, repo.id, true);
+  if (pick === "merge") await mergeIntoOriginal(node, repo, false);
+  else if (pick === "terminal") void activate(node.id, repo.id, true);
   else if (pick === "workflow" && activeView !== "workflow") el<HTMLButtonElement>("openWorkflow").click();
   else if (pick === "remove") await worktreeGone(node.id, repo.id, cockpit.removeWorktree(node.id, repo.id));
+}
+
+/**
+ * 원본에 반영: the worktree's work into its original, then the worktree goes.
+ * Asked first from a one-click button (`ask`); the menu's pick is the asking.
+ */
+async function mergeIntoOriginal(node: NodeConfig, repo: RepoConfig, ask: boolean): Promise<void> {
+  const key = sessionKey(node.id, repo.id);
+  // Not under an AI still writing: what it writes next would be left behind.
+  if (sessionStatus(states.get(key), activityOf(key)) === "working") return showToast(t("worktree.busy"), 5000);
+  const original = node.repos.find((each) => each.id === repo.worktree?.of);
+  if (ask && !(await askHere(t("worktree.mergeAsk", { name: repo.label, original: original?.label ?? "" }), t("worktree.merge")))) return;
+  // It may have started writing while the question was up.
+  if (ask && sessionStatus(states.get(key), activityOf(key)) === "working") return showToast(t("worktree.busy"), 5000);
+  await worktreeGone(node.id, repo.id, cockpit.mergeWorktree(node.id, repo.id));
 }
 
 /** After main merged or removed a worktree: if it went, its tabs and sessions go too. */
@@ -1269,18 +1526,30 @@ function terminalFor(key: string) {
   term.open(element);
   // Addresses a program printed -- a dev server, a pull request -- open with
   // Ctrl+click, as in an editor's terminal: a plain click is for selecting.
+  // A program that breaks a long address over lines -- at the terminal's
+  // edge, or at its own box's side -- still opens it whole (wrapped-url.ts).
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const row = term.buffer.active.getLine(y - 1);
-      const line = row?.translateToString(true) ?? "";
-      const range = cellRange(row, y);
+      const buffer = term.buffer.active;
+      const rowAt = (index: number) => {
+        const row = buffer.getLine(index);
+        if (!row) return undefined;
+        // Up to the last cell with something in it: a wide letter fills two.
+        let cells = row.length;
+        while (cells > 0 && !row.getCell(cells - 1)?.getChars().trim()) cells--;
+        if (cells > 0 && row.getCell(cells - 1)?.getWidth() === 2) cells++;
+        return { text: row.translateToString(true), wrapped: row.isWrapped, cells };
+      };
       const found = findByKey(key);
       const remote = found?.node.kind === "ssh";
-      callback([...line.matchAll(/https?:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]]/g)].map((match) => ({
-        range: range(match.index, match[0].length),
-        text: match[0],
+      callback(urlsAt(rowAt, y - 1, term.cols).map((match) => ({
+        range: {
+          start: cellRange(buffer.getLine(match.parts[0]!.row), match.parts[0]!.row + 1)(match.parts[0]!.index, match.parts[0]!.length).start,
+          end: cellRange(buffer.getLine(match.parts.at(-1)!.row), match.parts.at(-1)!.row + 1)(match.parts.at(-1)!.index, match.parts.at(-1)!.length).end,
+        },
+        text: match.url,
         hover: (event) => {
-          const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(match[0]);
+          const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(match.url);
           showTipAt(remote && local && found ? t("link.openRemote", { machine: machineLabel(found.node) }) : t("link.open"), event);
         },
         leave: () => hideTip(),
@@ -2157,7 +2426,16 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     event.stopPropagation();
     if (project) void addAgentInWorktree(project.node.id, project.repo.id);
   });
-  header.append(branchOff, terminal, zoom, close);
+  const merge = document.createElement("button");
+  merge.className = "paneBtn text paneMerge";
+  merge.append(lucideIcon("gitMerge"), t("worktree.merge"));
+  merge.title = t("worktree.merge");
+  merge.hidden = !project?.repo.worktree;
+  merge.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (project) void mergeIntoOriginal(project.node, project.repo, true);
+  });
+  header.append(merge, branchOff, terminal, zoom, close);
   shell.append(header, strip);
 
   const slot = document.createElement("div");
@@ -2183,6 +2461,15 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
       slot.prepend(bar);
     } else if (note) {
       slot.append(paneMessage(note.text, note.actions));
+    }
+    const auto = autoAnswers.get(key);
+    if (auto && !note) {
+      const bar = document.createElement("div");
+      bar.className = "note paneNotice sessionNote";
+      const time = new Date(auto.at).toLocaleTimeString(currentLocale, { hour: "2-digit", minute: "2-digit" });
+      bar.append(t("auto.note", { time, n: auto.n, option: auto.option }), ...noteButtons([[t("auto.keep"), () => keepWaiting(key)]], false));
+      slot.classList.add("noted");
+      slot.prepend(bar);
     }
   } else {
     slot.append(paneMessage(t("pane.empty"), [[t("guide.open"), () => void openGuide()]], false));
@@ -2675,6 +2962,9 @@ function forgetSessions(matches: (key: string) => boolean): void {
     const timer = previewTimers.get(key);
     if (timer !== undefined) clearTimeout(timer);
     previewTimers.delete(key);
+    clearTimeout(autoAnswers.get(key)?.timer);
+    autoAnswers.delete(key);
+    for (const held of [...autoKept]) if (held.startsWith(`${key}\0`)) autoKept.delete(held);
   }
   // Panes referencing a now-removed session would otherwise resurrect it as
   // a brand-new, blank-labeled terminal on the next render (terminalFor()
@@ -2886,7 +3176,7 @@ el<HTMLInputElement>("pastSearch").addEventListener("input", (event) => {
 el<HTMLButtonElement>("pastCancel").addEventListener("click", () => el<HTMLDialogElement>("pastDialog").close());
 
 /** The picker's agents, in the order their tiles and number keys go. */
-const pickerAgents: readonly AgentKind[] = ["claude", "codex", "grok", "agy", "agent"];
+const pickerAgents: readonly AgentKind[] = ["claude", "codex", "grok", "agy", "agent", "opencode"];
 
 // The tiles are made once: each closes the dialog with its agent, as the
 // plain-terminal button in the footer does with "shell".
@@ -2934,6 +3224,536 @@ const pickerAgents: readonly AgentKind[] = ["claude", "codex", "grok", "agy", "a
   bypass.setAttribute("aria-checked", String(localStorage.getItem("bypassPermissions") === "1"));
 }
 
+// --- D: 여러 AI 비교 ----------------------------------------------------------------
+
+/** One instruction sent to several AIs, each in its own worktree of a folder. Kept per window. */
+interface CompareGroup { nodeId: string; repoId: string; prompt: string; members: Array<{ repoId: string; label: string; llm?: string }> }
+const COMPARE_MAX = 4;
+const compareGroups = (): CompareGroup[] => {
+  try {
+    const kept = JSON.parse(localStorage.getItem("compares") ?? "[]") as CompareGroup[];
+    return Array.isArray(kept) ? kept : [];
+  } catch {
+    return [];
+  }
+};
+const saveCompareGroups = (groups: CompareGroup[]): void => localStorage.setItem("compares", JSON.stringify(groups));
+/** A folder's comparison, its members still on the rail. */
+function compareOf(nodeId: string, repoId: string): CompareGroup | undefined {
+  const node = nodes.find((candidate) => candidate.id === nodeId);
+  const group = compareGroups().find((one) => one.nodeId === nodeId && one.repoId === repoId);
+  if (!group || !node) return undefined;
+  const members = group.members.filter((member) => node.repos.some((repo) => repo.id === member.repoId));
+  return members.length > 0 ? { ...group, members } : undefined;
+}
+
+/** The folder menu's 여러 AI로 비교: its comparison if one is going, else a new one. */
+async function openCompare(nodeId: string, repoId: string, fresh = false): Promise<void> {
+  const going = fresh ? undefined : compareOf(nodeId, repoId);
+  if (going) return openCompareView(going);
+  const dialog = el<HTMLDialogElement>("compareDialog");
+  if (dialog.open) return;
+  const node = nodes.find((candidate) => candidate.id === nodeId);
+  const repo = node?.repos.find((candidate) => candidate.id === repoId);
+  if (!node || !repo) return;
+  el("compareWhere").textContent = `${machineLabel(node)} · ${repo.label}`;
+  const prompt = el<HTMLTextAreaElement>("comparePrompt");
+  prompt.placeholder = t("compare.placeholder");
+  prompt.value = "";
+  el("compareNote").textContent = "";
+  llmSaved = await cockpit.llmList().catch(() => llmSaved);
+  type Choice = { id: string; label: string; agent: AgentKind; llm?: string; logo?: string };
+  const choices: Choice[] = [
+    // The picker's logos are in the page already: their gradients get ids of their own here, or they draw blank.
+    ...pickerAgents.map((kind) => ({ id: kind, label: agents[kind].short, agent: kind, logo: agentLogos[kind].replace(/id="([^"]+)"/g, 'id="$1-cmp"').replace(/url\(#([^)]+)\)/g, "url(#$1-cmp)").replace(/href="#([^"]+)"/g, 'href="#$1-cmp"') })),
+    ...llmSaved.llms.map((llm) => ({ id: `llm:${llm.id}`, label: llm.name, agent: "opencode" as const, llm: llm.id, logo: platformLogos[llm.platform ?? "server"] })),
+  ];
+  const chosen = new Set<string>();
+  const count = () => {
+    el("compareCount").textContent = t("compare.count", { n: chosen.size, max: COMPARE_MAX });
+    el<HTMLButtonElement>("compareStart").disabled = chosen.size < 2;
+  };
+  el("compareTiles").replaceChildren(...choices.map((choice) => {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "exTile";
+    tile.setAttribute("aria-pressed", "false");
+    if (choice.logo) tile.innerHTML = choice.logo;
+    const name = document.createElement("span");
+    name.className = "exName";
+    name.textContent = choice.label;
+    tile.append(name);
+    tile.title = choice.llm ? `${choice.label} (OpenCode)` : choice.label;
+    tile.addEventListener("click", () => {
+      if (chosen.has(choice.id)) chosen.delete(choice.id);
+      else if (chosen.size < COMPARE_MAX) chosen.add(choice.id);
+      else return void (el("compareNote").textContent = t("compare.max", { max: COMPARE_MAX }));
+      el("compareNote").textContent = "";
+      tile.setAttribute("aria-pressed", String(chosen.has(choice.id)));
+      count();
+    });
+    return tile;
+  }));
+  count();
+  el("compareCancel").onclick = () => dialog.close();
+  const started = await new Promise<boolean>((resolve) => {
+    el<HTMLFormElement>("compareForm").onsubmit = (event) => {
+      event.preventDefault();
+      if (chosen.size < 2) return;
+      if (!prompt.value.trim()) return void (el("compareNote").textContent = t("compare.needPrompt"));
+      resolve(true);
+      dialog.close();
+    };
+    dialog.addEventListener("close", () => resolve(false), { once: true });
+    dialog.showModal();
+    prompt.focus();
+  });
+  if (!started) return;
+  // Each AI in a worktree of its own, told the same thing: one line, as typed into its prompt box.
+  const said = prompt.value.replace(/\s*\n\s*/g, " ").trim();
+  const members: CompareGroup["members"] = [];
+  showView("terminal");
+  for (const choice of choices.filter((one) => chosen.has(one.id))) {
+    const made = await cockpit.addWorktree(nodeId, repoId, t("compare.task", { name: choice.label }));
+    if (!made) {
+      showToast(t("compare.failed", { name: choice.label }));
+      continue;
+    }
+    nodes = made.nodes;
+    const key = sessionKey(nodeId, made.repoId);
+    // No room for its pane: that one is not in the comparison, and its empty worktree goes.
+    if (!placeTab(projectOf(key), { kind: "session", key })) {
+      await worktreeGone(nodeId, made.repoId, cockpit.removeWorktree(nodeId, made.repoId));
+      continue;
+    }
+    await cockpit.setFolderLlm(nodeId, made.repoId, choice.llm ?? null).catch(() => undefined);
+    members.push({ repoId: made.repoId, label: choice.label, ...(choice.llm ? { llm: choice.llm } : {}) });
+    setResume(false);
+    await showPlaced(nodeId, made.repoId, false, () => choice.agent, said);
+  }
+  renderRail();
+  if (members.length < 2) {
+    // One alone compares with nothing: it stays as a worktree of its own, said so.
+    if (members.length === 1) showToast(t("compare.tooFew"), 8000);
+    return;
+  }
+  saveCompareGroups([...compareGroups().filter((one) => !(one.nodeId === nodeId && one.repoId === repoId)), { nodeId, repoId, prompt: said, members }]);
+  showToast(t("compare.started", { n: members.length }));
+}
+
+/** The results side by side: what each AI changed, and the one to keep. */
+async function openCompareView(group: CompareGroup): Promise<void> {
+  const dialog = el<HTMLDialogElement>("compareView");
+  const node = nodes.find((candidate) => candidate.id === group.nodeId);
+  const origin = node?.repos.find((candidate) => candidate.id === group.repoId);
+  if (!node || !origin) return;
+  el("compareViewWhere").textContent = `${machineLabel(node)} · ${origin.label}`;
+  el("compareViewPrompt").textContent = group.prompt;
+  el("compareViewPrompt").title = group.prompt;
+  const cols = el("compareCols");
+  cols.style.setProperty("--cols", String(group.members.length));
+  const fill = async () => {
+    cols.replaceChildren(...await Promise.all(group.members.map(async (member) => {
+      const key = sessionKey(group.nodeId, member.repoId);
+      const col = document.createElement("section");
+      col.className = "cmpCol";
+      const head = document.createElement("h3");
+      const lamp = document.createElement("i");
+      lamp.className = "lamp";
+      lamp.dataset.status = sessionStatus(states.get(key), activityOf(key));
+      const name = document.createElement("span");
+      name.textContent = member.label;
+      head.append(lamp, name);
+      const diff = await cockpit.worktreeDiff(group.nodeId, member.repoId).catch(() => null);
+      const stat = document.createElement("div");
+      stat.className = "cmpStat";
+      const list = document.createElement("ul");
+      list.className = "cmpFiles";
+      if (!diff) stat.textContent = t("compare.unknown");
+      else {
+        const add = diff.files.reduce((sum, file) => sum + file.add, 0);
+        const del = diff.files.reduce((sum, file) => sum + file.del, 0);
+        stat.append(t("compare.files", { n: diff.files.length }), " · ");
+        const plus = document.createElement("span");
+        plus.className = "add";
+        plus.textContent = `+${add}`;
+        const minus = document.createElement("span");
+        minus.className = "del";
+        minus.textContent = ` −${del}`;
+        stat.append(plus, minus);
+        list.append(...diff.files.slice(0, 12).map((file) => {
+          const row = document.createElement("li");
+          const path = document.createElement("span");
+          path.textContent = file.path;
+          path.title = file.path;
+          const lines = document.createElement("span");
+          lines.textContent = file.fresh ? t("compare.new") : `+${file.add} −${file.del}`;
+          row.append(path, lines);
+          return row;
+        }));
+        if (diff.files.length > 12) {
+          const more = document.createElement("li");
+          more.textContent = t("compare.more", { n: diff.files.length - 12 });
+          list.append(more);
+        }
+      }
+      const buttons = document.createElement("div");
+      buttons.className = "btns";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.textContent = t("compare.open");
+      open.addEventListener("click", () => {
+        dialog.close();
+        void activate(group.nodeId, member.repoId, false);
+      });
+      const keep = document.createElement("button");
+      keep.type = "button";
+      keep.className = "go";
+      keep.textContent = t("compare.keep");
+      keep.disabled = !diff || diff.files.length === 0;
+      keep.addEventListener("click", () => void keepCompared(group, member, dialog));
+      buttons.append(open, keep);
+      col.append(head, stat, list, buttons);
+      return col;
+    })));
+  };
+  el("compareRefresh").onclick = () => void fill();
+  el("compareViewClose").onclick = () => dialog.close();
+  el("compareAgain").onclick = () => {
+    dialog.close();
+    void openCompare(group.nodeId, group.repoId, true);
+  };
+  if (!dialog.open) dialog.showModal();
+  await fill();
+}
+
+/** 이걸로 반영: that one goes into the folder, the others are taken away, after asking. */
+async function keepCompared(group: CompareGroup, member: CompareGroup["members"][number], dialog: HTMLDialogElement): Promise<void> {
+  // At work or asking (a permission, a question): its turn is not over, whichever one it is.
+  const busy = group.members.find((one) => ["working", "waiting"].includes(sessionStatus(states.get(sessionKey(group.nodeId, one.repoId)), activityOf(sessionKey(group.nodeId, one.repoId)))));
+  if (busy) return showToast(t("compare.busy", { name: busy.label }), 6000);
+  if (!(await askHere(t("compare.keepAsk", { name: member.label }), t("compare.keep"), t("compare.keepDetail", { n: group.members.length - 1 })))) return;
+  dialog.close();
+  const exists = (repoId: string) => nodes.find((node) => node.id === group.nodeId)?.repos.some((repo) => repo.id === repoId) === true;
+  await worktreeGone(group.nodeId, member.repoId, cockpit.mergeWorktree(group.nodeId, member.repoId));
+  // Not merged (a conflict, a refusal: main said why): the others stay, as does the comparison.
+  if (exists(member.repoId)) return showToast(t("compare.notKept", { name: member.label }), 8000);
+  for (const other of group.members.filter((one) => one.repoId !== member.repoId)) {
+    await worktreeGone(group.nodeId, other.repoId, cockpit.removeWorktree(group.nodeId, other.repoId));
+  }
+  // One kept back at main's own question stays in the comparison.
+  const left = group.members.filter((one) => one.repoId !== member.repoId && exists(one.repoId));
+  saveCompareGroups([...compareGroups().filter((one) => !(one.nodeId === group.nodeId && one.repoId === group.repoId)), ...(left.length > 0 ? [{ ...group, members: left }] : [])]);
+  showToast(t("compare.kept", { name: member.label }));
+}
+
+// --- 내 LLM (main/llm-host.ts) ---------------------------------------------------
+
+let llmSaved: LlmSaved = { llms: [], folders: {}, keys: [] };
+
+/**
+ * The picker's 내 LLM row, for the PC this folder is on: a chip per
+ * connection with its platform's mark, lit while it can work there, its
+ * edit, and the way to add one. `key`: the folder whose own connection takes
+ * the focus, when its last pick was OpenCode.
+ */
+async function renderLlms(nodeId: string, key?: string): Promise<void> {
+  llmSaved = await cockpit.llmList().catch(() => llmSaved);
+  const row = el("executorLlms");
+  row.setAttribute("aria-label", t("llm.group"));
+  const items = llmSaved.llms.map((llm) => {
+    const item = document.createElement("span");
+    item.className = "llmItem";
+    const pick = document.createElement("button");
+    pick.className = "llmPick";
+    pick.value = `llm:${llm.id}`;
+    pick.innerHTML = platformLogos[llm.platform ?? "server"];
+    const dot = document.createElement("i");
+    dot.className = "llmDot";
+    const name = document.createElement("span");
+    name.textContent = llm.name;
+    const model = document.createElement("small");
+    model.textContent = llm.model;
+    pick.append(dot, name, model);
+    pick.title = `${llm.model} · ${llm.platform ? LLM_PLATFORMS[llm.platform].label : llm.tunnel ? t("llm.wayTunnel") : llm.baseUrl}`;
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "llmEdit";
+    edit.textContent = "✎";
+    edit.title = t("llm.edit");
+    edit.setAttribute("aria-label", `${t("llm.edit")} · ${llm.name}`);
+    edit.addEventListener("click", () => void openLlmDialog(nodeId, llm));
+    item.append(pick, edit);
+    void cockpit.llmUp(nodeId, llm.id).then((state) => {
+      item.classList.add(state);
+      if (state === "up") return;
+      pick.disabled = true;
+      pick.title = `${pick.title}\n${t(`llm.${state}`)}`;
+    }, () => undefined);
+    return item;
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "pickRow";
+  add.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+  const text = document.createElement("span");
+  text.className = "pickRowText";
+  const title = document.createElement("span");
+  title.textContent = t("llm.add");
+  const hint = document.createElement("small");
+  hint.textContent = t("llm.addHint");
+  text.append(title, hint);
+  add.append(text);
+  add.addEventListener("click", () => void openLlmDialog(nodeId));
+  row.replaceChildren(...items, add);
+  const mine = key === undefined ? undefined : llmSaved.folders[key];
+  const last: Record<string, Executor> = JSON.parse(localStorage.getItem("lastExecutors") ?? "{}");
+  if (mine && key !== undefined && last[key] === "opencode") row.querySelector<HTMLButtonElement>(`button[value="llm:${mine}"]`)?.focus();
+}
+
+/** "http://192.168.0.5:11434/v1" → "192.168.0.5", for a name to start from. */
+const llmHost = (address: string): string => address.replace(/^https?:\/\//, "").replace(/^\[([^\]]+)\].*$/, "$1").split(/[:/]/)[0] ?? address;
+
+/**
+ * Registers a 내 LLM connection, or edits one. First where the model is: a
+ * server of one's own (a network address, found at the usual ports or typed;
+ * or a tunnel to a PC registered over SSH, whose models are asked from the PC
+ * the session would run on) or an API platform. Then a key from 내 API 키 --
+ * one pasted here goes there too -- the model, and a name.
+ */
+async function openLlmDialog(nodeId: string, existing?: LocalLlm): Promise<void> {
+  const dialog = el<HTMLDialogElement>("llmDialog");
+  if (dialog.open) return;
+  llmSaved = await cockpit.llmList().catch(() => llmSaved);
+  const node = nodes.find((candidate) => candidate.id === nodeId);
+  el("llmWhere").textContent = node ? machineLabel(node) : "";
+  const address = el<HTMLInputElement>("llmAddress");
+  const port = el<HTMLInputElement>("llmTunnelPort");
+  const pcs = el<HTMLSelectElement>("llmTunnelPc");
+  const model = el<HTMLSelectElement>("llmModel");
+  const name = el<HTMLInputElement>("llmName");
+  const note = el("llmNote");
+  const found = el("llmFound");
+  const keySelect = el<HTMLSelectElement>("llmKey");
+  const keyInput = el<HTMLInputElement>("llmKeyInput");
+  const keyLink = el("llmKeyLink");
+  const search = el<HTMLInputElement>("llmModelSearch");
+  const choices = el("llmModelList");
+  const light = el("llmLight");
+  const sshNodes = nodes.filter((candidate) => candidate.kind === "ssh");
+  pcs.replaceChildren(...sshNodes.map((candidate) => new Option(machineLabel(candidate), candidate.id)));
+  pcs.setAttribute("aria-label", t("llm.tunnelPc"));
+  model.setAttribute("aria-label", t("llm.model"));
+  keySelect.setAttribute("aria-label", t("llm.key"));
+  keyInput.placeholder = t("keys.paste");
+  keyInput.setAttribute("aria-label", t("keys.paste"));
+  search.placeholder = t("llm.modelSearch");
+  search.setAttribute("aria-label", t("llm.model"));
+  // Where the model is: a server of one's own, or one of the platforms.
+  let platform: LlmPlatform | undefined;
+  /** The models the platform listed for this key: the only ones a save takes. */
+  let listed: string[] = [];
+  const NEW = "new";
+  let modelsAsked = 0;
+  const loadModels = async () => {
+    const asking = ++modelsAsked;
+    const on = platform;
+    listed = [];
+    choices.replaceChildren();
+    if (!on || !keySelect.value || keySelect.value === NEW) return;
+    note.textContent = t("llm.checking");
+    const got = await cockpit.llmPlatformModels(on, keySelect.value).catch(() => undefined);
+    if (asking !== modelsAsked) return;
+    if (!Array.isArray(got)) {
+      note.textContent = t(got === "refused" ? "keys.refused" : got === "nokey" ? "llm.nokey" : "llm.noAnswerApi");
+      return;
+    }
+    listed = got;
+    choices.replaceChildren(...got.map((one) => Object.assign(document.createElement("option"), { value: one })));
+    note.textContent = t("llm.models", { n: got.length });
+  };
+  const syncKey = () => {
+    el("llmNewKey").hidden = keySelect.value !== NEW;
+    if (keySelect.value === NEW && dialog.open) keyInput.focus();
+    void loadModels();
+  };
+  /** The keys made for where the model is; a platform's own first, else "new". */
+  const fillKeys = (pick?: string) => {
+    const mine = llmSaved.keys.filter((one) => one.platform === (platform ?? "server"));
+    keySelect.replaceChildren(
+      ...(platform ? [] : [new Option(t("llm.keyNone"), "")]),
+      ...mine.map((one) => new Option(`${one.label} · ${one.hint}`, one.id)),
+      new Option(t("llm.keyNew"), NEW),
+    );
+    keySelect.value = pick !== undefined && mine.some((one) => one.id === pick) ? pick : platform ? mine[0]?.id ?? NEW : "";
+    syncKey();
+  };
+  const tiles = (["server", ...Object.keys(LLM_PLATFORMS)] as Array<LlmPlatform | "server">).map((id) => {
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "exTile";
+    tile.value = id;
+    tile.innerHTML = platformLogos[id];
+    const label = document.createElement("span");
+    label.className = "exName";
+    label.textContent = id === "server" ? t("llm.server") : LLM_PLATFORMS[id].label;
+    tile.append(label);
+    tile.addEventListener("click", () => setPlatform(id === "server" ? undefined : id));
+    return tile;
+  });
+  const setPlatform = (next: LlmPlatform | undefined) => {
+    platform = next;
+    for (const tile of tiles) tile.setAttribute("aria-pressed", String(tile.value === (next ?? "server")));
+    el("llmServerPart").hidden = next !== undefined;
+    el("llmServerModel").hidden = next !== undefined;
+    el("llmHelp").hidden = next !== undefined;
+    el("llmApiModel").hidden = next === undefined;
+    keyLink.hidden = next === undefined;
+    found.replaceChildren();
+    note.textContent = "";
+    search.value = existing && existing.platform === next ? existing.model : "";
+    fillKeys(existing && existing.platform === next ? existing.keyId : undefined);
+  };
+  el("llmPlatforms").replaceChildren(...tiles);
+  el("llmPlatforms").setAttribute("aria-label", t("llm.where"));
+  keyLink.onclick = (event) => {
+    event.preventDefault();
+    if (platform) void cockpit.openLink("", LLM_PLATFORMS[platform].keys);
+  };
+  keySelect.onchange = syncKey;
+  /** Keeps the pasted key and picks it; false when it was not kept, and the note says why. */
+  const addKey = async (): Promise<boolean> => {
+    note.textContent = t("llm.checking");
+    let made = await cockpit.llmKeyAdd(platform ?? "server", "", keyInput.value).catch(() => "invalid" as const);
+    if (made === "nototp") {
+      note.textContent = t("keys.nototp");
+      if (!(await setupTwoFactor())) return false;
+      made = await cockpit.llmKeyAdd(platform ?? "server", "", keyInput.value).catch(() => "invalid" as const);
+    }
+    if (typeof made === "string") {
+      note.textContent = t(`keys.${made}`);
+      return false;
+    }
+    keyInput.value = "";
+    llmSaved = await cockpit.llmList().catch(() => llmSaved);
+    fillKeys(made.id);
+    return true;
+  };
+  el("llmKeyAddButton").onclick = () => void addKey();
+  light.setAttribute("aria-checked", String(existing?.light === true));
+  light.onclick = () => light.setAttribute("aria-checked", String(light.getAttribute("aria-checked") !== "true"));
+
+  let tunnel = existing?.tunnel !== undefined;
+  const setWay = (next: boolean) => {
+    tunnel = next;
+    el("llmWayNet").setAttribute("aria-pressed", String(!next));
+    el("llmWayTunnel").setAttribute("aria-pressed", String(next));
+    el("llmNetRow").hidden = next;
+    el("llmTunnelRow").hidden = !next;
+    found.replaceChildren();
+    note.textContent = next && sshNodes.length === 0 ? t("llm.tunnelNone") : "";
+  };
+  el("llmWayNet").onclick = () => setWay(false);
+  el("llmWayTunnel").onclick = () => setWay(true);
+  address.value = existing && !existing.platform && !existing.tunnel ? existing.baseUrl : "";
+  if (existing?.tunnel) {
+    pcs.value = existing.tunnel.nodeId;
+    port.value = String(existing.tunnel.port);
+  }
+  model.replaceChildren(...(existing && !existing.platform ? [new Option(existing.model, existing.model)] : []));
+  name.value = existing?.name ?? "";
+  name.placeholder = t("llm.namePlaceholder");
+  el("llmRemoveButton").hidden = !existing;
+  setWay(tunnel);
+  setPlatform(existing?.platform);
+  const serverKey = () => (!platform && keySelect.value && keySelect.value !== NEW ? keySelect.value : undefined);
+  const target = (): { address: string; tunnel?: { nodeId: string; port: number } } =>
+    tunnel ? { address: `http://127.0.0.1:${port.value}`, tunnel: { nodeId: pcs.value, port: Number(port.value) } } : { address: address.value };
+  const check = async () => {
+    note.textContent = t("llm.checking");
+    const asked = target();
+    const list = await cockpit.llmModels(nodeId, asked.address, asked.tunnel, serverKey()).catch(() => undefined);
+    if (!list) {
+      note.textContent = t("llm.noAnswer");
+      return;
+    }
+    if (list.length === 0) {
+      note.textContent = t("llm.noModels");
+      return;
+    }
+    const kept = model.value;
+    model.replaceChildren(...list.map((one) => new Option(one, one)));
+    if (list.includes(kept)) model.value = kept;
+    note.textContent = t("llm.models", { n: list.length });
+    if (!name.value.trim()) name.value = `${tunnel ? pcs.selectedOptions[0]?.text ?? "" : llmHost(asked.address)} · ${model.value}`;
+  };
+  el("llmCheck").onclick = () => void check();
+  el("llmFindButton").onclick = async () => {
+    note.textContent = t("llm.finding");
+    found.replaceChildren();
+    const list = await cockpit.llmFind(nodeId).catch(() => []);
+    note.textContent = list.length ? "" : t("llm.foundNone");
+    found.replaceChildren(...list.map((one) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "listRow";
+      const text = document.createElement("span");
+      text.className = "rowText";
+      const where = document.createElement("b");
+      where.textContent = one.baseUrl;
+      const what = document.createElement("span");
+      what.className = "sub";
+      what.textContent = `${t("llm.foundModels", { n: one.models.length })} · ${one.models.slice(0, 3).join(", ")}`;
+      text.append(where, what);
+      row.append(text);
+      row.addEventListener("click", () => {
+        address.value = one.baseUrl;
+        found.replaceChildren();
+        void check();
+      });
+      return row;
+    }));
+  };
+  el("llmCancel").onclick = () => dialog.close();
+  el("llmRemoveButton").onclick = async () => {
+    if (existing) await cockpit.llmRemove(existing.id).catch(() => undefined);
+    dialog.close();
+  };
+  el<HTMLFormElement>("llmForm").onsubmit = async (event) => {
+    event.preventDefault();
+    // A key pasted and not yet saved is saved first, not quietly left out.
+    if (keySelect.value === NEW && keyInput.value.trim() && !(await addKey())) return;
+    if (platform && keySelect.value !== NEW && listed.length === 0) await loadModels();
+    const keep = { ...(existing ? { id: existing.id } : {}), ...(light.getAttribute("aria-checked") === "true" ? { light: true as const } : {}) };
+    let wanted: Partial<LocalLlm>;
+    if (platform) {
+      const chosen = search.value.trim();
+      // Only a model the platform listed for this key; one kept from before stays as it is.
+      if (!listed.includes(chosen) && !(existing?.platform === platform && chosen === existing.model)) {
+        note.textContent = t(keySelect.value === NEW ? "llm.keyFirst" : "llm.pickModel");
+        return;
+      }
+      wanted = { ...keep, platform, baseUrl: "", model: chosen, keyId: keySelect.value, name: name.value.trim() || `${LLM_PLATFORMS[platform].label} · ${chosen}` };
+    } else {
+      const asked = target();
+      const keyId = serverKey();
+      wanted = { ...keep, name: name.value, baseUrl: asked.address, model: model.value, ...(asked.tunnel ? { tunnel: asked.tunnel } : {}), ...(keyId ? { keyId } : {}) };
+    }
+    const saved = await cockpit.llmSave(wanted).catch(() => "invalid" as const);
+    if (saved === "invalid") {
+      note.textContent = t("llm.invalid");
+      return;
+    }
+    dialog.close();
+  };
+  await new Promise<void>((resolve) => {
+    dialog.addEventListener("close", () => resolve(), { once: true });
+    dialog.showModal();
+    (existing ? name : tiles[0]!).focus();
+  });
+  if (el<HTMLDialogElement>("executorDialog").open) await renderLlms(nodeId);
+}
+
 /** In worktree mode with bypass on, the AI may change the original folder too: said beside the switch. */
 function syncBypassNote(): void {
   el("executorBypassNote").hidden = el("executorWorktree").hidden || el("executorModeAdd").getAttribute("aria-pressed") !== "true" ||
@@ -2941,7 +3761,7 @@ function syncBypassNote(): void {
 }
 
 /** What the picker's worktree mode asked: change the AI in place, or add one in a worktree named `task`. */
-let worktreePicked: { mode: "change" | "add"; task: string; carry?: AgentKind; /** Another AI picked to carry on: told a summary of this one's conversation. */ handoff?: true } | undefined;
+let worktreePicked: { mode: "change" | "add"; task: string; carry?: AgentKind; /** Another AI picked to carry on: told a summary of this one's conversation. */ handoff?: true; /** A 내 LLM connection picked for the new worktree's OpenCode. */ llm?: string } | undefined;
 
 function setResume(on: boolean): void {
   el("executorResume").setAttribute("aria-pressed", String(on));
@@ -2969,6 +3789,15 @@ function markMissingAgents(nodeId: string): void {
     if (!el<HTMLDialogElement>("executorDialog").open) return;
     for (const account of accounts) {
       if (account.unknown || account.version !== undefined) continue;
+      // 내 LLM runs in OpenCode: picking one where it is missing offers to install it, as its tile does.
+      if (account.kind === "opencode") {
+        for (const pick of el("executorLlms").querySelectorAll<HTMLButtonElement>(".llmPick")) {
+          const why = document.createElement("small");
+          why.className = "llmWhy";
+          why.textContent = t("llm.missing");
+          pick.append(why);
+        }
+      }
       const tile = el("executorTiles").querySelector<HTMLButtonElement>(`.exTile[value="${account.kind}"]`);
       if (!tile || tile.classList.contains("missing")) continue;
       tile.classList.add("missing");
@@ -2991,6 +3820,7 @@ function chooseExecutor(nodeId: string, repoId: string, worktree = false, startM
   const node = nodes.find((candidate) => candidate.id === nodeId);
   el("executorTitle").textContent = node?.repos.find((repo) => repo.id === repoId)?.label ?? "";
   el("executorWhere").textContent = node ? machineLabel(node) : "";
+  void renderLlms(nodeId, sessionKey(nodeId, repoId)).then(() => markMissingAgents(nodeId));
   markMissingAgents(nodeId);
   // On each time: picking up where the folder left off is what an operator
   // reaching for a folder usually wants; a fresh start is one click away.
@@ -3046,19 +3876,24 @@ function chooseExecutor(nodeId: string, repoId: string, worktree = false, startM
       dialog.removeEventListener("focusin", syncResume);
       resumeRow.hidden = false;
       const choice = dialog.returnValue;
-      const picked: Executor | undefined = choice === "shell" || isAgentKind(choice) ? choice : undefined;
+      // 내 LLM is OpenCode on that model (main/llm-host.ts): the folder is told which before it opens.
+      const llm = choice.startsWith("llm:") ? choice.slice(4) : undefined;
+      const picked: Executor | undefined = llm ? "opencode" : choice === "shell" || isAgentKind(choice) ? choice : undefined;
       // A pick for a new worktree is not this folder's own.
       if (picked && !(worktree && mode === "add")) localStorage.setItem("lastExecutors", JSON.stringify({ ...last, [key]: picked }));
       if (worktree && picked) {
         const continuing = resumeButton.getAttribute("aria-pressed") === "true";
         const carrying = mode === "add" && picked === carry && continuing;
         const handoff = continuing && isAgentKind(picked) && picked !== carry;
-        worktreePicked = { mode, task: task.value.trim() || defaultTask, ...(carrying ? { carry } : {}), ...(handoff ? { handoff: true as const } : {}) };
+        worktreePicked = { mode, task: task.value.trim() || defaultTask, ...(carrying ? { carry } : {}), ...(handoff ? { handoff: true as const } : {}), ...(llm ? { llm } : {}) };
       }
       // Back to the plain picker for the next opening.
       el("executorWorktree").hidden = true;
+      const adding = worktree && mode === "add";
       setMode("change");
-      resolve(picked);
+      // Any AI picked for this folder says which model its OpenCode uses: a 내 LLM connection's, or its own choice.
+      const assigned = picked && picked !== "shell" && !adding ? cockpit.setFolderLlm(nodeId, repoId, llm ?? null).catch(() => undefined) : Promise.resolve();
+      void assigned.then(() => resolve(picked));
     }, { once: true });
     dialog.showModal();
     dialog.querySelector<HTMLButtonElement>(`button[value="${preferred}"]`)?.focus();
@@ -3221,6 +4056,7 @@ async function addAgentInWorktree(nodeId: string, repoId: string, startMode: "ch
   const made = await cockpit.addWorktree(nodeId, repoId, pick.task, pick.carry);
   if (!made) return;
   nodes = made.nodes;
+  await cockpit.setFolderLlm(nodeId, made.repoId, pick.llm ?? null).catch(() => undefined);
   if (pick.carry && !made.resume) showToast(t("worktree.freshNote"), 6000);
   const key = sessionKey(nodeId, made.repoId);
   showView("terminal");
@@ -3425,9 +4261,9 @@ function questionOf(key: string): Question | undefined {
   const rows: Array<{ text: string; wrapped: boolean }> = [];
   for (let y = Math.max(0, buffer.length - 60); y < buffer.length; y++) {
     const line = buffer.getLine(y);
-    if (line) rows.push({ text: line.translateToString(true), wrapped: line.isWrapped });
+    if (line) rows.push({ text: line.translateToString(true), wrapped: buffer.type === "normal" && line.isWrapped });
   }
-  const lines = reflow(rows);
+  const lines = withoutSidebar(reflow(rows));
   const options = menuFrom(lines);
   if (!options) return undefined;
   const bare = (line: string) => line.replace(/^\s*[│┃║]/, "").replace(/[│┃║]\s*$/, "").trim();
@@ -5012,6 +5848,7 @@ cockpit.onRepoAction(async (action, nodeId, repoId) => {
   if (!node || !repo) return;
   if (action === "terminal") return void activate(node.id, repo.id, true);
   if (action === "worktree") return void addAgentInWorktree(node.id, repo.id);
+  if (action === "compare") return void openCompare(node.id, repo.id);
   if (action === "pin") return togglePin(node.id, repo.id);
   // A remote agent sees this label, not the folder name.
   if (action === "rename") return openRenameDialog({ kind: "repo", node, repo });
@@ -5143,16 +5980,16 @@ const askDialog = el<HTMLDialogElement>("askDialog");
 const askQueue: Array<DialogRequest & { settle?: (index: number) => void }> = [];
 
 /** The page's own question, in the same dialog as main's: the pressed button's index, or cancelId on Esc. */
-function askChoice(message: string, buttons: string[], cancelId: number): Promise<number> {
+function askChoice(message: string, buttons: string[], cancelId: number, detail?: string): Promise<number> {
   return new Promise((settle) => {
-    askQueue.push({ requestId: "", type: "question", message, buttons, defaultId: 0, cancelId, settle });
+    askQueue.push({ requestId: "", type: "question", message, buttons, defaultId: 0, cancelId, settle, ...(detail ? { detail } : {}) });
     showNextAsk();
   });
 }
 
 /** The page's own yes/no: true on the action. */
-async function askHere(message: string, action: string): Promise<boolean> {
-  return (await askChoice(message, [action, t("common.cancel")], 1)) === 0;
+async function askHere(message: string, action: string, detail?: string): Promise<boolean> {
+  return (await askChoice(message, [action, t("common.cancel")], 1, detail)) === 0;
 }
 
 function showNextAsk(): void {
@@ -5204,7 +6041,28 @@ function applyStaticText(): void {
   }
   settingsButton.title = t("settings.title");
   document.documentElement.lang = currentLocale;
+  fitRailTabs();
 }
+
+const railTabs = document.querySelector<HTMLElement>(".railTabs");
+/**
+ * The rail's 공유 맵 and 워크플로우: words beside their icons while both fit on
+ * one line, icons alone once a word would wrap and break the button's shape
+ * (the word then in the tooltip). The folded rail hides them (index.html).
+ */
+function fitRailTabs(): void {
+  if (!railTabs) return;
+  railTabs.classList.remove("iconOnly");
+  const tabs = [...railTabs.querySelectorAll<HTMLElement>(".railTab")];
+  const iconOnly = tabs.some((tab) => tab.scrollWidth > tab.clientWidth);
+  railTabs.classList.toggle("iconOnly", iconOnly);
+  for (const tab of tabs) {
+    const label = tab.querySelector<HTMLElement>("[data-i18n]")?.textContent ?? "";
+    tab.setAttribute("aria-label", label);
+    tab.title = iconOnly ? label : "";
+  }
+}
+if (railTabs) new ResizeObserver(fitRailTabs).observe(railTabs);
 
 type Theme = "dark" | "light";
 
@@ -5398,6 +6256,7 @@ initSettings({
   unpairPhone: () => void unpairPhone(),
   phoneSetupStep: () => (phoneView ? firstUnfinished(setupFacts(phoneView)) : "password"),
   phoneSetup: (what) => void phoneSetup(what),
+  setupTwoFactor,
 });
 
 const savedLocale = localStorage.getItem("locale");
@@ -5515,8 +6374,8 @@ function paintUsage(): void {
   usageToggle.title = t(usageShown ? "usage.hide" : "usage.show");
 }
 
-/** Folders told their AI's limit is nearly spent: the note, and the reset it told of. */
-const limitNoted = new Map<string, { note: NonNullable<ReturnType<typeof sessionNotes.get>>; resetsAt?: number }>();
+/** Folders told their AI's limit is nearly spent or hit: the note, and the reset it told of. */
+const limitNoted = new Map<string, { note: NonNullable<ReturnType<typeof sessionNotes.get>>; resetsAt?: number; hit: boolean }>();
 /** Closed by hand: not told again before that reset. */
 const limitClosed = new Map<string, number | undefined>();
 
@@ -5531,14 +6390,18 @@ function noteLimits(): void {
   for (const [key, state] of states) {
     const agent = sessionExecutors.get(key);
     const found = findByKey(key);
-    const spent = state.kind === "ready" && found && isAgentKind(agent)
+    const running = state.kind === "ready" && found !== undefined && isAgentKind(agent);
+    const spent = running
       ? usageRows.find((row) => row.agent === agent)?.windows.find(({ window }) => window.usedPercent >= 95)?.window
       : undefined;
+    // The agent's own words on its screen (limitOnScreen): hit, whatever the last reading said.
+    const hit = running && sessionMeta.get(key)?.limited === true;
+    const resetsAt = spent?.resetsAt;
     // Only while the note up is this one: a reconnect clears notes, another can take its place.
     const mine = limitNoted.get(key);
     const ours = mine !== undefined && sessionNotes.get(key) === mine.note;
     if (mine && !ours) limitNoted.delete(key);
-    if (!spent || !found || (limitClosed.has(key) && limitClosed.get(key) === spent.resetsAt)) {
+    if ((!spent && !hit) || !found || (limitClosed.has(key) && limitClosed.get(key) === resetsAt)) {
       if (ours) {
         limitNoted.delete(key);
         sessionNotes.delete(key);
@@ -5547,21 +6410,22 @@ function noteLimits(): void {
       continue;
     }
     // Another note (an install, a reconnect) says something more pressing.
-    if ((!ours && sessionNotes.has(key)) || (ours && mine.resetsAt === spent.resetsAt)) continue;
-    const reset = spent.resetsAt ? ` · ${t("limit.reset", { time: formatDate(spent.resetsAt * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" }) })}` : "";
+    if ((!ours && sessionNotes.has(key)) || (ours && mine.resetsAt === resetsAt && mine.hit === hit)) continue;
     const { node, repo } = found;
+    const short = agents[agent as AgentKind].short;
+    const reset = resetsAt ? ` · ${t("limit.reset", { time: formatDate(resetsAt * 1000, { weekday: "short", hour: "numeric", minute: "2-digit" }) })}` : "";
     const note: NonNullable<ReturnType<typeof sessionNotes.get>> = {
-      text: `${t("limit.near", { agent: agents[agent as AgentKind].short, used: Math.round(spent.usedPercent) })}${reset}`,
+      text: `${spent ? t("limit.near", { agent: short, used: Math.round(spent.usedPercent) }) : t("limit.hit", { agent: short })}${reset}`,
       actions: [
         [t("limit.switch"), () => void addAgentInWorktree(node.id, repo.id, "change")],
         [t("common.close"), () => {
-          limitClosed.set(key, spent.resetsAt);
+          limitClosed.set(key, resetsAt);
           noteLimits();
         }],
       ],
     };
     sessionNotes.set(key, note);
-    limitNoted.set(key, { note, resetsAt: spent.resetsAt });
+    limitNoted.set(key, { note, resetsAt, hit });
     changed = true;
   }
   if (changed) renderPanes();
@@ -5692,7 +6556,8 @@ function snapshotSessions(told = true): PhoneSession[] {
     const activity = activityOf(key);
     const status = sessionStatus(state, activity);
     const turn = turnMark(state, activity);
-    const preview = sessionMeta.get(key)?.preview;
+    const meta = sessionMeta.get(key);
+    const preview = meta?.preview;
     const pane = panes.get(key);
     // From the workflow reads already cached (the workflow map's); none are made for this.
     const cached = workflowFetches.get(key)?.result;
@@ -5704,6 +6569,8 @@ function snapshotSessions(told = true): PhoneSession[] {
       ...(original ? { worktreeOf: original.label, worktree: found.repo.label } : {}),
       key, nodeId: found.node.id, repoId: found.repo.id, terminal: found.terminal,
       pc: machineLabel(found.node), folder: found.repo.label, ...(status === "shellOnly" ? { mood: "done" as const, agentGone: true } : { mood: status }), ...(turn ? { turn } : {}), ...(preview === undefined ? {} : { preview }), ...(pane ? { pane } : {}),
+      ...(status === "waiting" && meta?.asks ? { asks: meta.asks } : {}), ...(meta?.limited ? { limited: true as const } : {}),
+      ...(autoAnswers.has(key) ? { auto: { at: autoAnswers.get(key)!.at, n: autoAnswers.get(key)!.n, option: autoAnswers.get(key)!.option } } : {}),
       ...(steps.length > 0 ? { steps } : {}), ...summary,
     }];
   });
@@ -5792,11 +6659,14 @@ function slideSteps(leaving: HTMLElement, at: { left: number; top: number; width
 /** Puts one step on screen, doing what it needs first: its key, or its pairing. */
 async function setupEnter(step: SetupStep): Promise<void> {
   setupWipe();
-  const showKey = step === "totp" && (setupKeyAsked || !phoneView!.totpReady);
+  let showKey = step === "totp" && (setupKeyAsked || !phoneView!.totpReady);
   if (showKey) {
+    // A confirmed key is not shown again (phone-host): its step says it is done.
     const totp = await cockpit.phoneTotp(false);
-    el<HTMLImageElement>("setupTotpQr").src = totp.qr;
-    el<HTMLElement>("setupTotpKey").textContent = keyInGroups(totp.secret);
+    if (totp) {
+      el<HTMLImageElement>("setupTotpQr").src = totp.qr;
+      el<HTMLElement>("setupTotpKey").textContent = keyInGroups(totp.secret);
+    } else showKey = false;
   }
   if (step === "app") {
     el<HTMLImageElement>("setupAppQr").src = await cockpit.phoneQr(APP_PAGE);
@@ -5880,6 +6750,18 @@ async function phoneSetup(what: "walk" | "password" | "key" | "renew"): Promise<
   setupGuided = what === "walk";
   setupKeyAsked = what === "key";
   await setupEnter(what === "walk" ? firstUnfinished(setupFacts(phoneView!)) : what === "password" ? "password" : "totp");
+}
+/**
+ * The Authenticator for 내 API 키: the phone's own step, so a key set up here
+ * is the phone's too and the phone walk skips it. True once it is set up.
+ */
+async function setupTwoFactor(): Promise<boolean> {
+  const done = new Promise<void>((resolve) => relayDialog.addEventListener("close", () => resolve(), { once: true }));
+  await phoneSetup("key");
+  await done;
+  const view = await cockpit.phoneSettings();
+  paintPhone(view);
+  return view.totpReady;
 }
 const setupNext = el<HTMLButtonElement>("setupNext");
 setupNext.addEventListener("click", () => {
@@ -6038,38 +6920,39 @@ cockpit.onPhoneReconnect((nodeId) => {
 });
 
 // The phone's terminal tab, for a folder whose plain terminal is not open: the rail's "터미널 열기".
+cockpit.onPhoneAutoKeep((key) => keepWaiting(key));
 cockpit.onPhoneTerminal((nodeId, repoId) => {
   if (findByKey(sessionKey(nodeId, repoId, true))) void openQuietly(nodeId, repoId, true);
+});
+// A session the phone closed: main has ended it already.
+cockpit.onPhoneForgot((key) => {
+  forgetSessions((candidate) => candidate === key);
+  saveLayout();
+  renderRail();
 });
 // A closed folder tapped on the phone: its AI, the one last used there (else the PC's), carrying on its last conversation. No question: nobody may be at the PC to answer it.
 cockpit.onPhoneOpen((nodeId, repoId) => {
   if (findByKey(sessionKey(nodeId, repoId))) void openQuietly(nodeId, repoId, false);
 });
 
+/** The size a session the phone opens is drawn at until a pane shows it. */
+const PHONE_COLS = 120, PHONE_ROWS = 36;
+
 /**
- * What the phone opens on the PC (a folder's terminal, or its AI), behind
- * whatever is in front: the tab joins its project's pane (sized there), then
- * every pane shows and focuses what it did before, so someone at the PC is not interrupted.
+ * What the phone opens on the PC (a folder's terminal, or its AI): in the
+ * background, as a session with no pane, so it takes no place on the screen
+ * and someone at the PC is not interrupted. The rail lists it; a click shows it.
  */
 async function openQuietly(nodeId: string, repoId: string, terminal: boolean): Promise<void> {
   const key = sessionKey(nodeId, repoId, terminal);
   const last: Record<string, Executor> = JSON.parse(localStorage.getItem("lastExecutors") ?? "{}");
   const executor: Executor = terminal ? "shell" : last[key] ?? nodes.find((node) => node.id === nodeId)?.agent ?? "claude";
   if (sessionRunning(key)) return;
-  const shown = new Map(workspace.leaves().map((leaf) => [leaf.id, leaf.active]));
-  const focused = workspace.focused, active = activeKey;
-  if (!placeTab(projectOf(key), { kind: "session", key })) return;
+  // A pane's usual size, not a parked terminal's 80x24: an agent draws its screen for it. One a pane shows keeps that pane's.
+  const shown = workspace.leaves().some((leaf) => leaf.tabs.some((tab) => tab.kind === "session" && tab.key === key));
   const view = terminalFor(key);
-  renderPanes();
-  view.fit.fit();
+  if (!shown) view.term.resize(PHONE_COLS, PHONE_ROWS);
   const { cols, rows } = view.term;
-  for (const leaf of workspace.leaves()) {
-    const was = shown.get(leaf.id);
-    if (was !== undefined && was !== leaf.active && was < leaf.tabs.length) leaf.active = was;
-  }
-  workspace.focus(focused);
-  activeKey = active;
-  renderPanes();
   sessionExecutors.set(key, executor);
   states.set(key, { kind: "connecting" });
   saveLayout();
@@ -6078,6 +6961,11 @@ async function openQuietly(nodeId: string, repoId: string, terminal: boolean): P
   const opened = terminal
     ? await cockpit.openSession(nodeId, repoId, cols, rows, "shell", false, false, true)
     : await cockpit.openSession(nodeId, repoId, cols, rows, executor, executor !== "shell", localStorage.getItem("bypassPermissions") === "1", false);
+  // Closed from the phone while it was still connecting: what came up after is ended, not brought back.
+  if (!terminals.has(key)) {
+    if (opened.kind === "ready" && !terminal) void cockpit.stopSession(nodeId, repoId).catch(() => undefined);
+    return;
+  }
   states.set(key, opened);
   renderRail();
   await afterOpen([{ key, opened, executor }]);
@@ -6089,7 +6977,7 @@ el<HTMLButtonElement>("phoneClose").addEventListener("click", () => phoneDialog.
 el<HTMLInputElement>("phoneAllowed").addEventListener("change", async (event) => {
   paintPhone(await cockpit.setPhoneAllowed((event.target as HTMLInputElement).checked));
 });
-for (const [id, what] of [["phonePasswordChange", "password"], ["phoneKeyShow", "key"], ["phoneKeyRenew", "renew"]] as const) {
+for (const [id, what] of [["phonePasswordChange", "password"], ["phoneKeyRenew", "renew"]] as const) {
   el<HTMLButtonElement>(id).addEventListener("click", () => {
     phoneDialog.close();
     void phoneSetup(what);
@@ -6193,6 +7081,12 @@ cockpit.onState((key, state) => {
 // itself returned a fresh one, so a machine could sit missing for hours.
 cockpit.onNodes((list) => {
   nodes = list;
+  // Folders taken off elsewhere (the phone): their sessions, already ended in main, go here too.
+  const gone = [...terminals.keys()].filter((key) => key.includes("::") ? !findByKey(key) : !nodes.some((node) => node.id === key));
+  if (gone.length > 0) {
+    forgetSessions((key) => gone.includes(key));
+    saveLayout();
+  }
   setPins(livePins(pins, nodes));
   renderRail();
 });

@@ -13,7 +13,8 @@ import { latestCodexRollout, remoteRolloutScript } from "../workflow/codex.ts";
 import { localPast, parsePastListing, remoteClaudePastScript, remoteCodexPastScript } from "../workflow/past.ts";
 import { probeCommand, readWithProbe, type ProbedRead } from "../workflow/probe.ts";
 import { latestTranscript, latestTranscriptTail, projectSlug, remoteTranscriptTailScript, transcriptStamp } from "../workflow/transcript.ts";
-import type { RecordTail } from "../workflow/turn.ts";
+import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
+import { pickOpencodeSession } from "../workflow/opencode.ts";
 import { findScript, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, safePath, stepsInside, viewable, viewableFiles, viewableFindScript, type PhoneFileEntry } from "../phone/docs.ts";
 import { commandFrom, commandScript, parseCommandOutput, type CommandSuggestion } from "../phone/suggest.ts";
 import type { ReadResponse } from "../read/envelope.ts";
@@ -88,7 +89,7 @@ export interface Machine {
   /** Files under `root` a phone can open. Empty when the machine cannot be asked. */
   viewableFiles(root: string): Promise<string[]>;
   /** Every file under `root`, for a phone's "@". Empty when the machine cannot be asked. */
-  allFiles(root: string): Promise<string[]>;
+  allFiles(root: string, hidden?: boolean): Promise<string[]>;
   /** The slash commands and skills in these folders. Empty when the machine cannot be asked. */
   customCommands(dirs: Parameters<typeof commandScript>[0]): Promise<CommandSuggestion[]>;
   /** The folder's dependency manifests. Undefined when the machine cannot be asked. */
@@ -98,20 +99,20 @@ export interface Machine {
    * The end of the newest record an agent keeps for a folder (empty when it has
    * none yet), with this machine's clock. Undefined when it cannot be asked.
    */
-  recordTail(format: "claude" | "codex", folder: string): Promise<RecordTail | undefined>;
+  recordTail(format: RecordFormat, folder: string): Promise<RecordTail | undefined>;
   /**
    * The newest record an agent keeps for a folder, for what it says rather than
    * how it ends. Over SSH its last 500KB only: enough for recent activity without
    * shipping a whole session log on every poll, and a cut first line is fine
    * because the parsers skip what does not parse. Undefined when it has none.
    */
-  record(format: "claude" | "codex", folder: string): Promise<string | undefined>;
+  record(format: RecordFormat, folder: string): Promise<string | undefined>;
   /**
    * A string that stays the same while that record does, so it need not be read
    * and parsed again. Undefined when it cannot tell: Codex's rollout is found only
    * by reading it, so it has none.
    */
-  recordStamp(format: "claude" | "codex", folder: string): Promise<string | undefined>;
+  recordStamp(format: RecordFormat, folder: string): Promise<string | undefined>;
   /** The folder's past conversations of either agent, newest first; null when the machine cannot be asked. */
   past(folder: string, label: string): Promise<PastConversation[] | null>;
   /** Which of these sessions are sure to have no AI left. Empty when the machine cannot be asked. */
@@ -166,13 +167,44 @@ export interface MachineReach {
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** The JSON in what a command printed, its stderr chatter ("Exporting session: …") left out. */
+function jsonIn(output: string): string {
+  const start = output.search(/[[{]/);
+  const end = Math.max(output.lastIndexOf("}"), output.lastIndexOf("]"));
+  return start < 0 || end < start ? "" : output.slice(start, end + 1);
+}
+
+/**
+ * OpenCode keeps no file per session but answers for itself: the folder's
+ * newest session from `opencode session list`, and that session from
+ * `opencode export`. Its own commands, so a change in its database is its to
+ * follow (1.19.5: ~0.4 s each, here and over SSH).
+ */
+async function opencodeSession(run: Machine["run"], folder: string, cmd: boolean): Promise<{ id: string; updated: number } | undefined> {
+  // It lists the sessions of the project it is run in, so it runs there.
+  const into = cmd ? `cd /d "${folder.replaceAll("/", "\\")}"` : `cd ${posixQuote(folder)}`;
+  const listed = await run(`${into} && opencode session list --format json -n 50`, { login: true, timeoutMs: 15_000 });
+  if (listed?.code !== 0) return undefined;
+  const list = jsonIn(listed.output);
+  const id = pickOpencodeSession(list, folder);
+  if (id === undefined) return undefined;
+  const entry = (JSON.parse(list) as Array<{ id: unknown; updated: unknown }>).find((each) => each.id === id);
+  return { id, updated: typeof entry?.updated === "number" ? entry.updated : 0 };
+}
+async function opencodeRecord(run: Machine["run"], folder: string, cmd: boolean): Promise<string | undefined> {
+  const session = await opencodeSession(run, folder, cmd);
+  if (session === undefined) return undefined;
+  const exported = await run(`opencode export ${session.id}`, { login: true, timeoutMs: 15_000 });
+  return exported?.code === 0 ? jsonIn(exported.output) || undefined : undefined;
+}
+
 export function localMachine(trash: MachineReach["trash"]): Machine {
   const machine: Machine = {
     windows: process.platform === "win32",
     nativePath: normalize,
     connection: () => undefined,
     run: (command, { login = false, timeoutMs } = {}) => new Promise((resolve) => {
-      exec(login && process.platform !== "win32" ? inLoginShell(command) : command, { windowsHide: true, ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) }, (error, stdout, stderr) =>
+      exec(login && process.platform !== "win32" ? inLoginShell(command) : command, { windowsHide: true, maxBuffer: 64 * 1024 * 1024, ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) }, (error, stdout, stderr) =>
         resolve({ code: error ? (typeof error.code === "number" ? error.code : 1) : 0, output: `${stdout}${stderr}`, ...(error?.killed ? { timedOut: true } : {}) }));
     }),
     ready: async () => ({ ok: true }),
@@ -189,7 +221,7 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
     list: listLocalDirectory,
     listInside: phoneDirectory,
     viewableFiles,
-    allFiles: (root) => listFiles(root, () => true, 6, 3000),
+    allFiles: (root, hidden = false) => listFiles(root, () => true, 6, 3000, hidden),
     customCommands: async (dirs) => {
       const custom: CommandSuggestion[] = [];
       for (const { kind, dir } of dirs) {
@@ -208,11 +240,17 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
       return Object.fromEntries(entries.filter(([, text]) => text !== undefined)) as Manifests;
     },
     recordTail: async (format, folder) => ({
-      tail: format === "claude" ? await latestTranscriptTail(folder) : (await latestCodexRollout(folder)) ?? "",
+      tail: format === "claude" ? await latestTranscriptTail(folder) : format === "opencode" ? (await opencodeRecord(machine.run, folder, machine.windows)) ?? "" : (await latestCodexRollout(folder)) ?? "",
       now: Date.now(),
     }),
-    record: async (format, folder) => (format === "claude" ? latestTranscript(folder) : latestCodexRollout(folder)),
-    recordStamp: async (format, folder) => (format === "claude" ? transcriptStamp(folder) : undefined),
+    record: async (format, folder) => (format === "claude" ? latestTranscript(folder) : format === "opencode" ? opencodeRecord(machine.run, folder, machine.windows) : latestCodexRollout(folder)),
+    recordStamp: async (format, folder) => {
+      if (format === "opencode") {
+        const session = await opencodeSession(machine.run, folder, machine.windows);
+        return session && `${session.id}:${session.updated}`;
+      }
+      return format === "claude" ? transcriptStamp(folder) : undefined;
+    },
     past: localPast,
     agentsGone: (probes) => shellsAlone(probes),
 
@@ -350,9 +388,9 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       const output = await reach.runRemote(options(), `cd ${posixQuote(root)} && ${viewableFindScript}`);
       return parseFindOutput(output ?? "", viewable);
     },
-    allFiles: async (root) => {
+    allFiles: async (root, hidden = false) => {
       if (!(await ready())) return [];
-      const output = (await reach.runRemote(options(), `cd ${posixQuote(root)} && ${findScript(6)} | head -c 400000`)) ?? "";
+      const output = (await reach.runRemote(options(), `cd ${posixQuote(root)} && ${findScript(6, [], hidden)} | head -c 400000`)) ?? "";
       // What follows the last NUL is a name `head` cut in two.
       return parseFindOutput(output.slice(0, output.lastIndexOf("\0") + 1), safePath).slice(0, 3000);
     },
@@ -367,12 +405,18 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
     },
     recordTail: async (format, folder) => {
       if (!(await ready())) return undefined;
+      if (format === "opencode") {
+        const [clock, tail] = await Promise.all([run("date +%s"), opencodeRecord(run, folder, false)]);
+        const now = Number(clock?.output.trim());
+        return clock?.code === 0 && Number.isFinite(now) ? { tail: tail ?? "", now: now * 1000 } : undefined;
+      }
       const script = format === "claude" ? remoteTranscriptTailScript(folder) : remoteRolloutScript(rolloutCwd(folder));
       const output = await reach.runRemote(options(), `date +%s; ${script}`);
       const clock = /^(\d+)\r?\n/.exec(output ?? "");
       return clock ? { tail: output!.slice(clock[0].length), now: Number(clock[1]) * 1000 } : undefined;
     },
     record: async (format, folder) => {
+      if (format === "opencode") return (await ready()) ? opencodeRecord(run, folder, false) : undefined;
       if (format === "codex") {
         const script = remoteRolloutScript(rolloutCwd(folder));
         return (await pooled(script)) ?? (await reach.runRemote(options(), script));
@@ -388,6 +432,10 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       );
     },
     recordStamp: async (format, folder) => {
+      if (format === "opencode") {
+        const session = (await ready()) ? await opencodeSession(run, folder, false) : undefined;
+        return session && `${session.id}:${session.updated}`;
+      }
       if (format !== "claude" || node.home === "") return undefined;
       const script = probeCommand(`${node.home}/.claude/projects/${projectSlug(folder)}`);
       return ((await pooled(script)) ?? (await reach.runRemote(options(), script)))?.trim() || undefined;

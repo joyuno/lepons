@@ -222,6 +222,9 @@
         padding: 8px 6px; border: 1px solid var(--line); color: var(--text);
         font-size: 12.5px; font-weight: 600; position: relative;
       }
+      /* One line or none: fitRailTabs drops the words (iconOnly) before they would wrap. */
+      .railTabs .railTab { white-space: nowrap; overflow: hidden; min-width: 0; }
+      .railTabs.iconOnly .railTab > [data-i18n] { display: none; }
       .railTabs .railTab:hover { border-color: var(--muted); }
       .railTabs .railTab.on { border-color: var(--live); }
       .railTabIcon { flex: none; }
@@ -934,6 +937,22 @@
       #settingsPanel .setBadge.good { color: var(--go); border-color: color-mix(in srgb, var(--go) 40%, var(--line)); }
       #settingsPanel .setBadge.bad { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
       #settingsPanel .setNote { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+      /* 내 API 키: a row per key, then the form that adds one. */
+      #settingsPanel .setKeyLogo { display: inline-flex; }
+      #settingsPanel .setKeyLogo svg, #settingsPanel .setKeyForm .setChips svg { width: 16px; height: 16px; flex: none; }
+      #settingsPanel .setAccount .setLink { margin-left: auto; }
+      #settingsPanel .setKeyForm { display: flex; flex-direction: column; gap: 10px; max-width: 440px; margin: 18px 0 0; }
+      #settingsPanel .setKeyForm .setButtons { margin: 0; }
+      #settingsPanel .setKeyForm .setLink { align-self: flex-start; }
+      #settingsPanel .setKeyFields { display: flex; flex-wrap: wrap; gap: 8px; }
+      #settingsPanel .setKeyFields input { flex: 1 1 160px; min-width: 0; }
+      #settingsPanel .setKeyFields .setButtons { margin: 0; }
+      #settingsPanel .setKeyFull { font-family: var(--mono); color: var(--text); white-space: normal; word-break: break-all; user-select: text; flex-basis: 100%; order: 9; }
+      #settingsPanel .setEye { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+      #settingsPanel .setEye svg { width: 15px; height: 15px; }
+      #settingsPanel .setAccount .setEye { margin-left: auto; }
+      #settingsPanel .setAccount .setEye ~ .setLink { margin-left: 0; }
+      #settingsPanel .setEye:hover, #settingsPanel .setEye[aria-pressed="true"] { color: var(--text); border-color: var(--muted); }
       /* Usage chart: the phone's (home.tsx UsdBars) -- a week of stacked bars under a dashed line at the axis top. */
       #settingsPanel .setChart { margin: 0 0 16px; padding: 14px 16px 12px; border: 1px solid var(--line); border-radius: 10px; }
       #settingsPanel .setChartHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
@@ -1058,7 +1077,8 @@
       .exHead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
       .exHead h2 { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .exHead .sub { margin: 0; white-space: nowrap; }
-      .exTiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+      .exTiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+      #executorDialog { width: min(540px, calc(100vw - 48px)); }
       .exTile {
         position: relative; display: grid; justify-items: center; gap: 7px; padding: 14px 4px 10px;
         border-radius: 8px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; cursor: pointer;
@@ -1077,6 +1097,64 @@
         position: absolute; bottom: -1px; left: 50%; translate: -50% 50%; font-size: 10px; color: var(--muted);
         background: var(--panel); padding: 0 5px; border-radius: 4px; border: 1px solid var(--line); white-space: nowrap;
       }
+      /* 내 LLM under the agents: one chip per connection (its mark, its lamp: up, down), its edit, and the way to add one. */
+      .exLlms { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
+      .llmItem { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; background: var(--raise); min-width: 0; }
+      .llmItem:focus-within { border-color: var(--live); }
+      .llmItem .llmPick { display: inline-flex; align-items: center; gap: 7px; padding: 7px 10px; border: 0; background: none; font-size: 12px; color: var(--text); cursor: pointer; border-radius: 8px 0 0 8px; min-width: 0; }
+      .llmItem .llmPick:focus { outline: none; background: color-mix(in srgb, var(--live) 10%, var(--raise)); }
+      .llmItem .llmPick:disabled { color: var(--dim); cursor: not-allowed; }
+      .llmItem small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+      .llmItem .llmEdit { border: 0; border-left: 1px solid var(--line); background: none; color: var(--muted); padding: 0 8px; cursor: pointer; border-radius: 0 8px 8px 0; font-size: 12px; }
+      .llmItem .llmEdit:hover { color: var(--text); }
+      .llmDot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--idle); }
+      .llmItem.up .llmDot { background: var(--go); }
+      .llmItem.down .llmDot, .llmItem.nokey .llmDot, .llmItem.notools .llmDot { background: var(--stop); }
+      .llmItem .llmPick svg { flex: none; width: 15px; height: 15px; }
+      .llmItem .llmPick:disabled svg { filter: grayscale(1); opacity: .5; }
+      .llmItem .llmWhy { color: var(--stop); }
+      /* Where a connection goes: a server of one's own, or a platform with a key. */
+      .llmPlatforms { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; margin: 12px 0 4px; }
+      .llmPlatforms .exTile { min-height: 62px; padding: 8px 6px; }
+      .llmPlatforms .exTile svg { width: 20px; height: 20px; }
+      .llmPlatforms .exTile[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 12%, var(--raise)); }
+      #llmKeyInput, #llmModelSearch { flex: 1; min-width: 0; }
+      #llmKeyLink { font-size: 12px; color: var(--link); text-decoration: none; white-space: nowrap; }
+      #llmKeyLink:hover { text-decoration: underline; }
+      #llmDialog .switch { margin: 10px 0 0; }
+      #llmDialog .switch[aria-checked="true"] { color: var(--text); }
+      #llmDialog .switch[aria-checked="true"] i { background: color-mix(in srgb, var(--live) 35%, transparent); }
+      #llmDialog .switch[aria-checked="true"] i::after { background: var(--live); }
+      .exLlms .pickRow { width: auto; margin: 0; padding: 7px 10px; }
+      #llmDialog .addrRow { margin: 10px 0 0; }
+      #llmDialog select { flex: 1; min-width: 0; }
+      #llmTunnelPort { flex: 0 0 7em; }
+      #llmName { width: 100%; margin: 10px 0 0; box-sizing: border-box; }
+      #llmDialog .seg { margin: 0 0 4px; }
+      #llmDialog details { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+      #llmDialog details p { white-space: pre-line; margin: 6px 0 0; }
+      #llmNote:empty, #llmFound:empty, #llmDialog [hidden] { display: none; }
+      #llmFound { min-height: 0; max-height: 26vh; }
+      /* D (여러 AI 비교): the AIs to send one instruction to, then their results side by side. */
+      #compareDialog .exTiles .exTile[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 12%, var(--raise)); }
+      #compareDialog .exTiles { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+      #comparePrompt { width: 100%; min-height: 84px; box-sizing: border-box; margin: 12px 0 0; resize: vertical; font: inherit; }
+      #compareCount { font-size: 12px; color: var(--muted); }
+      #compareNote:empty { display: none; }
+      #compareView { width: min(1180px, 94vw); }
+      .cmpCols { display: grid; gap: 8px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); max-height: 64vh; overflow: auto; }
+      .cmpCol { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raise); }
+      .cmpCol h3 { margin: 0; font-size: 13px; display: flex; align-items: center; gap: 7px; min-width: 0; }
+      .cmpCol h3 span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cmpStat { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .cmpStat .add { color: var(--go); }
+      .cmpStat .del { color: var(--stop); }
+      .cmpFiles { margin: 0; padding: 0; list-style: none; font: 11.5px/1.6 var(--mono); color: var(--text); overflow: hidden; }
+      .cmpFiles li { display: flex; gap: 8px; min-width: 0; }
+      .cmpFiles li span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cmpFiles li span:last-child { flex: none; color: var(--muted); }
+      .cmpCol .btns { display: flex; gap: 6px; margin-top: auto; flex-wrap: wrap; }
+      .cmpPrompt { font-size: 12px; color: var(--muted); margin: -6px 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .exOpts { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 0; flex-wrap: wrap; }
       .seg { display: inline-flex; padding: 2px; background: var(--ground); border: 1px solid var(--line); border-radius: 7px; }
       .seg button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 5px; cursor: pointer; }
@@ -1121,6 +1199,8 @@
       .fileOverlay > .paneNotice { margin: 8px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
       .fileOverlay > .paneNotice .railBtn { width: auto; }
       .paneBtn.text { width: auto; padding: 0 7px; font-size: 11.5px; }
+      .paneBtn.paneMerge { display: inline-flex; align-items: center; gap: 4px; color: var(--live); }
+      .paneBtn.paneMerge[hidden] { display: none; }
       .tok-comment { color: #6a9955; font-style: italic; }
       .tok-keyword, .tok-bool, .tok-atom, .tok-null { color: #569cd6; }
       .tok-string, .tok-string2, .tok-deleted { color: #ce9178; }
@@ -1371,6 +1451,7 @@
       .agentTag.claude { color: var(--live); }
       .agentTag.codex { color: var(--link); }
       .agentTag.grok { color: var(--text); }
+      .agentTag.opencode { color: var(--text); }
       .agentTag.agy { color: var(--muted); }
       .agentTag.agent { color: var(--dim); }
       .mapAgents { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 2px 0 6px; font-size: 10.5px; color: var(--muted); }
@@ -1519,6 +1600,16 @@
       .fileTree .fileTree { padding-right: 0; }
       .treeBar { display: flex; justify-content: flex-end; gap: 2px; padding: 2px 14px 2px 18px; }
       .treeBar .iconBtn { display: inline-flex; padding: 3px; border-radius: 4px; }
+      .treeBar.searching { justify-content: flex-start; align-items: center; gap: 4px; }
+      .treeSearchInput {
+        flex: 1; min-width: 0; height: 22px; padding: 0 6px; border-radius: 4px;
+        border: 1px solid var(--line); background: var(--ground); color: var(--text); font: 11px var(--sans);
+      }
+      .treeSearchInput:focus { outline: none; border-color: var(--link); }
+      .treeSearchInput::-webkit-search-cancel-button { display: none; }
+      .fileWhere { flex: 0 1 auto; min-width: 0; margin-left: auto; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; opacity: .6; font-size: 10px; }
+      .treeSearchResults .fileRow { padding-left: 14px; }
+      .treeSearchResults .fileRow:focus-visible { outline: 1px solid var(--link); outline-offset: -1px; }
       .fileRow {
         display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;
         border: 0; background: none; color: var(--muted); font: 11px var(--sans);
@@ -1589,10 +1680,10 @@
         <div class="railTabs">
           <!-- An icon beside each word: two plain words at the rail's foot went unseen. -->
           <button class="railBtn railTab" id="openMap">
-            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></svg><span data-i18n="rail.map"></span>
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg><span data-i18n="rail.map"></span>
           </button>
           <button class="railBtn railTab" id="openWorkflow">
-            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg><span data-i18n="workflow.toggle"></span>
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="18.5" r="2.5"/><circle cx="19" cy="18.5" r="2.5"/><path d="M10.8 7.3 6.2 16.2M13.2 7.3l4.6 8.9M7.5 18.5h9" stroke-dasharray="1.5 2.5"/></svg><span data-i18n="workflow.toggle"></span>
             <span id="workflowBadge" class="notifyBadge" hidden></span>
           </button>
         </div>
@@ -1696,6 +1787,7 @@
           <input type="text" id="executorTask" maxlength="60" />
         </div>
         <div class="exTiles" id="executorTiles" role="group" aria-labelledby="executorTitle"></div>
+        <div class="exLlms" id="executorLlms" role="group"></div>
         <div class="exOpts">
           <span class="seg" id="executorResumeRow" role="group">
             <button type="button" id="executorResume" aria-pressed="true" data-i18n="session.resumeLast"></button>
@@ -1711,6 +1803,88 @@
         <div class="exFoot">
           <button value="shell" class="exGhost"><code>&gt;_</code> <span data-i18n="session.terminalOnly"></span></button>
           <button value="" class="exEsc"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- D (여러 AI 비교): one instruction to 2-4 AIs, each in a worktree of its own. -->
+    <dialog id="compareDialog" class="picker" aria-labelledby="compareTitle">
+      <form id="compareForm">
+        <div class="exHead"><h2 id="compareTitle" data-i18n="compare.title"></h2><span class="sub" id="compareWhere"></span></div>
+        <p class="sub" data-i18n="compare.sub"></p>
+        <div class="exTiles" id="compareTiles" role="group"></div>
+        <textarea id="comparePrompt" maxlength="4000"></textarea>
+        <div class="note" id="compareNote"></div>
+        <div class="exFoot">
+          <span id="compareCount"></span>
+          <span class="footEnd">
+            <button type="button" class="exEsc" id="compareCancel"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+            <button type="submit" class="go" id="compareStart" data-i18n="compare.start"></button>
+          </span>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="compareView" class="picker" aria-labelledby="compareViewTitle">
+      <div class="exHead"><h2 id="compareViewTitle" data-i18n="compare.viewTitle"></h2><span class="sub" id="compareViewWhere"></span></div>
+      <p class="cmpPrompt" id="compareViewPrompt"></p>
+      <div class="cmpCols" id="compareCols"></div>
+      <div class="exFoot">
+        <button type="button" class="exGhost" id="compareAgain" data-i18n="compare.again"></button>
+        <span class="footEnd">
+          <button type="button" id="compareRefresh" data-i18n="compare.refresh"></button>
+          <button type="button" class="exEsc" id="compareViewClose"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+        </span>
+      </div>
+    </dialog>
+
+    <!-- 내 LLM: a server of one's own (an address, or a tunnel to a registered PC) or a platform with a key from 내 API 키; which model, a name. -->
+    <dialog id="llmDialog" class="picker" aria-labelledby="llmTitle">
+      <form id="llmForm">
+        <div class="exHead"><h2 id="llmTitle" data-i18n="llm.title"></h2><span class="sub" id="llmWhere"></span></div>
+        <p class="sub" data-i18n="llm.sub"></p>
+        <div class="llmPlatforms" id="llmPlatforms" role="group"></div>
+        <div id="llmServerPart">
+        <span class="seg" role="group">
+          <button type="button" id="llmWayNet" aria-pressed="true" data-i18n="llm.wayNet"></button>
+          <button type="button" id="llmWayTunnel" aria-pressed="false" data-i18n="llm.wayTunnel"></button>
+        </span>
+        <div class="addrRow" id="llmNetRow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+          <input id="llmAddress" type="text" placeholder="192.168.0.10:11434" autocomplete="off" spellcheck="false" />
+          <button type="button" id="llmFindButton" data-i18n="llm.find"></button>
+        </div>
+        <div class="addrRow" id="llmTunnelRow" hidden>
+          <select id="llmTunnelPc"></select>
+          <input id="llmTunnelPort" type="text" inputmode="numeric" maxlength="5" value="11434" />
+        </div>
+        <div class="pickList" id="llmFound"></div>
+        </div>
+        <div class="addrRow">
+          <select id="llmKey"></select>
+          <a href="#" id="llmKeyLink" data-i18n="llm.keyLink" hidden></a>
+        </div>
+        <div class="addrRow" id="llmNewKey" hidden>
+          <input id="llmKeyInput" type="password" autocomplete="off" spellcheck="false" />
+          <button type="button" id="llmKeyAddButton" data-i18n="keys.save"></button>
+        </div>
+        <div class="addrRow" id="llmServerModel">
+          <button type="button" id="llmCheck" data-i18n="llm.check"></button>
+          <select id="llmModel"></select>
+        </div>
+        <div class="addrRow" id="llmApiModel" hidden>
+          <input id="llmModelSearch" list="llmModelList" autocomplete="off" spellcheck="false" />
+          <datalist id="llmModelList"></datalist>
+        </div>
+        <input id="llmName" type="text" maxlength="60" autocomplete="off" />
+        <button type="button" class="switch" id="llmLight" role="switch" aria-checked="false"><i></i><span data-i18n="llm.light"></span></button>
+        <details id="llmHelp"><summary data-i18n="llm.helpTitle"></summary><p data-i18n="llm.help"></p></details>
+        <div class="note" id="llmNote"></div>
+        <div class="exFoot">
+          <button type="button" class="exGhost" id="llmRemoveButton" data-i18n="llm.remove" hidden></button>
+          <span class="footEnd">
+            <button type="button" class="exEsc" id="llmCancel"><kbd>Esc</kbd> <span data-i18n="common.close"></span></button>
+            <button type="submit" class="go" id="llmSaveButton" data-i18n="llm.save"></button>
+          </span>
         </div>
       </form>
     </dialog>
@@ -1882,7 +2056,6 @@
       <div class="note" id="phoneStatus"></div>
       <div class="phoneLine">
         <button type="button" id="phonePasswordChange" data-i18n="settings.phone.changePassword"></button>
-        <button type="button" id="phoneKeyShow" data-i18n="settings.phone.totpShow"></button>
         <button type="button" id="phoneKeyRenew" data-i18n="settings.phone.totpRenew"></button>
       </div>
       <div class="row">

@@ -75,6 +75,23 @@ export const codexBuiltins: CommandSuggestion[] = [
   ["skills", "Use skills to improve how Codex performs specific tasks"],
 ].map(([name, description]) => ({ name: `/${name}`, description: description! }));
 
+/** OpenCode's own (its docs' TUI commands and those in its 1.19.5 command table). */
+export const opencodeBuiltins: CommandSuggestion[] = [
+  ["new", "Start a new session"],
+  ["sessions", "List and switch sessions"],
+  ["models", "Choose a model"],
+  ["init", "Create or update AGENTS.md"],
+  ["compact", "Compact the session"],
+  ["undo", "Undo the previous message"],
+  ["redo", "Redo"],
+  ["fork", "Fork the session"],
+  ["rename", "Rename the session"],
+  ["share", "Share the session"],
+  ["copy", "Copy the session transcript"],
+  ["export", "Export the session transcript"],
+  ["help", "Show help"],
+].map(([name, description]) => ({ name: `/${name}`, description: description! }));
+
 /** A Markdown file's `description:` front matter, else its first line of prose. */
 export function describe(content: string): string {
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);

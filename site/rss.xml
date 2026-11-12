@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Mon, 09 Nov 2026 23:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Fri, 13 Nov 2026 12:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.5: 내 LLM과 API 키 보관함, 폰에서 세션 정리</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.5</guid>
+      <pubDate>Fri, 13 Nov 2026 12:00:00 +0900</pubDate>
+      <description>내 서버의 모델이나 OpenRouter·OpenAI 같은 API 키를 OpenCode로 연결해 AI처럼 골라 써요. 키는 이 PC에만 암호화해 두고, 원본은 인증 앱 숫자를 넣어야 30분 동안 보여요. 폰 세션 탭은 PC별로 묶이고 워크트리는 트리로 붙으며, 밀어서 세션을 닫거나 목록에서 지울 수 있어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.4: 폰에서 프로젝트 밖 파일과 코드를 읽기 쉽게</title>
       <link>https://lepons.app/#download</link>

@@ -377,7 +377,7 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
   };
 
   /** The pretend PC's folders with nothing open: one tap opens a fresh session there, as the PC would. */
-  const closed = [{ id: "de0000000000000f", folder: "landing-page" }];
+  const closed: Array<{ id: string; folder: string; worktreeOf?: string }> = [{ id: "de0000000000000f", folder: "landing-page" }];
   const state = (): ReplyOf<"GET /api/state"> => ({
     sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents, worktreeOf }) => {
       const steps = events.flatMap((event): StepKind[] => (event.kind === "note" ? [] : [event.kind])).slice(-5);
@@ -388,7 +388,7 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       };
     }),
     pcs: pcs.map((pc) => ({ ...pc })),
-    folders: closed.map(({ id, folder }) => ({ id, pc: words.pc, folder })),
+    folders: closed.map(({ id, folder, worktreeOf }) => ({ id, pc: words.pc, folder, ...(worktreeOf ? { worktreeOf } : {}) })),
     usage: [
       { name: "Claude Code", fiveHour: { percent: 38, resetsAt: hours(2.5) }, week: { percent: 72, resetsAt: hours(80) } },
       { name: "Codex", fiveHour: { percent: 12, resetsAt: hours(4) }, week: { percent: 91, resetsAt: hours(30) } },
@@ -539,6 +539,29 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
       return find(fields.s) ? ok(at, { id: shell.id }) : fail(404, "session");
     }
+    // Closed: off the list, its folder back among the closed ones (a worktree's as well, as the PC keeps both).
+    if (at === "POST /api/close") {
+      const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
+      const gone = sessions.findIndex((one) => one.id === fields.s);
+      if (gone < 0) return fail(404, "session");
+      const [one] = sessions.splice(gone, 1);
+      if (one!.agent && (one!.pc ?? words.pc) === words.pc) closed.push({ id: one!.id, folder: one!.folder, ...(one!.worktreeOf ? { worktreeOf: one!.worktreeOf } : {}) });
+      emit("state", state());
+      return ok(at, { ok: true });
+    }
+    // Taken off the list: open or closed.
+    if (at === "POST /api/forget") {
+      const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
+      const at2 = closed.findIndex((one) => one.id === fields.f);
+      const open = sessions.findIndex((one) => one.id === fields.f);
+      if (at2 < 0 && open < 0) return fail(404, "folder");
+      if (at2 >= 0) closed.splice(at2, 1);
+      if (open >= 0) sessions.splice(open, 1);
+      emit("state", state());
+      return ok(at, { ok: true });
+    }
+    // The pretend PC answers no question by itself.
+    if (at === "POST /api/auto-keep") return ok(at, { ok: true });
     // The pretend PC keeps nothing outside its folders.
     if (at === "GET /api/outside") return fail(404, "file");
     // The pretend PC has no pushes to send: every route but this one is answered above.

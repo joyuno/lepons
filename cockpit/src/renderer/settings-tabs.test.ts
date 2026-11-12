@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, settingsTabs } from "./settings-tabs.ts";
 
 test("Windows gets the allow-connections tab, other systems do not; tabs run by priority, AI accounts first", () => {
-  const all = ["agents", "tokens", "update", "remotes", "phone", "theme", "font", "language", "startup", "pet", "allow", "key", "tour", "about"];
+  const all = ["agents", "llmKeys", "tokens", "update", "remotes", "phone", "theme", "font", "language", "startup", "pet", "allow", "key", "tour", "about"];
   assert.deepEqual(settingsTabs("win32"), all);
   const rest = all.filter((tab) => tab !== "allow");
   assert.deepEqual(settingsTabs("darwin"), rest);

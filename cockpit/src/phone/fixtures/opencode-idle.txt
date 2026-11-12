@@ -1,0 +1,38 @@
+  ┃  Now append a line 'more' to a.txt with the edit tool.
+  ┃
+
+     + Thought: 2.0s
+
+     → Read a.txt
+
+     + Thought: 2.5s
+
+  ┃
+  ┃  ← Edit a.txt
+  ┃
+  ┃    1   hello
+  ┃    2   world
+  ┃    3 + more
+  ┃
+
+     → Read a.txt
+
+     + Thought: 227ms
+
+     Appended. a.txt now contains:
+
+     hello
+     world
+     more
+
+     The edit tool does string replacement rather than appends, so I replaced the last line world with world\nmore to
+     add the new line at the end.
+
+     ▣  Build · GLM-5.3-Flash Free · 39.7s
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · GLM-5.3-Flash Free OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   C:\work\demo                                                                             19.7K (10%)  ctrl+p commands

@@ -1,6 +1,7 @@
 import { posixQuote, type Session, type SessionState } from "../session/state.ts";
+import type { RecordFormat } from "../workflow/turn.ts";
 
-export type AgentKind = "claude" | "codex" | "grok" | "agy" | "agent";
+export type AgentKind = "claude" | "codex" | "grok" | "agy" | "agent" | "opencode";
 
 /** What a session starts with: an agent, or the machine's plain shell. */
 export type Executor = AgentKind | "shell";
@@ -36,6 +37,8 @@ export type McpFile = {
   file: string;
   /** The key its entries name the URL by. */
   urlKey: "serverUrl" | "url";
+  /** OpenCode's own layout: servers under "mcp", each { type: "remote", url, headers }. */
+  opencode?: true;
 };
 
 /**
@@ -49,7 +52,7 @@ export interface AgentCapabilities {
    * status only: reading another agent's file instead would narrate a
    * different session's work as if it were this one.
    */
-  transcript: "claude" | "codex" | null;
+  transcript: RecordFormat | null;
   /**
    * What says a session that went quiet finished or is asking: that record
    * (workflow/turn.ts), or output rhythm alone, which cannot tell them apart and
@@ -59,7 +62,7 @@ export interface AgentCapabilities {
   mcp: McpCommand | McpFile;
   /** The phone's "/" list: whose built-ins, and the folders its custom commands live in. */
   commands: {
-    builtins: "claude" | "codex";
+    builtins: "claude" | "codex" | "opencode";
     folders(repoPath: string, home: string): Array<{ kind: "commands" | "skills" | "prompts"; dir: string }>;
   } | null;
   /** The headless line for a delegated task; the instructions arrive on stdin. */
@@ -368,6 +371,49 @@ export const agents: Record<AgentKind, AgentSpec> = {
       usage: { tokens: false, limits: null },
     },
   },
+  opencode: {
+    kind: "opencode",
+    label: "OpenCode",
+    short: "OpenCode",
+    versionCommand: "opencode --version",
+    // No --model: the model the operator chose in OpenCode itself, any provider.
+    sessionCommand: "opencode",
+    // --fork, for the reason Claude's resume forks (checked against `opencode --help`, 1.19.5).
+    resumeCommand: "opencode --continue --fork",
+    // ponytail: no resumeIdCommand -- the past-conversations list does not read OpenCode yet (`opencode session list` would).
+    bypassFlag: "--auto",
+    reviewFlag: "",
+    // ponytail: unchecked whether --continue exits where nothing was recorded; the fallback costs nothing if not.
+    resumeExitsWhenEmpty: true,
+    install: {
+      posix: "curl -fsSL https://opencode.ai/install | bash",
+      win32: "npm install -g opencode-ai",
+    },
+    // Optional: OpenCode's own free models need no account; this adds a provider's.
+    loginCommand: "opencode auth login",
+    mcpServeCommand: [],
+    sessionEnv: () => ({}),
+    can: {
+      // `opencode session list` / `opencode export`, its own JSON -- see workflow/opencode.ts.
+      transcript: "opencode",
+      status: "record",
+      // `opencode mcp add` has no remove, so lepons is written into its global config.
+      mcp: { file: ".config/opencode/opencode.json", urlKey: "url", opencode: true },
+      commands: {
+        builtins: "opencode",
+        // It reads command/ and commands/ alike (`{command,commands}/**/*.md`, 1.19.5).
+        folders: (repoPath, home) => [
+          { kind: "commands", dir: `${repoPath}/.opencode/command` },
+          { kind: "commands", dir: `${repoPath}/.opencode/commands` },
+          { kind: "commands", dir: `${home}/.config/opencode/command` },
+          { kind: "commands", dir: `${home}/.config/opencode/commands` },
+        ],
+      },
+      // `opencode run` takes the message from stdin when none is given (seen on a Mac, 1.19.5).
+      delegate: "opencode run --auto",
+      usage: { tokens: true, limits: null },
+    },
+  },
 };
 
 export function agentSpec(kind: AgentKind): AgentSpec {
@@ -446,19 +492,21 @@ export function signedInFrom(code: number, output: string): boolean {
  * write nothing: already so, or a file this did not understand, which
  * rewriting would destroy (and which the agent cannot read either).
  */
-export function mcpFileWith(existing: string | undefined, entry: { url: string; token: string } | undefined, urlKey: "serverUrl" | "url"): string | undefined {
+export function mcpFileWith(existing: string | undefined, entry: { url: string; token: string } | undefined, urlKey: "serverUrl" | "url", opencode = false): string | undefined {
   let config: unknown = {};
   if (existing !== undefined && existing.trim() !== "") {
     try { config = JSON.parse(existing); } catch { return undefined; }
   }
   if (typeof config !== "object" || config === null || Array.isArray(config)) return undefined;
   const file = config as Record<string, unknown>;
-  const servers = file["mcpServers"] ?? {};
+  const key = opencode ? "mcp" : "mcpServers";
+  const servers = file[key] ?? {};
   if (typeof servers !== "object" || servers === null || Array.isArray(servers)) return undefined;
   const { lepons, ...others } = servers as Record<string, unknown>;
-  const next = entry && { [urlKey]: entry.url, headers: { Authorization: `Bearer ${entry.token}` } };
+  const headers = entry && { Authorization: `Bearer ${entry.token}` };
+  const next = entry && (opencode ? { type: "remote", url: entry.url, headers, enabled: true } : { [urlKey]: entry.url, headers });
   if (JSON.stringify(lepons) === JSON.stringify(next)) return undefined;
-  file["mcpServers"] = next ? { ...others, lepons: next } : others;
+  file[key] = next ? { ...others, lepons: next } : others;
   return JSON.stringify(file, null, 2) + "\n";
 }
 

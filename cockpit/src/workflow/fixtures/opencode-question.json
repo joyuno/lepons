@@ -1,0 +1,275 @@
+{
+  "info": {
+    "id": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+    "slug": "jolly-comet",
+    "projectID": "global",
+    "directory": "C:\\work\\demo",
+    "path": "",
+    "title": "Favorite color and sizes preference questions",
+    "agent": "build",
+    "model": {
+      "id": "big-pickle",
+      "providerID": "opencode"
+    },
+    "version": "1.19.5",
+    "summary": {
+      "additions": 0,
+      "deletions": 0,
+      "files": 0
+    },
+    "cost": 0,
+    "tokens": {
+      "input": 17979,
+      "output": 142,
+      "reasoning": 29,
+      "cache": {
+        "read": 17664,
+        "write": 0
+      }
+    },
+    "time": {
+      "created": 1794361051184,
+      "updated": 1794361088933
+    }
+  },
+  "messages": [
+    {
+      "info": {
+        "role": "user",
+        "time": {
+          "created": 1794361051196
+        },
+        "agent": "build",
+        "model": {
+          "providerID": "opencode",
+          "modelID": "big-pickle"
+        },
+        "summary": {
+          "diffs": []
+        },
+        "id": "msg_1c840c83c001yXQ7NaFzyz0Pnp",
+        "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf"
+      },
+      "parts": [
+        {
+          "type": "text",
+          "text": "Use the question tool now. Ask me two questions in ONE question tool call: 1) Favorite color, options Red, Green, Blue (single choice). 2) Which sizes, options S, M, L, multiple selection allowed. After I answer, reply with my answers in one line.",
+          "id": "prt_1c840c83e001Azgw5mzHC3RsUm",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c840c83c001yXQ7NaFzyz0Pnp"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c840c83c001yXQ7NaFzyz0Pnp",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 17881,
+          "input": 17656,
+          "output": 132,
+          "reasoning": 29,
+          "cache": {
+            "write": 0,
+            "read": 64
+          }
+        },
+        "modelID": "big-pickle",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794361051210,
+          "completed": 1794361083759
+        },
+        "finish": "tool-calls",
+        "id": "msg_1c840c84a0015puULVWr2hqqDg",
+        "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c840daf5001fj6cgCWTABWjbY",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c840c84a0015puULVWr2hqqDg"
+        },
+        {
+          "type": "reasoning",
+          "text": "The user wants me to use the question tool with two questions in one call. Then after they answer, reply with their answers in one line.",
+          "time": {
+            "start": 1794361055991,
+            "end": 1794361057169
+          },
+          "id": "prt_1c840daf7001Iw3SyVnFXAwJXt",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c840c84a0015puULVWr2hqqDg"
+        },
+        {
+          "type": "tool",
+          "tool": "question",
+          "callID": "call_30e08b2c0ffe4242b50cc797",
+          "state": {
+            "status": "completed",
+            "input": {
+              "questions": [
+                {
+                  "question": "What is your favorite color?",
+                  "header": "Favorite color",
+                  "options": [
+                    {
+                      "label": "Red",
+                      "description": "Red color"
+                    },
+                    {
+                      "label": "Green",
+                      "description": "Green color"
+                    },
+                    {
+                      "label": "Blue",
+                      "description": "Blue color"
+                    }
+                  ]
+                },
+                {
+                  "question": "Which sizes do you want?",
+                  "header": "Sizes",
+                  "options": [
+                    {
+                      "label": "S",
+                      "description": "Small"
+                    },
+                    {
+                      "label": "M",
+                      "description": "Medium"
+                    },
+                    {
+                      "label": "L",
+                      "description": "Large"
+                    }
+                  ],
+                  "multiple": true
+                }
+              ]
+            },
+            "output": "User has answered your questions: \"What is your favorite color?\"=\"Green\", \"Which sizes do you want?\"=\"L\". You can now continue with the user's answers in mind.",
+            "metadata": {
+              "answers": [
+                [
+                  "Green"
+                ],
+                [
+                  "L"
+                ]
+              ],
+              "truncated": false
+            },
+            "title": "Asked 2 questions",
+            "time": {
+              "start": 1794361057177,
+              "end": 1794361083456
+            }
+          },
+          "id": "prt_1c840df93001Cv9L9Yiqib6TGH",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c840c84a0015puULVWr2hqqDg"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-finish",
+          "tokens": {
+            "total": 17881,
+            "input": 17656,
+            "output": 132,
+            "reasoning": 29,
+            "cache": {
+              "write": 0,
+              "read": 64
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c84146d7001cqIvVKZ0ywBq32",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c840c84a0015puULVWr2hqqDg"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_1c840c83c001yXQ7NaFzyz0Pnp",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "path": {
+          "cwd": "C:\\work\\demo",
+          "root": "C:\\work\\demo"
+        },
+        "cost": 0,
+        "tokens": {
+          "total": 17933,
+          "input": 323,
+          "output": 10,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 17600
+          }
+        },
+        "modelID": "big-pickle",
+        "providerID": "opencode",
+        "time": {
+          "created": 1794361083762,
+          "completed": 1794361088928
+        },
+        "finish": "stop",
+        "id": "msg_1c841477200169BGCIbwTBev1N",
+        "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf"
+      },
+      "parts": [
+        {
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-start",
+          "id": "prt_1c8415a360011Y3gFKLXh2pDmA",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c841477200169BGCIbwTBev1N"
+        },
+        {
+          "type": "text",
+          "text": "Favorite color: Green; Sizes: L",
+          "time": {
+            "start": 1794361088569,
+            "end": 1794361088612
+          },
+          "id": "prt_1c8415a39001l34jcxuPD2BhIz",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c841477200169BGCIbwTBev1N"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "d4e01edf1e8aa72182ed9449e7d12b5e4df8b201",
+          "type": "step-finish",
+          "tokens": {
+            "total": 17933,
+            "input": 323,
+            "output": 10,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 17600
+            }
+          },
+          "cost": 0,
+          "id": "prt_1c8415b040014JKz5HbU5xLr7Y",
+          "sessionID": "ses_e37bf37cfffeoIQTnW0WbVJgnf",
+          "messageID": "msg_1c841477200169BGCIbwTBev1N"
+        }
+      ]
+    }
+  ]
+}

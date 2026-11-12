@@ -1,5 +1,6 @@
 import type { TurnEnd } from "../shared/status.ts";
 import { tailBytes } from "./codex.ts";
+import { rejected } from "./opencode.ts";
 
 /**
  * What a session's own record says about the quiet that just fell. Called once
@@ -18,6 +19,9 @@ const SLACK_MS = 5000;
  * ponytail: shorter work there stays silent; read the agent's real folder if that shows up.
  */
 const NO_RECORD_MS = 60_000;
+
+/** The kinds of record a session keeps: Claude Code's and Codex's JSONL tails, or an `opencode export`. */
+export type RecordFormat = "claude" | "codex" | "opencode";
 
 type Row = Record<string, unknown>;
 /** `over`: its last word ended the turn, which `end` alone cannot tell from an open call. */
@@ -82,7 +86,49 @@ function codexTurn(rows: Row[]): Read | undefined {
   return { end: typeof lastEvent === "string" && lastEvent.endsWith("_approval_request") ? "waiting" : "busy", at };
 }
 
-function readRows(format: "claude" | "codex", tail: string): Read | undefined {
+/**
+ * OpenCode 1.19.5, measured in its TUI: a permission prompt draws nothing and
+ * marks nothing in the record; the call it holds just stays "running". A call
+ * truly running has reported something by then (a command's output so far), so
+ * only a bare open call under this quiet is a prompt.
+ */
+function opencodeTurn(record: unknown): Read | undefined {
+  const messages = (record as Row | null)?.["messages"];
+  const last = Array.isArray(messages) ? (messages.at(-1) as Row | undefined) : undefined;
+  if (!last) return undefined;
+  const info = (last["info"] ?? {}) as Row;
+  const parts = (Array.isArray(last["parts"]) ? last["parts"] : []) as Row[];
+  const time = (value: unknown) => (value ?? {}) as Row;
+  const times = [time(info["time"])["created"], time(info["time"])["completed"]];
+  for (const part of parts) {
+    const state = time(part["state"]);
+    times.push(time(part["time"])["start"], time(part["time"])["end"], time(state["time"])["start"], time(state["time"])["end"]);
+  }
+  const stamps = times.filter((value): value is number => typeof value === "number");
+  const at = stamps.length > 0 ? Math.max(...stamps) : undefined;
+  // As Claude's bare prompt under a quiet: cancelled before the first word.
+  if (info["role"] === "user") return { end: "stopped", at };
+  const error = info["error"] as Row | undefined;
+  if (error) return { end: String(error["name"] ?? "").includes("Abort") ? "stopped" : "unknown", at, over: true };
+  const open = parts.filter((part) => part["type"] === "tool" && ["running", "pending"].includes(String(time(part["state"])["status"])));
+  if (open.length > 0) return { end: open.some((part) => time(part["state"])["metadata"] === undefined) ? "waiting" : "busy", at };
+  const finish = parts.findLast((part) => part["type"] === "step-finish")?.["reason"];
+  if (finish === "stop") return { end: asking(parts.findLast((part) => part["type"] === "text")?.["text"]) ? "waiting" : "finished", at, over: true };
+  // Said no to and not carried on past: the turn stops there.
+  if (parts.some(rejected)) return { end: "stopped", at, over: true };
+  if (finish === "tool-calls") return { end: "busy", at };
+  // A reply still streaming, or cut short: rhythm's answer stands.
+  return { end: "unknown", at };
+}
+
+function readRows(format: RecordFormat, tail: string): Read | undefined {
+  if (format === "opencode") {
+    try {
+      return opencodeTurn(JSON.parse(tail));
+    } catch {
+      return undefined;
+    }
+  }
   const rows: Row[] = [];
   for (const line of tail.split("\n")) {
     if (!line.trim()) continue;
@@ -101,12 +147,13 @@ function readRows(format: "claude" | "codex", tail: string): Read | undefined {
  * sides are spans, so the two clocks need not agree. A record no newer than
  * that was not written by this work: a screen drawn on connecting, or typing.
  */
-export function turnEnd(format: "claude" | "codex", tail: string, machineNow: number, workedMs: number): TurnEnd {
+export function turnEnd(format: RecordFormat, tail: string, machineNow: number, workedMs: number): TurnEnd {
   const read = readRows(format, tail);
   // All of it was read and no turn is in it: nothing has happened here yet, unless
   // that much output says the record is kept elsewhere.
   if (!read) return Buffer.byteLength(tail) < tailBytes && workedMs <= NO_RECORD_MS ? "quiet" : "unknown";
-  const at = typeof read.at === "string" ? Date.parse(read.at) : NaN;
+  // Claude's and Codex's stamps are ISO strings, OpenCode's epoch ms.
+  const at = typeof read.at === "number" ? read.at : typeof read.at === "string" ? Date.parse(read.at) : NaN;
   if (Number.isNaN(at)) return "unknown";
   return machineNow - at > workedMs + SLACK_MS ? "quiet" : read.end;
 }
@@ -127,7 +174,7 @@ async function recordInTime(read: () => Promise<RecordTail | undefined>, limitMs
 }
 
 /** `turnEnd` of what `read` finds; "unknown" when it fails or is not back in time. */
-export async function readTurn(read: () => Promise<RecordTail | undefined>, format: "claude" | "codex", workedMs: number, limitMs = 5000): Promise<TurnEnd> {
+export async function readTurn(read: () => Promise<RecordTail | undefined>, format: RecordFormat, workedMs: number, limitMs = 5000): Promise<TurnEnd> {
   const record = await recordInTime(read, limitMs);
   return record ? turnEnd(format, record.tail, record.now, workedMs) : "unknown";
 }
@@ -139,10 +186,10 @@ export async function readTurn(read: () => Promise<RecordTail | undefined>, form
  * says no. So does a Claude turn the operator stopped, which marks no end here;
  * that only keeps today's stop button.
  */
-export const turnOver = (format: "claude" | "codex", tail: string): boolean => readRows(format, tail)?.over === true;
+export const turnOver = (format: RecordFormat, tail: string): boolean => readRows(format, tail)?.over === true;
 
 /** `turnOver` of what `read` finds; false when it fails or is not back in time. */
-export async function readTurnOver(read: () => Promise<RecordTail | undefined>, format: "claude" | "codex", limitMs = 5000): Promise<boolean> {
+export async function readTurnOver(read: () => Promise<RecordTail | undefined>, format: RecordFormat, limitMs = 5000): Promise<boolean> {
   const record = await recordInTime(read, limitMs);
   return record !== undefined && turnOver(format, record.tail);
 }

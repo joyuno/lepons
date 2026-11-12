@@ -1,0 +1,17 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Colors  ☐ Size  ✔ Submit  →
+
+Which colors do you like?
+
+❯ 1. [✔] Red
+         Red
+  2. [ ] Green
+         Green
+  3. [✔] Blue
+         Blue
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
