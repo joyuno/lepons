@@ -1132,6 +1132,11 @@
       #llmName { width: 100%; margin: 10px 0 0; box-sizing: border-box; }
       #llmDialog .seg { margin: 0 0 4px; }
       #llmDialog details { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+      .moreAddr { margin: 8px 0 0; font-size: 12.5px; }
+      .moreAddr summary { cursor: pointer; color: var(--muted); }
+      .moreAddr textarea { width: 100%; margin-top: 6px; }
+      /* Under the address field, past the row's icon. */
+      #remoteForm .moreAddr { margin-left: 26px; }
       #llmDialog details p { white-space: pre-line; margin: 6px 0 0; }
       #llmNote:empty, #llmFound:empty, #llmDialog [hidden] { display: none; }
       #llmFound { min-height: 0; max-height: 26vh; }
@@ -1938,6 +1943,11 @@
           <input id="remoteDest" name="destination" type="text" placeholder="user@203.0.113.10" aria-labelledby="remoteTitle" autocomplete="off" autofocus />
           <button type="submit" class="go" data-i18n="remote.connect"></button>
         </div>
+        <details class="moreAddr">
+          <summary data-i18n="remote.more"></summary>
+          <textarea id="remoteMore" rows="2" spellcheck="false" autocomplete="off" placeholder="user@203.0.113.10:2222"></textarea>
+          <p class="guideHint" data-i18n="remote.moreHint"></p>
+        </details>
         <div id="remotePasswordBox" hidden>
           <label for="remotePassword" data-i18n="auth.passwordLabel"></label>
           <input id="remotePassword" type="password" autocomplete="off" />
@@ -2037,6 +2047,11 @@
         <h2 id="renameTitle" data-i18n="rename.title"></h2>
         <p class="sub" id="renameSub" data-i18n="rename.sub"></p>
         <input id="renameInput" name="label" type="text" autocomplete="off" autofocus />
+        <details class="moreAddr" id="renameMoreBox" hidden>
+          <summary data-i18n="remote.more"></summary>
+          <textarea id="renameMore" rows="2" spellcheck="false" autocomplete="off" placeholder="user@203.0.113.10:2222"></textarea>
+          <p class="guideHint" data-i18n="remote.moreHint"></p>
+        </details>
         <div class="note" id="renameNote"></div>
         <div class="row">
           <button type="submit" class="go" data-i18n="common.confirm"></button>

@@ -587,6 +587,7 @@ const ko: Dictionary = {
   "reason.forward_denied": "포트 포워딩이 막힘",
   "reason.refused": "포트가 닫힘",
   "reason.no_route": "네트워크 경로 없음",
+  "reason.other_pc": "다른 PC가 응답함",
   "reason.dns_failed": "주소를 찾지 못함",
 
   "connect.refused": "{host}:{port}이(가) 접속을 거부했어요. PC는 켜져 있지만 그 포트에서 SSH 서버가 듣고 있지 않아요. 그 PC에서 SSH 서버를 켜고(Mac: 시스템 설정 → 일반 → 공유 → 원격 로그인, Windows: 그 PC의 Lepons에서 '다른 PC에서 이 PC에 연결 → 연결 허용하기', 리눅스: sudo systemctl start ssh) 포트 번호가 맞는지 확인하세요.",
@@ -601,6 +602,9 @@ const ko: Dictionary = {
 
   "remote.title": "원격 PC 추가",
   "remote.sub": "주소만 입력하세요. 키와 포트는 ~/.ssh/config에서 읽어요.",
+  "remote.more": "추가 주소 (선택)",
+  "remote.moreHint": "한 줄에 하나씩. 위 주소로 안 되면 적은 순서대로 연결해요(예: 집에서는 내부 IP, 밖에서는 공인 IP). 호스트 키가 다른 PC는 건너뛰어요.",
+  "connect.other_pc": "{host}에서 이 PC가 아닌 다른 PC가 응답해서 연결하지 않았어요(호스트 키가 달라요). 이 PC를 다시 설치해 키가 바뀐 거라면 연결 정보 수정에서 추가 주소를 비우고 다시 연결하세요. 새 키를 믿을지 물어봐요.",
   "remote.address": "주소",
   "remote.connect": "연결",
   "auth.offer": "그 PC에 아직 Lepons 키가 등록되어 있지 않아요. 아래에 그 PC의 비밀번호를 넣고 다시 연결하면 키를 대신 등록해요.",
@@ -1554,6 +1558,7 @@ const en: Dictionary = {
   "reason.forward_denied": "Port forwarding blocked",
   "reason.refused": "Port closed",
   "reason.no_route": "No network route",
+  "reason.other_pc": "Another PC answered",
   "reason.dns_failed": "Address not found",
 
   "connect.refused": "{host}:{port} refused the connection. The machine is up but no SSH server is listening on that port. Turn the SSH server on there (Mac: System Settings → General → Sharing → Remote Login; Windows: in Lepons there, 'Connections from other PCs → Allow connections'; Linux: sudo systemctl start ssh) and check the port.",
@@ -1568,6 +1573,9 @@ const en: Dictionary = {
 
   "remote.title": "Add a remote machine",
   "remote.sub": "Just the address. The key and port come from ~/.ssh/config.",
+  "remote.more": "More addresses (optional)",
+  "remote.moreHint": "One per line. Tried in order when the address above does not answer (say the LAN IP at home, the public IP elsewhere). A PC with a different host key is skipped.",
+  "connect.other_pc": "Another PC, not this one, answered at {host} (its host key differs), so Lepons did not connect. If this PC was reinstalled and its key changed, clear the extra addresses in Edit connection and connect again; you will be asked whether to trust the new key.",
   "remote.address": "Address",
   "remote.connect": "Connect",
   "auth.offer": "That machine does not have the Lepons key yet. Enter that machine's password below and connect again, and Lepons adds the key for you.",
@@ -2521,6 +2529,7 @@ const zh: Dictionary = {
   "reason.forward_denied": "端口转发被禁止",
   "reason.refused": "端口未开放",
   "reason.no_route": "无网络路径",
+  "reason.other_pc": "其他电脑应答",
   "reason.dns_failed": "找不到地址",
 
   "connect.refused": "{host}:{port} 拒绝了连接。机器在线，但该端口没有 SSH 服务器在监听。请在那台机器上开启 SSH 服务器（Mac：系统设置 → 通用 → 共享 → 远程登录；Windows：在那台电脑的 Lepons 中选择“允许其他电脑连接 → 允许连接”；Linux：sudo systemctl start ssh），并确认端口正确。",
@@ -2535,6 +2544,9 @@ const zh: Dictionary = {
 
   "remote.title": "添加远程机器",
   "remote.sub": "只需地址。密钥和端口从 ~/.ssh/config 读取。",
+  "remote.more": "附加地址（可选）",
+  "remote.moreHint": "每行一个。上面的地址连不上时按顺序连接（例如在家用内网 IP、在外用公网 IP）。主机密钥不同的电脑会被跳过。",
+  "connect.other_pc": "{host} 上应答的是另一台电脑（主机密钥不同），因此未连接。若此电脑重装导致密钥改变，请在「编辑连接」中清空附加地址后重新连接，届时会询问是否信任新密钥。",
   "remote.address": "地址",
   "remote.connect": "连接",
   "auth.offer": "那台机器上还没有 Lepons 密钥。在下方输入那台机器的密码后重新连接，即可代为添加密钥。",

@@ -21,7 +21,7 @@ import type { BrowseResult } from "../browse/types.ts";
 import { openForwardTunnel, openReverseTunnel, type Tunnel } from "../ssh/tunnel.ts";
 import { authorizeKeyScript, inspectKey, PassphraseCache, publicKeyLine } from "../ssh/keys.ts";
 import { resolveIdentity } from "../ssh/identity.ts";
-import type { ConnectFailure, ConnectOptions } from "../ssh/connect.ts";
+import type { Address, ConnectFailure, ConnectOptions } from "../ssh/connect.ts";
 import { localNetworkSuspect } from "../ssh/local-network.ts";
 import { collectSetupInfo, ensureLeponsKey } from "./setup-info.ts";
 import { importPet, listPets, themeForWindow } from "./pet-themes.ts";
@@ -365,22 +365,36 @@ function askToTrustChanged(node: NodeConfig, known: string, presented: string): 
 function sshOptions(node: Extract<NodeConfig, { kind: "ssh" }>): ConnectOptions {
   const resolved = resolveIdentity(node.destination);
   if (!resolved.ok) throw new Error(resolved.detail);
-  const identity = resolved.identity;
-  const keyPath = identity.identityFiles[0];
-  const passphrase = keyPath === undefined ? undefined : passphrases.get(keyPath);
+  const address = (identity: Extract<ReturnType<typeof resolveIdentity>, { ok: true }>["identity"]): Address => {
+    const keyPath = identity.identityFiles[0];
+    const passphrase = keyPath === undefined ? undefined : passphrases.get(keyPath);
+    return {
+      host: identity.host,
+      port: identity.port,
+      username: identity.username,
+      auth:
+        keyPath === undefined
+          ? { kind: "agent", agent: identity.agent ?? "" }
+          : {
+              kind: "privateKey",
+              privateKey: readFileSync(keyPath),
+              ...(passphrase === undefined ? {} : { passphrase }),
+            },
+    };
+  };
 
   return {
-    host: identity.host,
-    port: identity.port,
-    username: identity.username,
-    auth:
-      keyPath === undefined
-        ? { kind: "agent", agent: identity.agent ?? "" }
-        : {
-            kind: "privateKey",
-            privateKey: readFileSync(keyPath),
-            ...(passphrase === undefined ? {} : { passphrase }),
-          },
+    ...address(resolved.identity),
+    // Checked when saved; one that stopped resolving since is left out rather than failing the PC.
+    alternates: (node.alternates ?? []).flatMap((destination) => {
+      const next = resolveIdentity(destination);
+      if (!next.ok) return [];
+      try {
+        return [address(next.identity)];
+      } catch {
+        return [];
+      }
+    }),
     knownHosts,
     trustNewHost: (fingerprint: string) => askToTrust(node, fingerprint),
     trustChangedHost: (known: string, presented: string) => askToTrustChanged(node, known, presented),
@@ -399,6 +413,8 @@ function sshOptions(node: Extract<NodeConfig, { kind: "ssh" }>): ConnectOptions 
  * on the end -- it carries the errno, which is what a search engine wants.
  */
 function connectHint(reason: ConnectFailure, detail: string, host: string, port: number): string {
+  // One of a PC's several addresses: the detail is the one where another machine answered.
+  if (reason === "other_pc") return t("connect.other_pc", { host: detail });
   const key = localNetworkSuspect(reason, host, process.platform) ? "connect.localNetwork" : `connect.${reason}`;
   const advice = t(key, { host, port: String(port) });
   return detail && detail !== "connection closed" ? `${advice}\n(${detail})` : advice;
@@ -515,13 +531,23 @@ async function refreshWindowsPath(): Promise<boolean> {
   return true;
 }
 
+/** A PC's extra addresses as typed, trimmed and without repeats; or why one cannot be used. */
+function alternatesOf(destination: string, typed: string[]): string[] | string {
+  const alternates = [...new Set(typed.map((line) => line.trim()).filter((line) => line !== "" && line !== destination))];
+  for (const line of alternates) {
+    const resolved = resolveIdentity(line);
+    if (!resolved.ok) return `${line}: ${resolved.detail}`;
+  }
+  return alternates;
+}
+
 /**
  * Points a remote PC at another address, kept only if it answers there.
  * The id stays, so folders, shares, layout and pins stay. Why it did not
  * move, or nothing.
  */
-async function retarget(node: Extract<NodeConfig, { kind: "ssh" }>, next: string): Promise<string | undefined> {
-  const moved = { ...node, destination: next };
+async function retarget(node: Extract<NodeConfig, { kind: "ssh" }>, next: string, alternates: string[]): Promise<string | undefined> {
+  const moved = { ...node, destination: next, alternates };
   const ready = await ensureKeyReady(moved);
   if (!ready.ok) return ready.reason;
   const probe = await probeCapabilities(sshOptions(moved));
@@ -924,7 +950,9 @@ async function authorizeWithPassword(
   if (options.auth.kind !== "privateKey") return t("auth.noKeyFile");
   const line = publicKeyLine(Buffer.from(options.auth.privateKey), options.auth.passphrase);
   if (line === undefined) return t("err.keyInvalid");
-  const result = await runRemoteStatus({ ...options, auth: { kind: "password", password } }, authorizeKeyScript(line));
+  // At whichever of its addresses answers: the key is not there yet at any of them.
+  const auth = { kind: "password" as const, password };
+  const result = await runRemoteStatus({ ...options, auth, alternates: options.alternates?.map((address) => ({ ...address, auth })) }, authorizeKeyScript(line));
   if (result === undefined) return t("auth.passwordRefused");
   if (result.code !== 0) return t("auth.installFailed", { detail: result.output.trim() });
   return undefined;
@@ -1498,11 +1526,16 @@ app.whenReady().then(() => {
     return validated.ok ? nodes.save({ ...requireNode(nodeId), name: validated.label }) : nodes.list();
   });
   ipcMain.handle(channels.setAutoConnect, (_event, nodeId: string, on: boolean) => nodes.save({ ...requireNode(nodeId), autoConnect: on }));
-  ipcMain.handle(channels.retargetNode, async (_event, nodeId: string, destination: string) => {
+  ipcMain.handle(channels.retargetNode, async (_event, nodeId: string, destination: string, more: string[]) => {
     const node = requireNode(nodeId);
     const next = destination.trim();
-    if (node.kind !== "ssh" || next === "" || next === node.destination) return { nodes: nodes.list() };
-    const error = await retarget(node, next);
+    if (node.kind !== "ssh" || next === "") return { nodes: nodes.list() };
+    const alternates = alternatesOf(next, more);
+    if (typeof alternates === "string") return { nodes: nodes.list(), error: alternates };
+    // Only the extra addresses changed: kept without dialling them, as one may answer only from
+    // elsewhere; each is checked against this PC's key when it is used.
+    if (next === node.destination) return { nodes: nodes.save({ ...node, alternates }) };
+    const error = await retarget(node, next, alternates);
     return { nodes: nodes.list(), ...(error === undefined ? {} : { error }) };
   });
 
@@ -2578,12 +2611,14 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     channels.addRemote,
-    async (_event, destination: string, agent: AgentKind, password?: string): Promise<ConnectReport> => {
+    async (_event, destination: string, agent: AgentKind, password?: string, more: string[] = []): Promise<ConnectReport> => {
       const trimmed = destination.trim();
       // So a first-time operator has a key to hand over, guide opened or not.
       await ensureLeponsKey();
       const resolved = resolveIdentity(trimmed);
       if (!resolved.ok) return { ok: false, error: resolved.detail };
+      const alternates = alternatesOf(trimmed, more);
+      if (typeof alternates === "string") return { ok: false, error: alternates };
 
       const draft: NodeConfig = {
         kind: "ssh",
@@ -2592,6 +2627,7 @@ app.whenReady().then(() => {
         agent,
         home: "",
         destination: trimmed,
+        ...(alternates.length ? { alternates } : {}),
         useTmux: false,
         repos: [],
       };
@@ -2625,6 +2661,8 @@ app.whenReady().then(() => {
         useTmux: probe.shellRead || existing?.kind !== "ssh" ? probe.capabilities.tmux : existing.useTmux,
         home: probe.capabilities.home || (existing?.home ?? ""),
         ...(probe.capabilities.windows ? { windows: true } : {}),
+        // Added again without extra addresses (an import): the ones it had stay.
+        ...(alternates.length === 0 && existing?.kind === "ssh" && existing.alternates ? { alternates: existing.alternates } : {}),
         repos: existing?.repos ?? [],
       });
       return {
@@ -2784,21 +2822,6 @@ app.whenReady().then(() => {
   // machine along -- this computer stays, folders or not.
   // One question for however many folders: the rail's cleanup mode picks
   // several, the folder menu one.
-  /** Folders off the list once asked (here or on the phone); the last of a remote PC's takes the PC along. */
-  const dropRepos = (nodeId: string, repoIds: string[]): NodeConfig[] => {
-    const node = requireNode(nodeId);
-    const leaving = node.repos.filter((candidate) => repoIds.includes(candidate.id));
-    if (node.kind === "ssh" && leaving.length === node.repos.length) return forgetNode(nodeId);
-    for (const repo of leaving) {
-      for (const key of [sessionKey(nodeId, repo.id), sessionKey(nodeId, repo.id, true)]) {
-        sessions.get(key)?.close();
-        sessions.delete(key);
-        sessionExecutor.delete(key);
-      }
-      revokeGrantsOn(wireRepoId(nodeId, repo.path));
-    }
-    return nodes.save({ ...node, repos: node.repos.filter((candidate) => !repoIds.includes(candidate.id)) });
-  };
   ipcMain.handle(channels.removeRepos, async (event, nodeId: string, repoIds: string[]): Promise<NodeConfig[]> => {
     const node = requireNode(nodeId);
     const leaving = node.repos.filter((candidate) => repoIds.includes(candidate.id));
@@ -2820,7 +2843,16 @@ app.whenReady().then(() => {
     }
     const { response } = await appDialog(window ?? undefined, ask);
     if (response !== 0) return nodes.list();
-    return dropRepos(nodeId, repoIds);
+    if (last) return forgetNode(nodeId);
+    for (const repo of leaving) {
+      for (const key of [sessionKey(nodeId, repo.id), sessionKey(nodeId, repo.id, true)]) {
+        sessions.get(key)?.close();
+        sessions.delete(key);
+        sessionExecutor.delete(key);
+      }
+      revokeGrantsOn(wireRepoId(nodeId, repo.path));
+    }
+    return nodes.save({ ...node, repos: node.repos.filter((candidate) => !repoIds.includes(candidate.id)) });
   });
 
   // --- worktrees: one more AI in a folder, each in its own git worktree ---
@@ -3944,7 +3976,7 @@ app.whenReady().then(() => {
 
   phoneHost = startPhoneHost({
     userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages,
-    readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey, dropRepos,
+    readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey,
   });
   const twoFactor = phoneHost.twoFactor;
   llmHost = startLlmHost({ userData, ipcMain, nodes: () => nodes.list(), machineOf, sshOptions, vault: safeStorage, twoFactor });

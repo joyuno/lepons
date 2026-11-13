@@ -3,7 +3,7 @@
 import ssh2 from "ssh2";
 import type { Client } from "ssh2";
 
-import { hostId, verifyHostKey, type KnownHosts } from "./known-hosts.ts";
+import { fingerprintOf, hostId, verifyHostKey, type KnownHosts } from "./known-hosts.ts";
 import { localNetworkSuspect } from "./local-network.ts";
 
 const { Client: SshClient } = ssh2;
@@ -25,7 +25,9 @@ export type ConnectFailure =
   /** Reachable in principle but never answered -- a firewall dropping, usually. */
   | "connect_timeout"
   | "unreachable"
-  | "connection_lost";
+  | "connection_lost"
+  /** One of a PC's several addresses answered with another machine's key: a LAN address seen from another network. */
+  | "other_pc";
 
 export type NodeAuth =
   | { kind: "privateKey"; privateKey: string | Buffer; passphrase?: string }
@@ -33,11 +35,15 @@ export type NodeAuth =
   /** Delegates to a running ssh-agent, so no key material is read here. */
   | { kind: "agent"; agent: string };
 
-export interface ConnectOptions {
+/** One way to reach a machine. */
+export interface Address {
   host: string;
   port: number;
   username: string;
   auth: NodeAuth;
+}
+
+export interface ConnectOptions extends Address {
   knownHosts: KnownHosts;
   /** Absent means an unfamiliar host is refused. Trust is never automatic. */
   trustNewHost?: (fingerprint: string) => Promise<boolean>;
@@ -45,6 +51,14 @@ export interface ConnectOptions {
   trustChangedHost?: (knownFingerprint: string, fingerprint: string) => Promise<boolean>;
   readyTimeoutMs?: number;
   keepalive?: { intervalMs: number; countMax: number };
+  /**
+   * More addresses of the same PC, tried in order when the one above does not
+   * answer. Every one must show the key the PC is already known by; an address
+   * that answers with another key is another machine and is passed over
+   * without asking, so a home LAN address used at the office cannot land on
+   * a stranger's PC.
+   */
+  alternates?: Address[];
 }
 
 export interface Connected {
@@ -59,7 +73,7 @@ export type ConnectResult =
 
 const defaultKeepalive = { intervalMs: 1000, countMax: 3 };
 
-function connectOnce(options: ConnectOptions): Promise<ConnectResult> {
+function connectOnce(options: ConnectOptions, pinned?: string): Promise<ConnectResult> {
   const client = new SshClient();
   const keepalive = options.keepalive ?? defaultKeepalive;
   // Set by the host-key check so a transport error reports the real cause
@@ -112,6 +126,18 @@ function connectOnce(options: ConnectOptions): Promise<ConnectResult> {
 
     const verifyHost = (key: Buffer, verify: (valid: boolean) => void) => {
       const id = hostId(options.host, options.port);
+      // A PC with several addresses: only its own key passes, at any of them.
+      if (pinned !== undefined) {
+        const fingerprint = fingerprintOf(key);
+        if (fingerprint !== pinned) {
+          rejection = "other_pc";
+          verify(false);
+          return;
+        }
+        if (options.knownHosts.lookup(id) !== fingerprint) options.knownHosts.remember(id, fingerprint);
+        verify(true);
+        return;
+      }
       const verdict = verifyHostKey(options.knownHosts, id, key);
 
       if (verdict.kind === "trusted") {
@@ -236,9 +262,43 @@ function classify(err: NodeJS.ErrnoException): ConnectFailure {
  * its prompt (see localNetworkSuspect). Every channel type comes through
  * here, so a shell, a browse and a tunnel all get the same second chance.
  */
-export async function connect(options: ConnectOptions): Promise<ConnectResult> {
-  const first = await connectOnce(options);
+async function connectAt(options: ConnectOptions, pinned?: string): Promise<ConnectResult> {
+  const first = await connectOnce(options, pinned);
   if (first.ok || !localNetworkSuspect(first.reason, options.host, process.platform)) return first;
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  return connectOnce(options);
+  return connectOnce(options, pinned);
+}
+
+/** Nothing answered there: worth trying the next address. */
+const silent = new Set<ConnectFailure>(["refused", "no_route", "dns_failed", "connect_timeout", "unreachable", "connection_lost"]);
+/** Addresses that just failed, until when. */
+const down = new Map<string, number>();
+const downMs = 30_000;
+
+/**
+ * Connects at the PC's address, or at its next ones in order. One being tried
+ * or that just failed goes last for a while, so the burst of channels a session
+ * opens (shell, browse, probes, tunnels) waits on a dead address once, not each.
+ */
+export async function connect(options: ConnectOptions): Promise<ConnectResult> {
+  if (!options.alternates?.length) return connectAt(options);
+  const all: ConnectOptions[] = [options, ...options.alternates].map((address) => ({ ...options, ...address, alternates: undefined }));
+  const idOf = (address: Address) => hostId(address.host, address.port);
+  // The key of the first address this PC was seen at; none yet asks as for one address.
+  const pinned = all.map((address) => options.knownHosts.lookup(idOf(address))).find((known) => known !== undefined);
+  const now = Date.now();
+  const isDown = (address: Address) => (down.get(idOf(address)) ?? 0) > now;
+  let failed: Extract<ConnectResult, { ok: false }> | undefined;
+  for (const address of [...all.filter((a) => !isDown(a)), ...all.filter(isDown)]) {
+    down.set(idOf(address), Date.now() + downMs);
+    const result = await connectAt(address, pinned);
+    if (result.ok) {
+      down.delete(idOf(address));
+      return result;
+    }
+    // An address that answered says more than one that did not; another machine is named by where it answered.
+    const named = result.reason === "other_pc" ? { ...result, detail: idOf(address) } : result;
+    if (failed === undefined || (silent.has(failed.reason) && !silent.has(result.reason))) failed = named;
+  }
+  return failed!;
 }

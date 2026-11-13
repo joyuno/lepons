@@ -46,7 +46,6 @@ export interface PhoneHostDeps {
   /** Ends a session here and on its PC; throws when the PC cannot be told. */
   stopSessionKey(nodeId: string, key: string, anyway: true): Promise<boolean>;
   /** Takes folders off the list, unasked: the asking was done where this was called from. */
-  dropRepos(nodeId: string, repoIds: string[]): NodeConfig[];
 }
 
 /** How long a session can show the stop button after only background work is left. */
@@ -81,7 +80,7 @@ export interface TwoFactor {
 
 /** The phone side of the app: pushes, what a phone may read, pairing and the relay link, and their IPC handlers. */
 export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
-  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey, dropRepos } = deps;
+  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey } = deps;
 
   // The sessions as the window sees them (see PhoneSession). A session that
   // turns to "waiting" here is the same turn the desktop notification fires
@@ -402,18 +401,6 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const told = await stopSessionKey(session.nodeId, key, true).catch(() => false);
       if (!window.isDestroyed()) window.webContents.send(channels.phoneForgot, key);
       return told ? "stopped" : "here";
-    },
-    // A worktree's original stays while the worktree does: it could not be merged back otherwise.
-    // Its sessions are ended on their PC first: taking the folder off only lets go of the connection, and tmux would keep the AI.
-    forgetFolder: async (nodeId, repoId) => {
-      const node = nodes.list().find((candidate) => candidate.id === nodeId);
-      if (!node?.repos.some((repo) => repo.id === repoId)) return "gone";
-      if (node.repos.some((repo) => repo.worktree?.of === repoId)) return "worktree";
-      for (const key of [`${nodeId}::${repoId}`, `${nodeId}::${repoId}::terminal`]) {
-        if (phoneSessions.some((session) => session.key === key)) await stopSessionKey(nodeId, key, true).catch(() => false);
-      }
-      dropRepos(nodeId, [repoId]);
-      return "ok";
     },
     openFolder: (nodeId, repoId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneOpen, nodeId, repoId);

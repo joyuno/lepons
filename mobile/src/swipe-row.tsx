@@ -10,10 +10,10 @@ const WIDTH = 76;
 
 /**
  * A row that slides left to show its actions, as a list in a phone's own apps
- * does; `open` from outside shows them all at once (the 편집 button) and
- * closes any other. A screen reader gets the same actions as its own.
+ * does. `editing` (the 편집 button) puts them beside the row instead, so every
+ * name stays readable while choosing. A screen reader gets the same actions as its own.
  */
-export function SwipeRow(props: { actions: RowAction[]; open: boolean; onOpen: (open: boolean) => void; style?: ViewStyle; children: ReactNode }) {
+export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?: boolean; onOpen: (open: boolean) => void; style?: ViewStyle; children: ReactNode }) {
   const { c } = useTheme();
   const reduced = useReducedMotion();
   const total = WIDTH * props.actions.length;
@@ -27,7 +27,7 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; onOpen: (
     if (live.current.reduced) x.setValue(at.current);
     else Animated.spring(x, { toValue: at.current, useNativeDriver: true, bounciness: 0, speed: 20 }).start();
   };
-  useEffect(() => settle(props.open), [props.open, total]);
+  useEffect(() => settle(props.open && !props.editing), [props.open, props.editing, total]);
   const pan = useMemo(() => PanResponder.create({
     // Sideways and clearly so: an up-down drag stays the list's.
     onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dx) > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
@@ -40,20 +40,34 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; onOpen: (
     },
     onPanResponderTerminate: () => settle(at.current !== 0),
   }), []);
+  if (props.editing) {
+    return (
+      <View style={[{ overflow: "hidden", flexDirection: "row", alignItems: "center", backgroundColor: c.card }, props.style]}>
+        <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
+        {props.actions.map((action) => (
+          <Pressable key={action.label} accessibilityRole="button" onPress={action.onPress} hitSlop={4}
+            style={({ pressed }) => ({ minHeight: 44, justifyContent: "center", paddingHorizontal: space.md, opacity: pressed ? 0.5 : 1 })}>
+            <Text style={[font.semibold, { color: action.color }]} numberOfLines={1}>{action.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+    );
+  }
   return (
     <View
       style={[{ overflow: "hidden" }, props.style]}
       accessibilityActions={props.actions.map((action) => ({ name: action.label, label: action.label }))}
       onAccessibilityAction={(event) => props.actions.find((action) => action.label === event.nativeEvent.actionName)?.onPress()}
     >
-      <View style={{ position: "absolute", top: 0, bottom: 0, right: 0, flexDirection: "row" }}>
+      {/* Shown only as the row moves: at rest its colour would edge out past the row's rounded corner. */}
+      <Animated.View style={{ position: "absolute", top: 0, bottom: 0, right: 0, flexDirection: "row", opacity: x.interpolate({ inputRange: [-8, 0], outputRange: [1, 0], extrapolate: "clamp" }) }}>
         {props.actions.map((action) => (
           <Pressable key={action.label} accessibilityRole="button" onPress={action.onPress}
             style={({ pressed }) => ({ width: WIDTH, alignItems: "center", justifyContent: "center", backgroundColor: action.color, opacity: pressed ? 0.7 : 1 })}>
             <Text style={[font.semibold, { color: c.onStop, paddingHorizontal: space.xs }]} numberOfLines={1} adjustsFontSizeToFit>{action.label}</Text>
           </Pressable>
         ))}
-      </View>
+      </Animated.View>
       <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: x }], backgroundColor: c.card }}>
         {props.children}
       </Animated.View>

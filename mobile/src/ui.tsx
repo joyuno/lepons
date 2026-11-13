@@ -249,6 +249,8 @@ export function SessionRow(props: {
   moodLabel: string;
   onPress: () => void;
   strong?: boolean;
+  /** False under its PC's own heading, where the name would only repeat. */
+  showPc?: boolean;
   style?: ViewStyle;
 }) {
   const { c, s } = useTheme();
@@ -272,7 +274,7 @@ export function SessionRow(props: {
           {session.worktreeOf ? <SymbolView name={{ ios: "arrow.triangle.branch", android: "fork_right" }} tintColor={c.muted} size={14} style={{ alignSelf: "center" }} /> : null}
           <Text style={[s.text, font.semibold, { flexShrink: 1 }]} numberOfLines={1}>{session.worktree ?? session.folder}</Text>
           {session.worktreeOf ? <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.worktreeOf}</Text> : null}
-          <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.pc}</Text>
+          {props.showPc === false ? null : <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.pc}</Text>}
         </View>
         {line ? <Text style={now && now.kind !== "action" ? s.dim : [s.mono, { color: c.muted }]} numberOfLines={1}>{line}</Text> : null}
       </View>

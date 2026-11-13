@@ -550,16 +550,6 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       return ok(at, { ok: true });
     }
     // Taken off the list: open or closed.
-    if (at === "POST /api/forget") {
-      const fields = typeof body === "object" && body !== null ? (body as Unproven<typeof at>) : {};
-      const at2 = closed.findIndex((one) => one.id === fields.f);
-      const open = sessions.findIndex((one) => one.id === fields.f);
-      if (at2 < 0 && open < 0) return fail(404, "folder");
-      if (at2 >= 0) closed.splice(at2, 1);
-      if (open >= 0) sessions.splice(open, 1);
-      emit("state", state());
-      return ok(at, { ok: true });
-    }
     // The pretend PC answers no question by itself.
     if (at === "POST /api/auto-keep") return ok(at, { ok: true });
     // The pretend PC keeps nothing outside its folders.

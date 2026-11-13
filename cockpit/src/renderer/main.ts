@@ -328,6 +328,7 @@ const closeReasons: Record<string, string> = {
   forward_denied: "reason.forward_denied",
   refused: "reason.refused",
   no_route: "reason.no_route",
+  other_pc: "reason.other_pc",
   dns_failed: "reason.dns_failed",
 };
 
@@ -379,6 +380,9 @@ function setPins(next: string[]): void {
 }
 function togglePin(nodeId: string, repoId: string): void {
   const key = pinKey(nodeId, repoId);
+  // Pinned, it also shows up top: the row it was pinned from stays put.
+  const from = [...rail.querySelectorAll<HTMLElement>(`[data-place="${CSS.escape(sessionKey(nodeId, repoId))}"]`)].find((row) => !row.closest(".pinnedGroup"));
+  if (from && !pins.includes(key)) anchorRail(from);
   setPins(pins.includes(key) ? pins.filter((pin) => pin !== key) : [...pins, key]);
   renderRail();
 }
@@ -517,6 +521,8 @@ function treeBar(node: NodeConfig, repo: RepoConfig, treeKey: string): HTMLEleme
   });
   button(treeIcons.collapse, t("rail.collapseFolders"), () => {
     for (const key of [...openTrees]) if (key !== treeKey && under(key)) openTrees.delete(key);
+    // Scrolled deep into the tree, folding it would leave the view on the next PC: back to this folder's row.
+    if (bar.previousElementSibling instanceof HTMLElement) anchorRail(bar.previousElementSibling);
     renderRail();
   });
   return bar;
@@ -1100,6 +1106,7 @@ ${t("status.shellOnlyHint")}` : ""));
       for (const each of node.repos) if (each.id !== repo.id && (each.id === family || each.worktree?.of === family)) openTrees.delete(`${node.id}\0${each.id}`);
       openTrees.add(treeKey);
     }
+    anchorRail(row);
     renderRail();
   });
   // Chevron first, as in a file explorer and as on the machine's head; the
@@ -1201,6 +1208,25 @@ function railSpots(): Map<string, number> {
     if (height) spots.set(row.dataset.place!, top);
   }
   return spots;
+}
+
+/**
+ * The row just clicked, and where it was on screen: rows above it may fold
+ * (a project's files close as its worktree's open) or appear (a new pin),
+ * and the next render scrolls so it stays under the pointer.
+ */
+let railAnchor: { place: string; pinned: boolean; top: number } | undefined;
+function anchorRail(row: HTMLElement): void {
+  railAnchor = { place: row.dataset.place!, pinned: !!row.closest(".pinnedGroup"), top: row.getBoundingClientRect().top };
+}
+function holdRailAnchor(): void {
+  const anchor = railAnchor;
+  railAnchor = undefined;
+  if (!anchor) return;
+  const row = [...rail.querySelectorAll<HTMLElement>(`[data-place="${CSS.escape(anchor.place)}"]`)].find((each) => !!each.closest(".pinnedGroup") === anchor.pinned);
+  if (!row) return;
+  rail.scrollTop += row.getBoundingClientRect().top - anchor.top;
+  row.scrollIntoView({ block: "nearest" });
 }
 
 /** Rows are new elements each time: those that changed place go there from where the last ones were. */
@@ -1432,6 +1458,7 @@ function renderRail(): void {
     if (share?.enabled && share.error && share.command) group.append(sharePanel(share));
     rail.append(group);
   }
+  holdRailAnchor();
   showRailMoved(railWas);
   updateWorkflowBadge();
   workflowMap.refresh();
@@ -4600,10 +4627,17 @@ function openRenameDialog(target: NonNullable<typeof renameTarget>): void {
   renameInput.value = target.kind === "repo" ? target.repo.label
     : target.kind === "pc" ? machineLabel(target.node)
     : target.node.kind === "ssh" ? target.node.destination : "";
+  const more = target.kind === "address" && target.node.kind === "ssh" ? target.node.alternates ?? [] : [];
+  el<HTMLTextAreaElement>("renameMore").value = more.join("\n");
+  const moreBox = el<HTMLDetailsElement>("renameMoreBox");
+  moreBox.hidden = target.kind !== "address";
+  moreBox.open = more.length > 0;
   renameNote.textContent = "";
   renameNote.className = "note";
   renameDialog.showModal();
 }
+/** The extra addresses typed in a box, one per line. */
+const linesOf = (id: string): string[] => el<HTMLTextAreaElement>(id).value.split(/[\n,]/).map((line) => line.trim()).filter(Boolean);
 el<HTMLButtonElement>("renameCancel").addEventListener("click", () => renameDialog.close());
 el<HTMLFormElement>("renameForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -4612,7 +4646,7 @@ el<HTMLFormElement>("renameForm").addEventListener("submit", async (event) => {
   if (target.kind === "address") {
     renameNote.className = "note";
     renameNote.textContent = t("remote.connecting");
-    const result = await cockpit.retargetNode(target.node.id, renameInput.value);
+    const result = await cockpit.retargetNode(target.node.id, renameInput.value, linesOf("renameMore"));
     nodes = result.nodes;
     renderRail();
     if (result.error !== undefined) {
@@ -4769,7 +4803,7 @@ el<HTMLFormElement>("remoteForm").addEventListener("submit", async (event) => {
   const passwordInput = el<HTMLInputElement>("remotePassword");
   const password = passwordInput.value;
   passwordInput.value = "";
-  const report = await cockpit.addRemote(destination, agent, password === "" ? undefined : password);
+  const report = await cockpit.addRemote(destination, agent, password === "" ? undefined : password, linesOf("remoteMore"));
   if (!report.ok) {
     remoteNote.className = "note bad";
     remoteNote.textContent = report.error && closeReasons[report.error] ? reasonText(report.error) : (report.error ?? t("remote.failed"));
@@ -6228,7 +6262,7 @@ initSettings({
   remotes: () => nodes.flatMap((node) => {
     if (node.kind !== "ssh") return [];
     const reason = pcFailReason([...states].filter(([key]) => belongsToNode(key, node.id)).map(([, state]) => state), shares.get(node.id)?.outage);
-    return [{ id: node.id, label: machineLabel(node), address: node.destination, state: pcStateOf(node), windows: node.windows === true, ...(reason ? { reason: reasonText(reason) } : {}) }];
+    return [{ id: node.id, label: machineLabel(node), address: [node.destination, ...node.alternates ?? []].join(" → "), state: pcStateOf(node), windows: node.windows === true, ...(reason ? { reason: reasonText(reason) } : {}) }];
   }),
   reconnectPc: (id) => {
     const node = nodes.find((candidate) => candidate.id === id);

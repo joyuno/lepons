@@ -63,8 +63,8 @@ const api: CockpitApi = {
   moveWindow: (dx: number, dy: number, start: boolean) => ipcRenderer.send(channels.moveWindow, dx, dy, start),
   listNodes: () => ipcRenderer.invoke(channels.listNodes),
   addLocalFolder: () => ipcRenderer.invoke(channels.addLocalFolder),
-  addRemote: (destination: string, agent: AgentKind, password?: string) =>
-    ipcRenderer.invoke(channels.addRemote, destination, agent, password),
+  addRemote: (destination: string, agent: AgentKind, password?: string, alternates?: string[]) =>
+    ipcRenderer.invoke(channels.addRemote, destination, agent, password, alternates),
   addRemoteFolder: (nodeId: string, path: string) =>
     ipcRenderer.invoke(channels.addRemoteFolder, nodeId, path),
   removeNode: (id: string) => ipcRenderer.invoke(channels.removeNode, id),
@@ -73,7 +73,7 @@ const api: CockpitApi = {
   renameRepo: (nodeId: string, repoId: string, label: string) =>
     ipcRenderer.invoke(channels.renameRepo, nodeId, repoId, label),
   renameNode: (nodeId: string, name: string) => ipcRenderer.invoke(channels.renameNode, nodeId, name),
-  retargetNode: (nodeId: string, destination: string) => ipcRenderer.invoke(channels.retargetNode, nodeId, destination),
+  retargetNode: (nodeId: string, destination: string, alternates: string[]) => ipcRenderer.invoke(channels.retargetNode, nodeId, destination, alternates),
   setAutoConnect: (nodeId: string, on: boolean) => ipcRenderer.invoke(channels.setAutoConnect, nodeId, on),
   reorderNodes: (ids: string[]) => ipcRenderer.invoke(channels.reorderNodes, ids),
   reorderRepos: (nodeId: string, repoIds: string[]) => ipcRenderer.invoke(channels.reorderRepos, nodeId, repoIds),

@@ -81,8 +81,6 @@ export interface PhoneDeps {
   folders(): Array<{ nodeId: string; repoId: string; pc: string; folder: string; worktreeOf?: string }>;
   /** Ends a session on its PC and here; "here" when its PC could not be told. */
   closeSession(key: string): Promise<"stopped" | "here">;
-  /** Takes a folder off its PC's list, unasked: the phone asked. */
-  forgetFolder(nodeId: string, repoId: string): Promise<"ok" | "worktree" | "gone">;
   /** Opens a folder's AI session on the PC, unasked: the AI last used there, its last conversation. */
   openFolder(nodeId: string, repoId: string): void;
   /** The question a session shows is not to be answered by itself (자리 비움 기본 답). */
@@ -519,14 +517,14 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       return saved === undefined ? fail(502, "upload") : ok(at, { path: saved });
     }
 
-    // A closed folder from the phone's list: opened on the PC, its id answered at once.
+    // A closed folder from the phone's list, or a failed session's 다시 연결: opened on the PC, its id answered at once.
     if (at === "POST /api/open") {
       if (body === "bad") return fail(400, "body");
       const { f } = (body ?? {}) as Unproven<typeof at>;
       const folder = deps.folders().find((one) => sessionId(`${one.nodeId}::${one.repoId}`) === f);
       if (!folder) return fail(404, "folder");
       const key = `${folder.nodeId}::${folder.repoId}`;
-      if (!deps.sessions().some((one) => one.key === key)) deps.openFolder(folder.nodeId, folder.repoId);
+      if (!deps.sessions().some((one) => one.key === key && one.mood !== "failed")) deps.openFolder(folder.nodeId, folder.repoId);
       return ok(at, { id: sessionId(key) });
     }
 
@@ -536,16 +534,6 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       const key = keyFor(((body ?? {}) as Unproven<typeof at>).s);
       if (key === undefined) return fail(404, "session");
       return ok(at, (await deps.closeSession(key)) === "here" ? { ok: true, here: true } : { ok: true });
-    }
-
-    // A folder taken off the list from the phone: open or closed, by the id its AI's session has.
-    if (at === "POST /api/forget") {
-      if (body === "bad") return fail(400, "body");
-      const { f } = (body ?? {}) as Unproven<typeof at>;
-      const folder = deps.folders().find((one) => sessionId(`${one.nodeId}::${one.repoId}`) === f);
-      if (!folder) return fail(404, "folder");
-      const done = await deps.forgetFolder(folder.nodeId, folder.repoId);
-      return done === "worktree" ? fail(409, "worktree") : done === "gone" ? fail(404, "folder") : ok(at, { ok: true });
     }
 
     // Input: an agent session takes what inputFor lets through; a plain

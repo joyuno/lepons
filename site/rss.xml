@@ -8,6 +8,13 @@
     <language>ko</language>
     <lastBuildDate>Fri, 13 Nov 2026 12:00:00 +0900</lastBuildDate>
     <item>
+      <title>Lepons 1.10.6: 원격 PC에 주소를 여러 개</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.6</guid>
+      <pubDate>Fri, 13 Nov 2026 15:00:00 +0900</pubDate>
+      <description>집에서는 내부 IP, 밖에서는 공인 IP처럼 한 PC에 주소를 더 적어 두면 연결될 때까지 순서대로 시도해요. 그 주소에서 다른 PC가 응답하면 연결하지 않고 건너뛰어요. 폰 세션 탭은 밀어서 세션을 닫고, 연결에 실패한 세션은 다시 연결해요. 워크트리 파일 보기를 열어도 사이드 패널의 위치가 그대로예요.</description>
+    </item>
+    <item>
       <title>Lepons 1.10.5: 내 LLM과 API 키 보관함, 폰에서 세션 정리</title>
       <link>https://lepons.app/#download</link>
       <guid isPermaLink="false">lepons-1.10.5</guid>

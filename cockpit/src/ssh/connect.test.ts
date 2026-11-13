@@ -116,3 +116,47 @@ test("a changed host key connects only when the operator trusts the new one", as
     await node.close();
   }
 });
+
+/** Connects once with a yes to the key, to learn the fingerprint the node shows. */
+async function keyOf(node: Awaited<ReturnType<typeof startFakeNode>>): Promise<string> {
+  const seen = new MemoryKnownHosts();
+  const result = await connect({ ...node.options, knownHosts: seen, trustNewHost: async () => true });
+  if (result.ok) result.connection.client.end();
+  return seen.lookup(`${node.options.host}:${node.options.port}`)!;
+}
+
+// One PC, a home address and an outside one: the next is tried when the first
+// does not answer, and any address that answers with another machine's key
+// (a home LAN address seen from the office) is passed over without asking.
+test("a PC's next address is tried when one does not answer or is another machine", async () => {
+  const pc = await startFakeNode(generateHostKey());
+  const stranger = await startFakeNode(generateHostKey());
+  try {
+    const key = await keyOf(pc);
+    const knownHosts = new MemoryKnownHosts();
+    const strangerId = `${stranger.options.host}:${stranger.options.port}`;
+    // Both were this PC's addresses before: the stranger now sits at one of them.
+    knownHosts.remember("127.0.0.1:1", key);
+    knownHosts.remember(strangerId, key);
+    const asked: string[] = [];
+    const ask = async (fingerprint: string) => (asked.push(fingerprint), true);
+    const at = (node: typeof pc) => ({ host: node.options.host, port: node.options.port, username: node.options.username, auth: node.options.auth });
+
+    const dead = await connect({ ...pc.options, knownHosts, host: "127.0.0.1", port: 1, alternates: [at(pc)], trustNewHost: ask, trustChangedHost: ask });
+    assert.equal(dead.ok, true, dead.ok ? "" : dead.reason);
+    if (dead.ok) dead.connection.client.end();
+    assert.equal(knownHosts.lookup(`${pc.options.host}:${pc.options.port}`), key, "the new address is remembered as this PC's");
+
+    const other = await connect({ ...stranger.options, knownHosts, alternates: [at(pc)], trustNewHost: ask, trustChangedHost: ask });
+    assert.equal(other.ok, true, other.ok ? "" : other.reason);
+    if (other.ok) other.connection.client.end();
+    assert.equal(knownHosts.lookup(strangerId), key, "the stranger's key was not taken for this PC");
+
+    const none = await connect({ ...stranger.options, knownHosts, alternates: [{ ...at(pc), port: 1 }], trustNewHost: ask, trustChangedHost: ask });
+    assert.equal(none.ok ? "" : none.reason, "other_pc");
+    assert.deepEqual(asked, [], "nothing was asked: another machine is never trusted for this one");
+  } finally {
+    await pc.close();
+    await stranger.close();
+  }
+});

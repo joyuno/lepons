@@ -68,7 +68,6 @@ function setup(t: TestContext, options: { kind?: "local" | "ssh"; saved?: object
     accountsOf: async () => [],
     machineOf: (machine) => machineFor(machine, reach),
     stopSessionKey: async () => true,
-    dropRepos: () => [node],
     ...options.overrides,
   });
   t.after(() => host.stop());
@@ -265,7 +264,7 @@ test("a plain terminal is never an agent, and a session not ready takes no typin
   assert.match(readFileSync(audit, "utf8"), /pc::ready\t2\n$/);
 });
 
-// ---- closing and forgetting from the phone --------------------------------
+// ---- closing from the phone ----------------------------------------------
 
 test("a session closed from the phone is let go of by the window, said 'here' when its PC was not told", async (t) => {
   const stops: Array<[string, string, boolean]> = [];
@@ -279,18 +278,10 @@ test("a session closed from the phone is let go of by the window, said 'here' wh
   assert.deepEqual(sent.filter(([channel]) => channel === channels.phoneForgot).map(([, key]) => key), ["pc::repo", "pc::other"]);
 });
 
-test("a folder is forgotten from the phone unless a worktree of it is still listed, its sessions ended first", async (t) => {
-  const dropped: string[][] = [];
+test("a worktree folder names its original to the phone", (t) => {
   const repos = [{ id: "repo", label: "repo", path: "/r" }, { id: "wt", label: "작업 1", path: "/w", worktree: { of: "repo", branch: "lepons/1", base: "main" } }];
   const node = { id: "pc", kind: "local", label: "pc", home: "/", repos } as unknown as NodeConfig;
-  const stopped: string[] = [];
-  const { deps, snapshot } = setup(t, { overrides: { nodes: { list: () => [node] }, dropRepos: (_nodeId, ids) => (dropped.push(ids), [node]), stopSessionKey: async (_nodeId, key) => (stopped.push(key), true) } });
-  snapshot([{ ...session("working"), key: "pc::wt", nodeId: "pc", repoId: "wt" }]);
-  assert.equal(await deps.forgetFolder("pc", "repo"), "worktree");
-  assert.equal(await deps.forgetFolder("pc", "nope"), "gone");
-  assert.equal(await deps.forgetFolder("pc", "wt"), "ok");
-  assert.deepEqual(dropped, [["wt"]]);
-  assert.deepEqual(stopped, ["pc::wt"]);
+  const { deps } = setup(t, { overrides: { nodes: { list: () => [node] } } });
   assert.deepEqual(deps.folders().map((one) => one.worktreeOf), [undefined, "repo"]);
 });
 

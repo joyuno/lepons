@@ -50,6 +50,8 @@ export type NodeConfig =
       kind: "ssh";
       /** What the operator typed: user@host, optionally with :port. */
       destination: string;
+      /** More addresses of the same PC, tried in order when `destination` does not answer (home and outside). */
+      alternates?: string[];
       /**
        * Detected, not asked. tmux is what lets work outlive the connection,
        * so the cockpit checks for it instead of making the operator promise.
@@ -474,7 +476,7 @@ export interface CockpitApi {
   /** Native folder picker; adds the chosen folder on this machine. */
   addLocalFolder(): Promise<{ nodes: NodeConfig[]; repoId?: string }>;
   /** Connects to user@host, reports what it found, and remembers it. */
-  addRemote(destination: string, agent: AgentKind, password?: string): Promise<ConnectReport>;
+  addRemote(destination: string, agent: AgentKind, password?: string, alternates?: string[]): Promise<ConnectReport>;
   /** Adds a folder on an already-known machine. */
   addRemoteFolder(nodeId: string, path: string): Promise<{ nodes: NodeConfig[]; repoId: string }>;
   /** Mirrors the operator language into main, which words its own dialogs and notifications. */
@@ -492,7 +494,7 @@ export interface CockpitApi {
   /** Turns a PC's connect-at-start on or off. */
   setAutoConnect(nodeId: string, on: boolean): Promise<NodeConfig[]>;
   /** Points a remote PC at a new user@host, kept only if it answers there; why not, if not. */
-  retargetNode(nodeId: string, destination: string): Promise<{ nodes: NodeConfig[]; error?: string }>;
+  retargetNode(nodeId: string, destination: string, alternates: string[]): Promise<{ nodes: NodeConfig[]; error?: string }>;
   /** Machines in this order, as dragged on the rail. */
   reorderNodes(ids: string[]): Promise<NodeConfig[]>;
   /** A machine's folders in this order, as dragged on the rail. */

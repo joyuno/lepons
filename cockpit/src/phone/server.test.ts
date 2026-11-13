@@ -30,15 +30,12 @@ const deps: PhoneDeps = {
   folders: () => [
     { nodeId: "local", repoId: "C:/work/web", pc: "이 PC", folder: "web" },
     { nodeId: "local", repoId: "C:/work/docs", pc: "이 PC", folder: "docs" },
+    { nodeId: "local", repoId: "C:/work/api", pc: "이 PC", folder: "api" },
   ],
   openFolder: (nodeId, repoId) => void foldersOpened.push([nodeId, repoId]),
   closeSession: async (key) => {
     closed.push(key);
     return key === "local::C:/work/api" ? "here" : "stopped";
-  },
-  forgetFolder: async (nodeId, repoId) => {
-    forgotten.push([nodeId, repoId]);
-    return repoId === "C:/work/web" ? "worktree" : "ok";
   },
   accounts: async () => [
     { pc: "이 PC", agents: [{ name: "Claude Code", version: "2.1.0", signedIn: true }, { name: "Codex", version: "0.9", signedIn: false }, { name: "Grok" }] },
@@ -80,7 +77,6 @@ const reconnects: string[] = [];
 const terminalsOpened: Array<[string, string]> = [];
 const foldersOpened: Array<[string, string]> = [];
 const closed: string[] = [];
-const forgotten: Array<[string, string]> = [];
 const pushDone: boolean[] = [];
 const pushTokens: Array<string | undefined> = [];
 
@@ -331,6 +327,10 @@ test("a folder with no session is listed, and the phone can have its PC open it"
   const web = sessionId("local::C:/work/web");
   assert.deepEqual((await post("/api/open", { f: web }, token)).body, { id: web });
   assert.equal(foldersOpened.length, 1);
+  // A failed one is opened again: the phone's 다시 연결.
+  const api = sessionId("local::C:/work/api");
+  assert.deepEqual((await post("/api/open", { f: api }, token)).body, { id: api });
+  assert.deepEqual(foldersOpened, [["local", "C:/work/docs"], ["local", "C:/work/api"]]);
   assert.equal((await post("/api/open", { f: "nope" }, token)).status, 404);
   assert.equal((await post("/api/open", { f: docs })).status, 401);
 });
@@ -344,16 +344,6 @@ test("the phone closes a session, and says when its PC could not be told", async
   assert.equal((await post("/api/close", { s: "nope" }, token)).status, 404);
   assert.equal((await post("/api/close", { s: sessionId("local::C:/work/web") })).status, 401);
   assert.equal(closed.length, 2);
-});
-
-test("the phone takes a folder off the list, open or closed, but not an original a worktree still needs", async () => {
-  const token = await signIn();
-  forgotten.length = 0;
-  assert.deepEqual((await post("/api/forget", { f: sessionId("local::C:/work/docs") }, token)).body, { ok: true });
-  assert.equal((await post("/api/forget", { f: sessionId("local::C:/work/web") }, token)).status, 409);
-  assert.deepEqual(forgotten, [["local", "C:/work/docs"], ["local", "C:/work/web"]]);
-  assert.equal((await post("/api/forget", { f: "nope" }, token)).status, 404);
-  assert.equal((await post("/api/forget", { f: sessionId("local::C:/work/docs") })).status, 401);
 });
 
 test("the workflow and listed .md files are readable, nothing else", async () => {

@@ -138,11 +138,6 @@ export interface PhoneRoutes {
    * be reached, so only Lepons let go of it and it may still run there.
    */
   "POST /api/close": { body: { s: string }; reply: { ok: true; here?: true } };
-  /**
-   * Takes folder `f` off its PC's list -- nothing on disk -- ending its sessions;
-   * a remote PC's last folder takes the PC along. 409 "worktree" while a worktree of it is listed.
-   */
-  "POST /api/forget": { body: { f: string }; reply: Ok };
   /** A photo or file for `s`'s AI: the bytes in the message's `bin`, `n` its name on the phone; where the PC saved it. */
   "POST /api/upload": { query: "s&n"; reply: { path: string } };
   /**
