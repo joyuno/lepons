@@ -13,7 +13,7 @@ const WIDTH = 76;
  * does. `editing` (the 편집 button) puts them beside the row instead, so every
  * name stays readable while choosing. A screen reader gets the same actions as its own.
  */
-export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?: boolean; onOpen: (open: boolean) => void; style?: ViewStyle; children: ReactNode }) {
+export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?: boolean; onOpen: (open: boolean) => void; style?: ViewStyle; surface?: string; children: ReactNode }) {
   const { c } = useTheme();
   const reduced = useReducedMotion();
   const total = WIDTH * props.actions.length;
@@ -42,7 +42,7 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?:
   }), []);
   if (props.editing) {
     return (
-      <View style={[{ overflow: "hidden", flexDirection: "row", alignItems: "center", backgroundColor: c.card }, props.style]}>
+      <View style={[{ overflow: "hidden", flexDirection: "row", alignItems: "center", backgroundColor: props.surface ?? c.card }, props.style]}>
         <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
         {props.actions.map((action) => (
           <Pressable key={action.label} accessibilityRole="button" onPress={action.onPress} hitSlop={4}
@@ -68,7 +68,7 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?:
           </Pressable>
         ))}
       </Animated.View>
-      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: x }], backgroundColor: c.card }}>
+      <Animated.View {...pan.panHandlers} style={{ transform: [{ translateX: x }], backgroundColor: props.surface ?? c.card }}>
         {props.children}
       </Animated.View>
     </View>

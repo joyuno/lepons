@@ -17,6 +17,8 @@ const light = {
   bg: "#f3f4f6", card: "#ffffff", raise: "#e9ebef", line: "#d2d6dc",
   text: "#1f2328", muted: "#59636e", dim: "#8c959f", idle: "#b6bec7",
   live: "#9a5f0a", liveDim: "#e8c99a", link: "#2f7c8a", go: "#1a7f37", stop: "#c42f33",
+  /** A folder's worktrees, unfolded under it: a pale teal tray, not more rows of the grey table. */
+  tray: "#eef4f5", trayPress: "#dfeaec",
   ink: "#1f2328", onInk: "#ffffff", onLive: "#ffffff", onStop: "#ffffff",
   /** Chart series, then a grey for 기타. Not the status colours; neighbours checked for colour blindness against `card`, as are dark's. */
   series: ["#00849f", "#b58b24", "#5d55b3", "#d9708f", "#586008", "#8c959f"],
@@ -26,6 +28,7 @@ const dark: Palette = {
   bg: "#11161d", card: "#171e26", raise: "#1e2731", line: "#232d38",
   text: "#cdd6e0", muted: "#909cab", dim: "#55606d", idle: "#3a4552",
   live: "#e8a33d", liveDim: "#5a4526", link: "#5fb3c4", go: "#3fb950", stop: "#ec5d5e",
+  tray: "#1a2a30", trayPress: "#21363d",
   ink: "#cdd6e0", onInk: "#11161d", onLive: "#21160a", onStop: "#ffffff",
   series: ["#1fa0ba", "#b88c25", "#7f79e3", "#d6688e", "#588018", "#6b7685"],
 };
@@ -251,6 +254,12 @@ export function SessionRow(props: {
   strong?: boolean;
   /** False under its PC's own heading, where the name would only repeat. */
   showPc?: boolean;
+  /** Beside the name, and after the state. */
+  badge?: ReactNode;
+  after?: ReactNode;
+  /** In its original's tray of worktrees: the original's name would only repeat. */
+  tray?: boolean;
+  hint?: string;
   style?: ViewStyle;
 }) {
   const { c, s } = useTheme();
@@ -265,20 +274,23 @@ export function SessionRow(props: {
     <Row
       accessibilityRole="button"
       accessibilityLabel={session.worktreeOf ? `${session.worktree ?? session.folder}, ${fmt(t.worktreeOf, { folder: session.worktreeOf })}, ${props.moodLabel}` : `${session.folder}, ${props.moodLabel}`}
+      accessibilityHint={props.hint}
       onPress={props.onPress}
-      style={({ pressed }) => [props.strong && s.card, props.strong && s.strong, s.row, { paddingHorizontal: space.lg, paddingVertical: space.md, minHeight: 44 }, props.style, pressed && { backgroundColor: c.raise }]}
+      style={({ pressed }) => [props.strong && s.card, props.strong && s.strong, s.row, { paddingHorizontal: space.lg, paddingVertical: space.md, minHeight: 44 }, props.style, pressed && { backgroundColor: props.tray ? c.trayPress : c.raise }]}
     >
       <Lamp state={lampState(session)} />
       <View style={{ flex: 1, gap: space.xxs }}>
         <View style={{ flexDirection: "row", alignItems: "baseline", gap: space.sm }}>
           {session.worktreeOf ? <SymbolView name={{ ios: "arrow.triangle.branch", android: "fork_right" }} tintColor={c.muted} size={14} style={{ alignSelf: "center" }} /> : null}
           <Text style={[s.text, font.semibold, { flexShrink: 1 }]} numberOfLines={1}>{session.worktree ?? session.folder}</Text>
-          {session.worktreeOf ? <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.worktreeOf}</Text> : null}
+          {props.badge}
+          {session.worktreeOf && !props.tray ? <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.worktreeOf}</Text> : null}
           {props.showPc === false ? null : <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.pc}</Text>}
         </View>
         {line ? <Text style={now && now.kind !== "action" ? s.dim : [s.mono, { color: c.muted }]} numberOfLines={1}>{line}</Text> : null}
       </View>
       <Text numberOfLines={2} style={[s.dim, font.semibold, { flexShrink: 1, maxWidth: "40%", textAlign: "right", color: moodColor }]}>{props.moodLabel}</Text>
+      {props.after}
     </Row>
   );
 }
