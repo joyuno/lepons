@@ -42,7 +42,8 @@ The receiving AI cannot edit those files directly, but can delegate work to an A
 
 ### 2. Every machine's AI agents in one window
 
-- Click a folder and choose **Claude Code, Codex, Grok, Antigravity, Cursor** or a terminal, and it opens in that folder, whether on this PC or on a VM or server you reach over SSH.
+- Click a folder and choose **Claude Code, Codex, Grok, Antigravity, Cursor, OpenCode** or a terminal, and it opens in that folder, whether on this PC or on a VM or server you reach over SSH.
+- **Local LLMs and API-key models**: run a model on your own server (Ollama, LM Studio, vLLM) or behind an OpenRouter, OpenAI, Anthropic, Google Gemini, DeepSeek or Groq API key in OpenCode. Pick it under **My LLM** when you open a session; API keys stay encrypted on this PC only under **⚙ Settings → My API keys**, and your authenticator code shows the originals.
 - Split right or down, up to eight panes. A pane gathers one project's (one machine and folder's) AI sessions, terminals and files as tabs; drag a tab to a pane's edge to split off a new pane.
 - Markdown, code, images, PDF and HTML open in a pane, and files on remote machines can be edited in place and saved with **Ctrl+S** (**⌘+S** on macOS).
 - Nothing is installed on remote machines; SSH is enough. Remote sessions run inside tmux, so closing the laptop or losing the network does not stop the agent, and reopening puts you back on the same screen.
@@ -70,18 +71,21 @@ See what each session set out to do, how far it got, what it is doing now and wh
      Shows: the phone app's home (usage, session states) and a session's conversation
      alt: "Lepons phone app: home shows running and waiting sessions and usage limits; the session screen shows the conversation and lets you answer" -->
 
-When you step away, the **Lepons** app for iPhone and Android shows this PC's sessions and lets you answer them.
+Step away and the work keeps going. The **Lepons** app for iPhone and Android lets you manage the AI agents on your PCs and servers from one screen.
 
-- **Pair with a QR code.** Scan the QR on the PC with the phone app and check that both screens show the same six digits.
-- **End-to-end encrypted.** The phone and PC connect from anywhere through a relay (`relay.lepons.app`); only this PC and the phone can read what passes between them. The relay cannot.
-- **Notifications that matter.** The PC and the phone are told only when Claude Code or Codex puts up a choice. Several at once become one notification. Nothing is sent while you are looking at the phone app, and if you leave it unanswered, it is sent then. Notifications carry only the PC's name.
-- **Read and answer.** Sessions are laid out like the PC's panes and tabs; read the conversation and send a menu number, Enter or the next instruction. Stop (Esc) takes two taps, and the phone can never quit an agent.
-- **Map, files, usage.** See one machine's workflow map at a time, open Markdown, PDF and images from the session's folder, and check Claude and Codex usage limits and AI account state. A **demo** lets you look around without a PC.
+- **Home at a glance.** See right away how many tasks are working, waiting for you or done; the ones that need an answer come first. Each AI's remaining usage and the last 7 days are here too.
+- **Session management.** Open and close sessions on each PC, and reconnect any that dropped. Work split into worktrees stays folded under its project until you tap to unfold it.
+- **Chat.** Pick up the conversation you started on the PC. Tap a choice the AI offers, type your own reply, or attach a photo or file.
+- **Notifications.** You are notified when an AI puts up a choice or stops on an error or a usage limit. Several at once become one, and nothing is sent while you are looking at the phone app. A notification carries the folder, AI and PC names and one fixed line.
+- **Workflow.** See on a map how your PCs, servers, folders and AI tasks connect. Tap a task for a short summary of its goal, progress and what it is doing now.
+- **Terminal and files.** Open your PC's terminal on your phone and run commands. Browse project folders with support for attaching and viewing images, readable code, and HTML.
+- **Secure connection.** Scan a QR code once to connect. Everything is end-to-end encrypted on its way through the relay (`relay.lepons.app`), which cannot read it, and signing in takes a password plus an authenticator code.
+- **Demo.** Tap **Try the demo** on the first screen to look around without a PC.
 
 ### 5. Also
 
 - **Live usage limits**: what is left of your Claude and Codex 5-hour and 7-day limits, as batteries. It updates as soon as Claude on this PC replies; remote sessions update when they finish a turn.
-- **AI sign-in on remote machines**: **⚙ Settings → AI accounts** shows which AIs are installed and signed in on each machine, and signs in on remote machines without a terminal.
+- **AI installs and sign-ins**: **⚙ Settings → AI accounts** shows which AIs are installed and signed in on each machine. Install missing AIs and OpenCode from here, and sign in on remote machines without a terminal.
 - **One-click tmux**: a remote machine without tmux shows **Install tmux**; click it and Lepons installs it in the background. If sudo needs a password, Lepons asks once in its own dialog and does not keep it.
 - **Pet**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session.
 
@@ -105,7 +109,7 @@ On the first launch a short guide walks through the main buttons. To see it agai
 
 - The machines you add: over SSH only.
 - The relay (`relay.lepons.app`): only when you connect the phone app. Content is end-to-end encrypted; the relay cannot read it.
-- Phone notifications: when turned on, sent through the Expo push service to Apple and Google push. They carry only the PC's name.
+- Phone notifications: when turned on, sent through the Expo push service to Apple and Google push. They carry the folder, AI and PC names and one fixed line.
 - GitHub: to check for and download new versions.
 - Claude (Haiku model): only when you press **Translate** in a workflow step list, using Claude Code on this PC.
 - Lepons sends nothing else itself. Each agent connects to its own service.

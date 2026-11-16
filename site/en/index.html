@@ -33,7 +33,7 @@
 <div class="herotext">
 <h1>One screen for the AI agents<br>on all your PCs</h1>
 <div><p class="sub">Drag a folder onto another computer and the AI there can read the code. See which AI is working and which is waiting for you, without digging through windows.</p>
-<p class="act"><a class="btn" href="#download">Download</a><span>Free, no sign-up, and the source is open under the MIT License. Works with Claude Code, Codex, Grok, Antigravity, Cursor and OpenCode, and runs a model on your own server or behind your API key in OpenCode.</span></p></div>
+<p class="act"><a class="btn" href="#download">Download</a><span>Free, no sign-up, and the source is open under the MIT License. Supports Claude Code, Codex, Grok, Antigravity, Cursor and OpenCode, and connects local LLMs and API-key models through OpenCode.</span></p></div>
 </div>
 <figure class="mapfig">
 <svg class="map wide" viewBox="0 0 1270 480" width="1270" height="480" role="img" aria-label="Drawing of the workflow map. This PC and a work server each have a hub, with folders and sessions branching out. The work server reads this PC's shop-web folder over a share. Session lamps change between working, waiting and done, and when one waits, the phone beside the map gets a notification and you answer there.">
@@ -161,14 +161,14 @@
 </div>
 <div class="desk"><p class="phead">This PC · shop-web</p><div class="pbody mono"><span>Apply this change?</span><br><span class="dk0">&gt; <i class="caret"></i></span><span class="dk1">&gt; 1<br>Working…</span><span class="dk2">&gt; 2<br>OK. Tell me how you'd like it fixed.</span></div><p class="try">Press 1 or 2 on the phone. Your answer goes to the PC.</p></div>
 </div>
-<div class="copy"><h2>Carry on from your phone</h2><p class="lead">Leave your desk without leaving the AI stuck.</p><p>You get a notification when an AI puts up a choice for you. Read the conversation on your phone and answer, and the PC carries on. Data is encrypted before it goes through the relay server, and the relay server neither reads nor stores it.</p><p class="note">The PC has to be on with the PC app running. One PC connects to one phone, and the phone cannot quit an AI.</p></div>
+<div class="copy"><h2>Carry on from your phone</h2><p class="lead">Step away and the work keeps going.</p><p>When an AI needs your permission or an answer, you get a notification. Answer on your phone and the work carries on on your PC. Open and close sessions, reconnect any that dropped, attach photos or files, and open your PC's terminal right from your phone.</p><p class="note">Scan a QR code once to connect your phone and PC. Everything you send is end-to-end encrypted, and the relay server in between cannot read it.</p></div>
 </section>
 <div class="cross flip" aria-hidden="true"><i></i><i></i></div>
 
 <section class="leg left wide" id="manage">
 <div class="twin"><div class="copy"><h2>Manage servers and PCs</h2><p class="lead">Open a server the way you open a folder on your PC.</p><p>Enter its address and Lepons connects over SSH. Nothing gets installed on the remote machine. If the small program that keeps the AI going when the connection drops (tmux) is missing, one button installs it.</p>
 <img class="rail" src="/img/rail.webp" width="610" height="980" loading="lazy" alt="The left list in the Lepons PC app: This PC, build-server and mac-mini, with folders under each."><p class="note">The real PC app, in Korean. The names are demo data.</p></div>
-<div class="copy"><h2>Manage AI sign-ins</h2><p class="lead">No more opening a terminal on each computer to sign in.</p><p>See in one place which AI is installed and signed in on each computer. Install what is missing, and sign in to your own account on remote machines from here.</p>
+<div class="copy"><h2>Manage AI sign-ins</h2><p class="lead">No more opening a terminal on each computer to sign in.</p><p>See in one place which AI is installed and signed in on each computer. Install what is missing, OpenCode included, and sign in to your own account on remote machines from here. No complicated terminal commands to get started.</p>
 <div class="tablewrap"><table class="logins"><caption class="vh">Example of AI sign-in status by computer</caption><thead><tr><td></td><th scope="col">Claude Code</th><th scope="col">Codex</th><th scope="col">Grok</th></tr></thead><tbody><tr><th scope="row">This PC</th><td><i class="lmp done"></i>Signed in</td><td><i class="lmp done"></i>Signed in</td><td><i class="lmp off"></i>Not installed</td></tr><tr><th scope="row">Work server</th><td><i class="lmp done"></i>Signed in</td><td><i class="lmp amber"></i>Signed out</td><td><i class="lmp done"></i>Signed in</td></tr><tr><th scope="row">Mac mini</th><td><i class="lmp amber"></i>Signed out</td><td><i class="lmp off"></i>Not installed</td><td><i class="lmp off"></i>Not installed</td></tr></tbody></table></div>
 <p class="note">Each AI uses your own account and is billed by its own service.</p></div></div>
 </section>

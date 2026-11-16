@@ -35,7 +35,7 @@
 <div class="herotext">
 <h1>여러 PC의 AI 에이전트를<br>화면 하나로</h1>
 <div><p class="sub">폴더를 다른 PC로 끌어다 놓으면 그 PC의 AI가 코드를 읽어요. 어느 AI가 일하고 어느 AI가 내 답을 기다리는지, 창을 뒤지지 않아도 보여요.</p>
-<p class="act"><a class="btn" href="#download">다운로드</a><span>가입 없이 무료로 써요. 소스 코드도 MIT 라이선스로 공개돼 있어요. Claude Code, Codex, Grok, Antigravity, Cursor, OpenCode를 같이 다루고, 내 서버나 API 키의 모델도 OpenCode로 써요.</span></p></div>
+<p class="act"><a class="btn" href="#download">다운로드</a><span>가입 없이 무료로 써요. 소스 코드도 MIT 라이선스로 공개돼 있어요. Claude Code, Codex, Grok, Antigravity, Cursor, OpenCode를 지원하고, 로컬 LLM이나 API 키 모델도 OpenCode로 연결해요.</span></p></div>
 </div>
 <figure class="mapfig">
 <svg class="map wide" viewBox="0 0 1270 480" width="1270" height="480" role="img" aria-label="워크플로우 지도 그림. 이 PC와 회사 서버가 각자 허브로 있고 폴더와 세션이 가지처럼 뻗어 있어요. 이 PC의 shop-web 폴더를 회사 서버가 공유받아 읽고 있어요. 세션 램프가 작업 중, 입력 대기, 끝남으로 바뀌고 입력 대기가 되면 옆의 폰에 알림이 와서 폰에서 답해요.">
@@ -163,14 +163,14 @@
 </div>
 <div class="desk"><p class="phead">이 PC · shop-web</p><div class="pbody mono"><span>이 수정을 적용할까요?</span><br><span class="dk0">&gt; <i class="caret"></i></span><span class="dk1">&gt; 1<br>작업 중…</span><span class="dk2">&gt; 2<br>알겠어요. 어떻게 고칠지 알려 주세요.</span></div><p class="try">폰 화면의 1이나 2를 눌러 보세요. 답이 PC로 가요.</p></div>
 </div>
-<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">자리를 떠도 AI를 세워 둘 일이 없어요.</p><p>AI가 선택지를 띄우면 알림이 와요. 폰에서 대화를 읽고 답하면 PC에서 그대로 이어져요. 데이터는 암호화돼서 중계 서버로 보내지고, 중계 서버는 내용을 읽거나 저장하지 않아요.</p><p class="note">PC가 켜져 있고 PC 앱이 실행 중이어야 해요. PC 한 대에는 폰 하나를 연결해요. 폰에서 AI를 끌 수는 없어요.</p></div>
+<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">자리를 비워도 일은 멈추지 않아요.</p><p>허락이나 답이 필요한 순간에는 알림이 오고, 폰에서 답하면 PC에서 작업이 바로 이어져요. 세션을 열고 닫거나 끊긴 세션을 다시 연결하고, 사진이나 파일을 첨부해 보내고, PC 터미널도 폰에서 열어요.</p><p class="note">폰과 PC는 QR 코드를 한 번 찍으면 연결돼요. 주고받는 내용은 처음부터 끝까지 암호화되고, 중간의 중계 서버도 그 내용을 읽을 수 없어요.</p></div>
 </section>
 <div class="cross flip" aria-hidden="true"><i></i><i></i></div>
 
 <section class="leg left wide" id="manage">
 <div class="twin"><div class="copy"><h2>서버와 PC 관리</h2><p class="lead">서버도 내 PC 폴더처럼 열어요.</p><p>주소를 넣으면 SSH로 연결돼요. 원격 PC에는 Lepons를 깔지 않아요. 연결이 끊겨도 AI가 일을 이어 가게 하는 프로그램(tmux)이 없으면 버튼 한 번으로 깔아 줘요.</p>
 <img class="rail" src="/img/rail.webp" width="610" height="980" loading="lazy" alt="Lepons PC 앱의 왼쪽 목록. 이 PC, build-server, mac-mini가 있고 그 아래에 폴더가 달려 있어요."><p class="note">실제 PC 앱 화면이에요. 이름은 데모 데이터예요.</p></div>
-<div class="copy"><h2>AI 로그인 관리</h2><p class="lead">컴퓨터마다 터미널을 열어 로그인하지 않아도 돼요.</p><p>PC마다 어떤 AI가 깔려 있고 로그인돼 있는지 한곳에서 봐요. 없으면 설치하고 원격 PC도 여기서 내 계정으로 로그인해요.</p>
+<div class="copy"><h2>AI 로그인 관리</h2><p class="lead">컴퓨터마다 터미널을 열어 로그인하지 않아도 돼요.</p><p>PC마다 어떤 AI가 깔려 있고 로그인돼 있는지 한곳에서 봐요. 없으면 OpenCode까지 여기서 설치하고, 원격 PC도 내 계정으로 로그인해요. 터미널에서 복잡한 명령어로 시작하지 않아도 돼요.</p>
 <div class="tablewrap"><table class="logins"><caption class="vh">PC별 AI 로그인 상태 예시</caption><thead><tr><td></td><th scope="col">Claude Code</th><th scope="col">Codex</th><th scope="col">Grok</th></tr></thead><tbody><tr><th scope="row">이 PC</th><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp off"></i>설치 안 됨</td></tr><tr><th scope="row">회사 서버</th><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp amber"></i>로그인 안 됨</td><td><i class="lmp done"></i>로그인됨</td></tr><tr><th scope="row">맥 미니</th><td><i class="lmp amber"></i>로그인 안 됨</td><td><i class="lmp off"></i>설치 안 됨</td><td><i class="lmp off"></i>설치 안 됨</td></tr></tbody></table></div>
 <p class="note">AI마다 내 계정으로 쓰고 요금도 각 서비스에 내요.</p></div></div>
 </section>
