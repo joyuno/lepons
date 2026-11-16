@@ -202,6 +202,33 @@ test("work in a project's subfolders counts once, under the folder Lepons knows,
   assert.deepEqual(named.projects.map((p) => p.label).sort(), ["Shop", "Shop app"], "the deepest registered folder wins, and a conversation keeps where it began");
 }));
 
+test("a session counts under the folder it was started in: its subagents with it, and a git worktree as its main checkout", inHome(async (home) => {
+  const repo = join(home, "work", "posts");
+  await mkdir(join(repo, ".git", "worktrees", "1"), { recursive: true });
+  // A clone the agent made inside the project for its output: a git repository of its own.
+  const output = join(repo, ".work");
+  await mkdir(join(output, ".git"), { recursive: true });
+  // A worktree as Lepons makes one: its .git is a file pointing into the main checkout's.
+  const tree = join(home, ".lepons", "worktrees", "posts-1", "1");
+  await mkdir(tree, { recursive: true });
+  await writeFile(join(tree, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "1")}\n`);
+  const date = new Date().toISOString();
+  const claudeLine = (id: string, cwd: string) => line({ type: "assistant", cwd, timestamp: date, message: { id, model: "claude-opus-5-5", usage: { input_tokens: 10, output_tokens: 5 } } });
+  const session = "aaaaaaaa-1111-2222-3333-444444444444";
+  const dir = join(home, ".claude", "projects", "posts");
+  await mkdir(join(dir, session, "subagents"), { recursive: true });
+  await writeFile(join(dir, `${session}.jsonl`), line({ type: "user", cwd: repo }) + claudeLine("m1", output));
+  await writeFile(join(dir, session, "subagents", "agent-x.jsonl"), claudeLine("s1", output));
+  await writeFile(join(dir, "wt.jsonl"), claudeLine("w1", tree));
+  const codexDir = join(home, ".codex", "sessions", "2026", "11", "16");
+  await mkdir(codexDir, { recursive: true });
+  await writeFile(join(codexDir, "rollout-x.jsonl"), line({ type: "session_meta", payload: { id: "c-1", cwd: tree } })
+    + line({ type: "event_msg", timestamp: date, payload: { type: "token_count", info: { total_token_usage: { input_tokens: 10, output_tokens: 5 } } } }));
+  const stats = await collectTokenStats(home, new Date(), [{ path: repo, label: "Posts" }]);
+  assert.deepEqual(stats.projects.map((p) => p.label), ["Posts"]);
+  assert.equal(stats.days.reduce((sum, day) => sum + day.output, 0), 20);
+}));
+
 test("a Claude session's scratch-space runs count toward the project that session works on; other temp runs are one Temp", async () => {
   const box = await mkdtemp(join(tmpdir(), "lepons-token-"));
   const home = join(box, "home"), temp = join(box, "temp"), saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };

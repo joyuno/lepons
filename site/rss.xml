@@ -8,6 +8,13 @@
     <language>ko</language>
     <lastBuildDate>Fri, 13 Nov 2026 12:00:00 +0900</lastBuildDate>
     <item>
+      <title>Lepons 1.10.7: 사용량은 세션을 시작한 폴더로</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.7</guid>
+      <pubDate>Mon, 16 Nov 2026 22:00:00 +0900</pubDate>
+      <description>프로젝트별 사용량을 AI 세션을 시작한 폴더 기준으로 묶어요. 서브에이전트가 일한 폴더나 워크트리가 따로 잡히지 않고 원래 프로젝트에 더해져요. 폰 앱에서는 문서, 코드 파일, 작업 요약의 글을 원하는 만큼 끌어서 골라 복사할 수 있어요.</description>
+    </item>
+    <item>
       <title>Lepons 1.10.6: 원격 PC에 주소를 여러 개</title>
       <link>https://lepons.app/#download</link>
       <guid isPermaLink="false">lepons-1.10.6</guid>

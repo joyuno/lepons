@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, existsSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, createReadStream, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { modelKey, usdOf } from "./prices.ts";
@@ -149,7 +149,17 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
   const keyOf = (path: string) => (process.platform === "win32" ? path.toLowerCase() : path);
   const registered = roots.map((root) => ({ key: keyOf(tidy(root.path)), path: tidy(root.path), label: root.label }))
     .sort((a, b) => b.key.length - a.key.length);
-  const gitRoots = new Map<string, string>();
+  const rootsOf = new Map<string, { path: string; label?: string }>();
+  /** A linked worktree's `.git` is a file naming `<main>/.git/worktrees/<name>`: its main checkout, or undefined. */
+  const mainOf = (repo: string): string | undefined => {
+    try {
+      const git = join(repo, ".git");
+      if (!statSync(git).isFile()) return undefined;
+      const dir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(git, "utf8"))?.[1];
+      const main = dir ? /^(.*)[\\/]\.git[\\/]worktrees[\\/][^\\/]+$/.exec(resolve(repo, dir))?.[1] : undefined;
+      return main ? tidy(main) : undefined;
+    } catch { return undefined; }
+  };
   /**
    * Throwaway runs in the temp folder (tests, probes, a tool's scratch space) are one bucket, not a project each.
    * Not when the home itself is in there (a test's, a sandbox's): its work is real there.
@@ -161,21 +171,24 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
   /**
    * The project a folder belongs to: the registered folder holding it, else the git repository it is in,
    * else the folder itself. Work moves through subfolders (an agent's `cd`) and stays one project.
+   * A git worktree (Lepons' own under ~/.lepons/worktrees, or any other) is its main checkout's project.
    */
   const rootOf = (folder: string): { path: string; label?: string } => {
     const key = keyOf(folder);
-    const hit = registered.find((root) => key === root.key || key.startsWith(`${root.key}/`));
-    if (hit) return hit;
-    let found = gitRoots.get(key);
-    if (found === undefined) {
-      found = folder;
+    const known = rootsOf.get(key);
+    if (known) return known;
+    let root: { path: string; label?: string } | undefined = registered.find((one) => key === one.key || key.startsWith(`${one.key}/`));
+    if (!root) {
+      let found = folder;
       for (let dir = folder; ; dir = dirname(dir)) {
         if (existsSync(join(dir, ".git"))) { found = tidy(dir); break; }
         if (dirname(dir) === dir) break;
       }
-      gitRoots.set(key, found);
+      const main = mainOf(found);
+      root = main !== undefined && keyOf(main) !== keyOf(found) ? rootOf(main) : { path: found };
     }
-    return { path: found };
+    rootsOf.set(key, root);
+    return root;
   };
   const begun = new Map<string, string | undefined>();
   /** Where Claude session `id` began: the first `cwd` near the top of its own transcript. */
@@ -289,6 +302,10 @@ export async function collectTokenStats(home = homedir(), now = new Date(), root
       let payload: Record<string, unknown> | undefined;
       /** Where this conversation began: an agent that changes folder midway is still at work on the same thing. */
       let startedIn: unknown;
+      // A Claude session counts where it was started, its main folder, and a subagent's record
+      // (<session>/subagents/agent-*.jsonl) with the session that ran it: not where a step or a helper worked.
+      const own = file.agent === "claude" ? basename(dirname(file.path)) === "subagents" ? basename(dirname(dirname(file.path))) : basename(file.path, ".jsonl") : undefined;
+      if (own !== undefined) startedIn = startOf(own);
       let previous: { input: number; output: number; cached: number; write: number } | undefined;
       for await (const text of lines) {
         if (!payload) {
