@@ -11,7 +11,7 @@ import { Press } from "@/motion";
 import { folderName, lampState, type PhoneSessionView } from "@/phone/types";
 import { loadMapSpots, saveMapSpot } from "@/store";
 import type { MapInput } from "../../../../cockpit/src/renderer/workflowmap/model.ts";
-import { Button, font, Lamp, radius, size, space, useTheme } from "@/ui";
+import { Button, font, Lamp, radius, SelectableText, size, space, useTheme } from "@/ui";
 import WorkflowMapView, { type MapPalette, type MapWords } from "@/workflowmap/map-dom";
 import { clock, phoneMap, progressLine } from "@/workflowmap/phone-graph";
 
@@ -205,7 +205,8 @@ function SessionSheet({ session, onChat, onClose }: { session: PhoneSessionView;
       {session.mood === "waiting" ? (
         <View style={[s.card, s.strong]}>
           <Text style={[s.text, font.semibold, { color: p.live }]}>{t.sumWaiting}</Text>
-          {session.preview ? <Text style={[s.mono, { color: p.muted }]} numberOfLines={3} selectable>{session.preview}</Text> : null}
+          {/* Whole, and part of it can be dragged over and copied (SelectableText takes no numberOfLines). */}
+          {session.preview ? <SelectableText style={[s.mono, { color: p.muted }]}>{session.preview}</SelectableText> : null}
         </View>
       ) : null}
       <View style={s.card}>
@@ -215,7 +216,10 @@ function SessionSheet({ session, onChat, onClose }: { session: PhoneSessionView;
             // Label above value: a label column fits no locale's longest word on a narrow phone.
             <View key={label} style={{ gap: 2 }}>
               <Text style={[s.dim, { fontSize: size.footnote }]}>{label}</Text>
-              <Text style={[s.dim, { color: p.text }, strong && font.semibold]} numberOfLines={label === t.sumGoal ? 3 : undefined}>{value}</Text>
+              {/* The goal stays at three lines; the rest can be dragged over and copied in part. */}
+              {label === t.sumGoal
+                ? <Text style={[s.dim, { color: p.text }, strong && font.semibold]} numberOfLines={3}>{value}</Text>
+                : <SelectableText style={[s.dim, { color: p.text }, strong && font.semibold]}>{value}</SelectableText>}
             </View>
           ))
         ) : (
