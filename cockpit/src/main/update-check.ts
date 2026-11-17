@@ -95,12 +95,14 @@ export async function checkForUpdate(
     // has one, and the full installer for when it does not. A Mac never takes
     // the patch: the app there is signed and notarized, rewriting its archive
     // from inside breaks that signature, and macOS then takes it for a new app
-    // and drops every folder permission it was given. It gets the signed DMG
-    // for its architecture instead, opened for the operator to drag over.
+    // and drops every folder permission it was given. It gets the whole signed
+    // app as a zip for its architecture (mac-update.ts), or, from a release
+    // made before there was one, the DMG to drag over.
     const patchName = target && platform !== "darwin" && patchAssetName(latest, target.platform, target.arch, target.fingerprint);
     const patch = patchName ? verifiedAsset(release?.assets, (name) => name === patchName) : undefined;
     const installer = platform === "win32" ? verifiedAsset(release?.assets, (name) => name.endsWith(".exe"))
-      : platform === "darwin" ? verifiedAsset(release?.assets, (name) => name.endsWith(".dmg") && (!target || name.includes(`-${target.arch}.`)))
+      : platform === "darwin" ? verifiedAsset(release?.assets, (name) => name.endsWith(".zip") && (!target || name.includes(`-${target.arch}.`)))
+        ?? verifiedAsset(release?.assets, (name) => name.endsWith(".dmg") && (!target || name.includes(`-${target.arch}.`)))
       : undefined;
     return { kind: "newer", latest, url, ...(installer ? { installer } : {}), ...(patch ? { patch } : {}) };
   } catch (error) {

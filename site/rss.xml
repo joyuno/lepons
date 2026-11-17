@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Tue, 17 Nov 2026 15:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Tue, 17 Nov 2026 18:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.9: Mac도 앱 안에서 업데이트, 이름은 Lepons로</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.9</guid>
+      <pubDate>Tue, 17 Nov 2026 18:00:00 +0900</pubDate>
+      <description>Mac에서도 앱 안의 업데이트로 새 버전을 받아요. Apple이 서명하고 공증한 앱을 통째로 바꿔서 폴더 접근 권한도 그대로예요. 이번 1.10.9만 dmg로 한 번 설치하면 그다음부터는 다운로드 없이 업데이트돼요. PC 앱 이름은 Lepons Cockpit에서 Lepons로 바꿨어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.8: 원격 PC 사용량, 폰에 PC 여러 대</title>
       <link>https://lepons.app/#download</link>

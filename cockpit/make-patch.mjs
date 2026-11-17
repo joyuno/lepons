@@ -11,7 +11,7 @@ const { version } = JSON.parse(readFileSync("package.json", "utf8"));
 // dist:mac build for.
 const asar = process.platform === "win32"
   ? "release/win-unpacked/resources/app.asar"
-  : `release/mac${process.arch === "arm64" ? "-arm64" : ""}/Lepons Cockpit.app/Contents/Resources/app.asar`;
+  : `release/mac${process.arch === "arm64" ? "-arm64" : ""}/Lepons.app/Contents/Resources/app.asar`;
 if (!existsSync(asar)) {
   console.error(`make-patch: no ${asar}, no patch made`);
   process.exit(1);

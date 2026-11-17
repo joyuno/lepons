@@ -35,6 +35,7 @@ import {
 import { leponsIdentityName } from "../ssh/ssh-config.ts";
 import { checkForUpdate, type UpdateCheck } from "./update-check.ts";
 import { downloadVerified, installerArgs } from "./self-update.ts";
+import { appBundleOf, macSwapArgs, stageMacApp } from "./mac-update.ts";
 import { swapArgs, unpackPatch } from "./app-patch.ts";
 import { failedTry, joinRunning, olderThanTunnel, type Outage } from "./share-outage.ts";
 import { dialogRequest, replyIndex } from "./app-dialog.ts";
@@ -1337,7 +1338,7 @@ function createWindow(): BrowserWindow {
     frame: false,
     ...(mac ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 12, y: 9 } } : {}),
     backgroundColor: light ? "#f3f4f6" : "#14161a",
-    title: "Lepons Cockpit",
+    title: "Lepons",
     // Electron's stock File/Edit/View/Window bar describes a text editor and
     // this is a cockpit -- nothing in it does anything the app does not, and a
     // strip of dead menus at the top is the loudest tell that a window is a
@@ -3425,7 +3426,7 @@ app.whenReady().then(() => {
    * The update the operator started: downloading, or downloaded and waiting
    * to be installed when Lepons closes. One at a time.
    */
-  let update: { state: "downloading" } | { state: "ready"; latest: string; restart: () => void } | undefined;
+  let update: { state: "downloading" } | { state: "ready"; latest: string; restart: () => void; dmg: boolean } | undefined;
 
   /**
    * Downloads and verifies the new version, then puts it in place as Lepons
@@ -3443,6 +3444,7 @@ app.whenReady().then(() => {
     };
     const dir = join(app.getPath("temp"), "lepons-update");
     let apply: ((restart: boolean) => void) | undefined;
+    let dmg = false;
     let failure: unknown;
     if (release.patch) {
       try {
@@ -3471,12 +3473,26 @@ app.whenReady().then(() => {
         await mkdir(dir, { recursive: true });
         const dest = join(dir, release.installer.name);
         await downloadVerified(release.installer, dest, progress);
-        // A Mac's installer is the DMG: opened once Lepons has quit, for the
-        // new app to be dragged over the old one -- same signature, so macOS
-        // keeps the folder permissions it gave.
-        apply = (restart) => (process.platform === "darwin"
-          ? spawn("open", [dest], { detached: true, stdio: "ignore" })
-          : spawn(dest, installerArgs(restart), { detached: true, stdio: "ignore" })).unref();
+        if (process.platform === "darwin" && dest.endsWith(".zip")) {
+          // The whole signed app, put in the old one's place once Lepons has quit (mac-update.ts).
+          // Run from the DMG or Downloads there is no place to put it: moving the app comes first.
+          // ponytail: an Applications folder this account cannot write leaves the old app; the update is offered again.
+          if (!app.isInApplicationsFolder()) throw Object.assign(new Error("not in Applications"), { code: "EROFS" });
+          const current = appBundleOf(process.execPath);
+          const unpacked = join(dir, "app");
+          await rm(unpacked, { recursive: true, force: true });
+          await mkdir(unpacked, { recursive: true });
+          const fresh = await stageMacApp(dest, unpacked, current);
+          apply = (restart) => spawn("/bin/sh", macSwapArgs(process.pid, fresh, current, restart), { detached: true, stdio: "ignore" }).unref();
+        } else {
+          // A Mac's installer is otherwise the DMG: opened once Lepons has quit,
+          // for the new app to be dragged over the old one -- same signature, so
+          // macOS keeps the folder permissions it gave.
+          dmg = process.platform === "darwin";
+          apply = (restart) => (dmg
+            ? spawn("open", [dest], { detached: true, stdio: "ignore" })
+            : spawn(dest, installerArgs(restart), { detached: true, stdio: "ignore" })).unref();
+        }
       } catch (error) {
         failure = error;
       }
@@ -3505,7 +3521,7 @@ app.whenReady().then(() => {
     const install = apply;
     let restart = false;
     app.once("quit", () => install(restart));
-    update = { state: "ready", latest: release.latest, restart: () => { restart = true; window.close(); } };
+    update = { state: "ready", latest: release.latest, restart: () => { restart = true; window.close(); }, dmg };
     await offerRestart(window);
   };
 
@@ -3546,9 +3562,9 @@ app.whenReady().then(() => {
     const { response } = await appDialog(window, {
       type: "info",
       message: t("update.ready", { latest: update.latest }),
-      // A Mac installs by its DMG, opened when Lepons quits (see installUpdate).
-      detail: t(process.platform === "darwin" ? "update.readyDetailMac" : "update.readyDetail"),
-      buttons: [t(process.platform === "darwin" ? "update.restartNowMac" : "update.restartNow"), t("update.onQuit")],
+      // A Mac on a release with no zip installs by its DMG, opened when Lepons quits (see installUpdate).
+      detail: t(update.dmg ? "update.readyDetailMac" : "update.readyDetail"),
+      buttons: [t(update.dmg ? "update.restartNowMac" : "update.restartNow"), t("update.onQuit")],
       defaultId: 0,
       cancelId: 1,
     });

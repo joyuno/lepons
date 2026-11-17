@@ -4,11 +4,11 @@
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 
 const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-// "Lepons-Cockpit-Setup-1.6.4.exe", "Lepons Cockpit-1.6.4-arm64.dmg",
-// "Lepons-Cockpit-1.6.4-win32-x64-<fingerprint>.asar.gz" -- and not
+// "Lepons-Cockpit-Setup-1.6.4.exe", "Lepons-1.6.4-arm64.dmg",
+// "Lepons-Cockpit-1.6.4-win32-x64-<fingerprint>.asar.gz", "Lepons-Cockpit-1.6.4-arm64.zip" -- and not
 // "...1.6.40.exe" or a blockmap.
-const current = new RegExp(`[ -]${version.replaceAll(".", "\\.")}(-[^.]+)?\\.(exe|dmg|asar\\.gz)$`);
-const installer = (name) => current.test(name) && !name.endsWith(".asar.gz");
+const current = new RegExp(`[ -]${version.replaceAll(".", "\\.")}(-[^.]+)?\\.(exe|dmg|zip|asar\\.gz)$`);
+const installer = (name) => current.test(name) && !name.endsWith(".asar.gz") && !name.endsWith(".zip");
 const names = readdirSync("release");
 
 // Nothing goes unless this version's installer is there: a naming change the
