@@ -23,7 +23,7 @@
 |---|---|
 | Windows 10/11 | the `.exe` installer on the [latest release](https://github.com/joyuno/lepons/releases/latest) |
 | macOS (Apple Silicon, M1 or later) | the `.dmg` on the [latest release](https://github.com/joyuno/lepons/releases/latest) |
-| iPhone | In App Store review. Coming soon. |
+| iPhone | Get it on the [App Store](https://apps.apple.com/app/id6829282468). |
 | Android | download the `.apk` directly from the [latest release](https://github.com/joyuno/lepons/releases/latest). Google Play is coming too. |
 
 ### Install
@@ -37,6 +37,8 @@
 ### 1. Sharing map — share code with AI on another computer
 
 Drag a folder onto another computer in the sharing map. Its AI can read and search the files it needs, without copying code or moving it through Git.
+
+It was made for working on a closed company network, for files you'd rather not put on GitHub, for anyone tired of committing, pushing and pulling every time, and for people still new to Git. Moving code with Git brings the files but not the conversation, so the AI on the other computer has to read the same files again from scratch. With Lepons that AI reads only the files it needs, where they are, which saves both the round trip and tokens.
 
 The receiving AI cannot edit those files directly, but can delegate work to an AI on the computer that owns the folder. Delegated work runs without permission prompts, so share only between computers you trust. Values resembling keys or tokens are masked before being sent.
 
@@ -71,7 +73,9 @@ See what each session set out to do, how far it got, what it is doing now and wh
      Shows: the phone app's home (usage, session states) and a session's conversation
      alt: "Lepons phone app: home shows running and waiting sessions and usage limits; the session screen shows the conversation and lets you answer" -->
 
-Step away and the work keeps going. The **Lepons** app for iPhone and Android lets you manage the AI agents on your PCs and servers from one screen.
+**Every agent on every PC you own, in one hand.** Step away and the work keeps going. The **Lepons** app for iPhone and Android lets you manage the AI agents on your PCs and servers from one screen.
+
+- **Several PCs.** Pair each PC that runs Lepons once with its QR code, then tap the PC name at the top of Home to switch. Each PC keeps its own sign-in, notifications come from every paired PC, and tapping one takes you to that PC.
 
 - **Home at a glance.** See right away how many tasks are working, waiting for you or done; the ones that need an answer come first. Each AI's remaining usage and the last 7 days are here too.
 - **Session management.** Open and close sessions on each PC, and reconnect any that dropped. Work split into worktrees stays folded under its project until you tap to unfold it.
@@ -81,12 +85,16 @@ Step away and the work keeps going. The **Lepons** app for iPhone and Android le
 - **Terminal and files.** Open your PC's terminal on your phone and run commands. Browse project folders with support for attaching and viewing images, readable code, and HTML.
 - **Secure connection.** Scan a QR code once to connect. Everything is end-to-end encrypted on its way through the relay (`relay.lepons.app`), which cannot read it, and signing in takes a password plus an authenticator code.
 - **Demo.** Tap **Try the demo** on the first screen to look around without a PC.
+- **Updates.** **App version** in Settings goes straight to the store's (or the APK's) update page.
 
 ### 5. Also
 
 - **Live usage limits**: what is left of your Claude and Codex 5-hour and 7-day limits, as batteries. It updates as soon as Claude on this PC replies; remote sessions update when they finish a turn.
 - **AI installs and sign-ins**: **⚙ Settings → AI accounts** shows which AIs are installed and signed in on each machine. Install missing AIs and OpenCode from here, and sign in on remote machines without a terminal.
 - **One-click tmux**: a remote machine without tmux shows **Install tmux**; click it and Lepons installs it in the background. If sudo needs a password, Lepons asks once in its own dialog and does not keep it.
+- **Setup without a terminal**: the app is built Korean-first, with English and Chinese too. Installing and signing in to the AIs, connecting remote PCs and pairing your phone all go through buttons and guides, so even non-developers finish the basic setup with hardly a terminal window.
+- **Usage**: **⚙ Settings → Usage** shows the last 7 days recorded on this PC and on remote PCs connected over SSH, by project and model. A remote PC's projects carry its name; only the numbers are read, never the conversations.
+- **Drag out**: drag a file or folder from the side panel onto the desktop, Explorer, Finder or any app that takes files. A remote PC's file is fetched first.
 - **Pet**: a duck on the desktop (produck) shows which session is waiting for you; click it to open that session.
 
 ## Getting started
@@ -103,7 +111,7 @@ On the first launch a short guide walks through the main buttons. To see it agai
 - **This PC**: Windows 10/11 or macOS (Apple Silicon)
 - **Remote machines**: SSH access (password or key); tmux recommended
 - **AI agents**: the agents you use, installed and signed in. If one is missing, Lepons offers to install it and types the official installer into that machine's terminal.
-- **Phone (optional)**: the Lepons app. It does not have to be on the same network as the PC. One phone connects to a PC.
+- **Phone (optional)**: the Lepons app. It does not have to be on the same network as the PC. One phone connects to a PC, and one phone can keep several PCs paired.
 
 ## What Lepons connects to
 

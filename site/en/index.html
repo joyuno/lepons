@@ -105,7 +105,7 @@
 
 <main>
 <section class="leg left" id="share">
-<div class="copy"><h2>Share a codebase</h2><p class="lead">The AI on another computer reads your code without you copying it over.</p><p>Drag a folder onto another computer in the sharing map. That's it. The AI there finds and reads the files it needs, so you spend less time pasting code and explaining it.</p><p class="note">The receiving AI only reads. Changes are handed to the AI on the computer that has the folder, and that handed-off work runs without permission prompts, so share only between computers you trust. When it reads your code, values that look like passwords or keys are hidden.</p></div>
+<div class="copy"><h2>Share a codebase</h2><p class="lead">The AI on another computer reads your code, no git required.</p><p>Drag a folder onto another computer in the sharing map. That's it. It was made for closed company networks, for files you'd rather not put on GitHub, for anyone tired of committing, pushing and pulling every time, and for people still new to git.</p><p>Moving code with git brings the files but not the conversation, so the AI on the other computer has to read the same files again from scratch. With Lepons it reads only the files it needs, where they are, which saves both the round trip and tokens.</p><p class="note">The receiving AI only reads. Changes are handed to the AI on the computer that has the folder, and that handed-off work runs without permission prompts, so share only between computers you trust. When it reads your code, values that look like passwords or keys are hidden.</p></div>
 <div class="vis"><svg class="sharemap" viewBox="0 0 360 290" width="360" height="290" role="img" aria-label="Drawing of the sharing map. The shop-web folder on the This PC card is dragged onto the Work server card, a line appears between them, and the work server's AI reads the shop-web code.">
 <g transform="translate(2 8)"><rect class="card" width="150" height="176" rx="14"/><circle class="lamp go" cx="18" cy="24" r="4.5"/><text class="tt" x="31" y="29">This PC</text><path class="hair" d="M0 44H150"/><text class="wd" x="14" y="66">Folders</text>
 <rect class="row hot" x="12" y="76" width="126" height="34" rx="8"/><text class="fn" x="24" y="98">shop-web</text><rect class="row" x="12" y="118" width="126" height="34" rx="8"/><text class="fn" x="24" y="140">docs-site</text></g>
@@ -139,7 +139,7 @@
 <p class="try">Press a tab. One pane holds the chat, the terminal and the file.</p></section></div></div>
 </div>
 <div class="twin">
-<div class="copy"><h2>AI usage</h2><p class="lead">See how much AI each project used.</p><p>Usage in the PC app's settings stacks the last seven days recorded on this PC by model. Pick a project to see only that project.</p><p class="note">Amounts are estimates at API list prices, not what a subscription actually charges.</p></div>
+<div class="copy"><h2>AI usage</h2><p class="lead">See how much AI each project used.</p><p>Usage in the PC app's settings stacks the last seven days recorded on this PC and on remote PCs connected over SSH, by model. A remote PC's projects carry its name, and only the numbers are read, never the conversations. Pick a project to see only that project.</p><p class="note">Amounts are estimates at API list prices, not what a subscription actually charges.</p></div>
 <div class="vis"><div class="usage">
 <input class="vh" type="radio" name="usage" id="u0" checked><input class="vh" type="radio" name="usage" id="u1"><input class="vh" type="radio" name="usage" id="u2"><input class="vh" type="radio" name="usage" id="u3">
 <div class="uchips" role="group" aria-label="Choose a project"><label for="u0">All projects</label><label for="u1">shop-web</label><label for="u2">api-server</label><label for="u3">docs-site</label></div>
@@ -161,7 +161,7 @@
 </div>
 <div class="desk"><p class="phead">This PC · shop-web</p><div class="pbody mono"><span>Apply this change?</span><br><span class="dk0">&gt; <i class="caret"></i></span><span class="dk1">&gt; 1<br>Working…</span><span class="dk2">&gt; 2<br>OK. Tell me how you'd like it fixed.</span></div><p class="try">Press 1 or 2 on the phone. Your answer goes to the PC.</p></div>
 </div>
-<div class="copy"><h2>Carry on from your phone</h2><p class="lead">Step away and the work keeps going.</p><p>When an AI needs your permission or an answer, you get a notification. Answer on your phone and the work carries on on your PC. Open and close sessions, reconnect any that dropped, attach photos or files, and open your PC's terminal right from your phone.</p><p class="note">Scan a QR code once to connect your phone and PC. Everything you send is end-to-end encrypted, and the relay server in between cannot read it.</p></div>
+<div class="copy"><h2>Carry on from your phone</h2><p class="lead">Every agent on every PC you own, in one hand.</p><p>Pair several PCs that run Lepons and switch between them at the top of Home. Step away and the work keeps going. When an AI needs your permission or an answer, you get a notification. Answer on your phone and the work carries on on your PC. Open and close sessions, reconnect any that dropped, attach photos or files, and open your PC's terminal right from your phone.</p><p class="note">Scan a QR code once to connect your phone and PC. Everything you send is end-to-end encrypted, and the relay server in between cannot read it.</p></div>
 </section>
 <div class="cross flip" aria-hidden="true"><i></i><i></i></div>
 
@@ -170,7 +170,8 @@
 <img class="rail" src="/img/rail.webp" width="610" height="980" loading="lazy" alt="The left list in the Lepons PC app: This PC, build-server and mac-mini, with folders under each."><p class="note">The real PC app, in Korean. The names are demo data.</p></div>
 <div class="copy"><h2>Manage AI sign-ins</h2><p class="lead">No more opening a terminal on each computer to sign in.</p><p>See in one place which AI is installed and signed in on each computer. Install what is missing, OpenCode included, and sign in to your own account on remote machines from here. No complicated terminal commands to get started.</p>
 <div class="tablewrap"><table class="logins"><caption class="vh">Example of AI sign-in status by computer</caption><thead><tr><td></td><th scope="col">Claude Code</th><th scope="col">Codex</th><th scope="col">Grok</th></tr></thead><tbody><tr><th scope="row">This PC</th><td><i class="lmp done"></i>Signed in</td><td><i class="lmp done"></i>Signed in</td><td><i class="lmp off"></i>Not installed</td></tr><tr><th scope="row">Work server</th><td><i class="lmp done"></i>Signed in</td><td><i class="lmp amber"></i>Signed out</td><td><i class="lmp done"></i>Signed in</td></tr><tr><th scope="row">Mac mini</th><td><i class="lmp amber"></i>Signed out</td><td><i class="lmp off"></i>Not installed</td><td><i class="lmp off"></i>Not installed</td></tr></tbody></table></div>
-<p class="note">Each AI uses your own account and is billed by its own service.</p></div></div>
+<p class="note">Each AI uses your own account and is billed by its own service.</p>
+<h2>Setup without a terminal</h2><p class="lead">Even non-developers finish the basic setup on screen.</p><p>Lepons is built Korean-first, with English and Chinese too. Installing and signing in to the AIs, connecting remote PCs and pairing your phone all go through buttons and guides, so you hardly ever open a terminal window.</p></div></div>
 </section>
 </main>
 
@@ -184,7 +185,7 @@
 <div class="plat"><h3>Android</h3><p>Install the APK file directly. Google Play is still a closed test.</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk">Download APK</a></div>
 <div class="plat"><h3>iPhone</h3>
 <!-- iPhone status line: after App Store approval, replace the line right below with <p>Get it from the App Store.</p><a class="btn ink" href="App Store URL">Get it on the App Store</a></div> and change index.html too. -->
-<p>Not on the App Store yet. The link goes here once it is.</p><span class="btn soon">Coming later</span></div>
+<p>Get it on the App Store.</p><a class="btn ink" href="https://apps.apple.com/app/id6829282468">Download on the App Store</a></div>
 </div>
 <p class="dlnote">The macOS installer is signed and notarized by Apple, so it opens without a warning. The Windows installer is not signed yet, so Windows may warn you the first time: press More info, then Run anyway.</p>
 <p class="dlnote">Questions, problems or ideas? Send them to <a href="mailto:joy981017@gmail.com">joy981017@gmail.com</a>. Every note is read.</p>

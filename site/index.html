@@ -107,7 +107,7 @@
 
 <main>
 <section class="leg left" id="share">
-<div class="copy"><h2>코드베이스 공유</h2><p class="lead">코드를 복사해 옮기지 않아도 다른 PC의 AI가 읽어요.</p><p>공유 맵에서 폴더를 다른 PC로 끌어다 놓으면 끝이에요. 그 PC의 AI가 필요한 파일을 직접 찾아 읽으니 코드를 붙여 넣으며 설명하는 시간이 줄어요.</p><p class="note">공유받은 AI는 읽기만 해요. 고칠 일은 폴더가 있는 PC의 AI에게 맡겨요. 맡긴 일은 권한 확인 없이 돌아가니까 믿을 수 있는 PC끼리만 공유하세요. 코드를 읽을 때 비밀번호나 키처럼 보이는 값은 가려요.</p></div>
+<div class="copy"><h2>코드베이스 공유</h2><p class="lead">git 없이도 다른 PC의 AI가 내 코드를 읽어요.</p><p>공유 맵에서 폴더를 다른 PC로 끌어다 놓으면 끝이에요. 회사 폐쇄망에서 일하거나 GitHub에 올리기 싫은 파일이 있을 때, 매번 커밋하고 푸시하고 풀하기 번거로울 때, git이 아직 낯설 때 쓰라고 만들었어요.</p><p>git으로 옮기면 파일은 가도 대화는 따라오지 않아서 다른 PC의 AI에게 같은 파일을 처음부터 다시 읽혀야 하는데, Lepons에서는 그 PC의 AI가 필요한 파일만 그 자리에서 찾아 읽으니 옮기고 설명하는 수고와 토큰이 함께 줄어요.</p><p class="note">공유받은 AI는 읽기만 해요. 고칠 일은 폴더가 있는 PC의 AI에게 맡겨요. 맡긴 일은 권한 확인 없이 돌아가니까 믿을 수 있는 PC끼리만 공유하세요. 코드를 읽을 때 비밀번호나 키처럼 보이는 값은 가려요.</p></div>
 <div class="vis"><svg class="sharemap" viewBox="0 0 360 290" width="360" height="290" role="img" aria-label="공유 맵 그림. 이 PC 카드의 shop-web 폴더를 회사 서버 카드로 끌어다 놓으면 두 카드 사이에 선이 생기고 회사 서버의 AI가 shop-web 코드를 읽어요.">
 <g transform="translate(2 8)"><rect class="card" width="150" height="176" rx="14"/><circle class="lamp go" cx="18" cy="24" r="4.5"/><text class="tt" x="31" y="29">이 PC</text><path class="hair" d="M0 44H150"/><text class="wd" x="14" y="66">폴더</text>
 <rect class="row hot" x="12" y="76" width="126" height="34" rx="8"/><text class="fn" x="24" y="98">shop-web</text><rect class="row" x="12" y="118" width="126" height="34" rx="8"/><text class="fn" x="24" y="140">docs-site</text></g>
@@ -141,7 +141,7 @@
 <p class="try">탭을 눌러 보세요. 한 칸 안에서 대화, 터미널, 파일을 오가요.</p></section></div></div>
 </div>
 <div class="twin">
-<div class="copy"><h2>AI 사용량</h2><p class="lead">프로젝트마다 AI를 얼마나 썼는지 한눈에 봐요.</p><p>PC 앱 설정의 사용량에서 이 PC에 기록된 최근 7일을 모델별로 쌓아 보여 줘요. 프로젝트를 고르면 그 프로젝트만 남아요.</p><p class="note">금액은 API 정가로 계산한 추정치예요. 구독에서 실제로 빠지는 금액은 아니에요.</p></div>
+<div class="copy"><h2>AI 사용량</h2><p class="lead">프로젝트마다 AI를 얼마나 썼는지 한눈에 봐요.</p><p>PC 앱 설정의 사용량에서 이 PC와 SSH로 연결한 원격 PC에 기록된 최근 7일을 모델별로 쌓아 보여 줘요. 원격 PC의 프로젝트에는 PC 이름이 붙어요. 대화 내용은 가져오지 않고 숫자만 읽어요. 프로젝트를 고르면 그 프로젝트만 남아요.</p><p class="note">금액은 API 정가로 계산한 추정치예요. 구독에서 실제로 빠지는 금액은 아니에요.</p></div>
 <div class="vis"><div class="usage">
 <input class="vh" type="radio" name="usage" id="u0" checked><input class="vh" type="radio" name="usage" id="u1"><input class="vh" type="radio" name="usage" id="u2"><input class="vh" type="radio" name="usage" id="u3">
 <div class="uchips" role="group" aria-label="프로젝트 고르기"><label for="u0">전체 프로젝트</label><label for="u1">shop-web</label><label for="u2">api-server</label><label for="u3">docs-site</label></div>
@@ -163,7 +163,7 @@
 </div>
 <div class="desk"><p class="phead">이 PC · shop-web</p><div class="pbody mono"><span>이 수정을 적용할까요?</span><br><span class="dk0">&gt; <i class="caret"></i></span><span class="dk1">&gt; 1<br>작업 중…</span><span class="dk2">&gt; 2<br>알겠어요. 어떻게 고칠지 알려 주세요.</span></div><p class="try">폰 화면의 1이나 2를 눌러 보세요. 답이 PC로 가요.</p></div>
 </div>
-<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">자리를 비워도 일은 멈추지 않아요.</p><p>허락이나 답이 필요한 순간에는 알림이 오고, 폰에서 답하면 PC에서 작업이 바로 이어져요. 세션을 열고 닫거나 끊긴 세션을 다시 연결하고, 사진이나 파일을 첨부해 보내고, PC 터미널도 폰에서 열어요.</p><p class="note">폰과 PC는 QR 코드를 한 번 찍으면 연결돼요. 주고받는 내용은 처음부터 끝까지 암호화되고, 중간의 중계 서버도 그 내용을 읽을 수 없어요.</p></div>
+<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">내 모든 PC의 모든 에이전트를 한 손에.</p><p>Lepons를 설치한 PC를 여러 대 연결해 두고 홈 화면 위쪽에서 바로 바꿔요. 자리를 비워도 일은 멈추지 않아요. 허락이나 답이 필요한 순간에는 알림이 오고 폰에서 답하면 PC에서 작업이 바로 이어져요. 세션을 열고 닫거나 끊긴 세션을 다시 연결하고, 사진이나 파일을 첨부해 보내고, PC 터미널도 폰에서 열어요.</p><p class="note">폰과 PC는 QR 코드를 한 번 찍으면 연결돼요. 주고받는 내용은 처음부터 끝까지 암호화되고, 중간의 중계 서버도 그 내용을 읽을 수 없어요.</p></div>
 </section>
 <div class="cross flip" aria-hidden="true"><i></i><i></i></div>
 
@@ -172,7 +172,8 @@
 <img class="rail" src="/img/rail.webp" width="610" height="980" loading="lazy" alt="Lepons PC 앱의 왼쪽 목록. 이 PC, build-server, mac-mini가 있고 그 아래에 폴더가 달려 있어요."><p class="note">실제 PC 앱 화면이에요. 이름은 데모 데이터예요.</p></div>
 <div class="copy"><h2>AI 로그인 관리</h2><p class="lead">컴퓨터마다 터미널을 열어 로그인하지 않아도 돼요.</p><p>PC마다 어떤 AI가 깔려 있고 로그인돼 있는지 한곳에서 봐요. 없으면 OpenCode까지 여기서 설치하고, 원격 PC도 내 계정으로 로그인해요. 터미널에서 복잡한 명령어로 시작하지 않아도 돼요.</p>
 <div class="tablewrap"><table class="logins"><caption class="vh">PC별 AI 로그인 상태 예시</caption><thead><tr><td></td><th scope="col">Claude Code</th><th scope="col">Codex</th><th scope="col">Grok</th></tr></thead><tbody><tr><th scope="row">이 PC</th><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp off"></i>설치 안 됨</td></tr><tr><th scope="row">회사 서버</th><td><i class="lmp done"></i>로그인됨</td><td><i class="lmp amber"></i>로그인 안 됨</td><td><i class="lmp done"></i>로그인됨</td></tr><tr><th scope="row">맥 미니</th><td><i class="lmp amber"></i>로그인 안 됨</td><td><i class="lmp off"></i>설치 안 됨</td><td><i class="lmp off"></i>설치 안 됨</td></tr></tbody></table></div>
-<p class="note">AI마다 내 계정으로 쓰고 요금도 각 서비스에 내요.</p></div></div>
+<p class="note">AI마다 내 계정으로 쓰고 요금도 각 서비스에 내요.</p>
+<h2>한국어로, 터미널 없이</h2><p class="lead">개발자가 아니어도 기본 설정을 화면 안에서 끝내요.</p><p>메뉴와 안내가 처음부터 한국어라 해외 에이전트 관리 도구보다 손에 익히기 쉬워요. AI 설치와 로그인, 원격 PC 연결, 폰 연결까지 버튼과 안내를 따라가면 돼서 터미널 창을 거의 열지 않아요.</p></div></div>
 </section>
 </main>
 
@@ -185,8 +186,7 @@
 <div class="plat"><h3>macOS</h3><p>Apple Silicon(M1 이상)</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest" data-asset="-arm64.dmg">macOS용 다운로드</a></div>
 <div class="plat"><h3>Android</h3><p>APK 파일을 직접 받아 설치해요. Google Play는 아직 비공개 테스트 중이에요.</p><a class="btn ink" href="https://github.com/joyuno/lepons/releases/latest/download/Lepons-Android.apk">APK 다운로드</a></div>
 <div class="plat"><h3>iPhone</h3>
-<!-- iPhone 상태 한 줄: App Store 승인 뒤에는 바로 아래 줄을 <p>App Store에서 받아요.</p><a class="btn ink" href="앱스토어 주소">App Store에서 다운로드</a></div> 로 바꾸세요. en/index.html도 같이 고치세요. -->
-<p>아직 App Store에 없어요. 올라오면 여기에 링크를 걸게요.</p><span class="btn soon">준비 중</span></div>
+<p>App Store에서 받아요.</p><a class="btn ink" href="https://apps.apple.com/app/id6829282468">App Store에서 다운로드</a></div>
 </div>
 <p class="dlnote">macOS 설치 파일은 Apple 서명과 공증을 받아서 경고 없이 열려요. Windows 설치 파일은 아직 서명이 없어서 처음 실행할 때 경고가 나올 수 있는데, 추가 정보를 누르고 실행을 누르면 돼요.</p>
 <p class="dlnote">궁금한 점이나 불편한 점, 바라는 기능이 있으면 <a href="mailto:joy981017@gmail.com">joy981017@gmail.com</a>으로 편하게 보내 주세요.</p>
