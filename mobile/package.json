@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@bacons/apple-targets": "^5.0.0",
     "@expo/metro-runtime": "~58.0.15",
     "@expo/ui": "~58.0.26",
     "@noble/ciphers": "2.4.0",

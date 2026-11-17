@@ -2672,6 +2672,11 @@ function startTabDrag(from: PaneLeaf, index: number, down: PointerEvent): void {
   const tab = from.tabs[index]!;
   const project = from.project!;
   let target: { leaf: PaneLeaf; zone: Zone } | null = null;
+  /** Over its own pane's tab strip: the place among its tabs it would go, before the tab at this index. */
+  let reorderAt: number | null = null;
+  const clearMarks = () => {
+    for (const mark of terminalPanel.querySelectorAll(".paneTab.dropBefore, .paneTab.dropAfter")) mark.classList.remove("dropBefore", "dropAfter");
+  };
   trackDrag(down, () => {
     for (const shell of paneShells()) {
       const leaf = workspace.leaf(shell.dataset.paneId!)!;
@@ -2682,6 +2687,22 @@ function startTabDrag(from: PaneLeaf, index: number, down: PointerEvent): void {
     }
   }, (event) => {
     target = null;
+    reorderAt = null;
+    clearMarks();
+    // Along its own pane's tab strip a tab changes place among the others; anywhere else it moves or splits as before.
+    const home = paneShells().find((shell) => shell.dataset.paneId === from.id);
+    const homeStrip = home?.querySelector<HTMLElement>(".paneTabs");
+    const stripRect = homeStrip?.getBoundingClientRect();
+    if (homeStrip && stripRect && event.clientY >= stripRect.top && event.clientY <= stripRect.bottom && event.clientX >= stripRect.left && event.clientX <= stripRect.right) {
+      const buttons = [...homeStrip.querySelectorAll<HTMLElement>(".paneTab:not(.tabGhost)")];
+      const before = buttons.findIndex((button) => { const box = button.getBoundingClientRect(); return event.clientX < box.left + box.width / 2; });
+      reorderAt = before === -1 ? buttons.length : before;
+      if (reorderAt === index || reorderAt === index + 1) reorderAt = null;
+      else if (reorderAt < buttons.length) buttons[reorderAt]!.classList.add("dropBefore");
+      else buttons.at(-1)?.classList.add("dropAfter");
+      for (const shell of paneShells()) shell.dataset.zone = "";
+      return;
+    }
     for (const shell of paneShells()) {
       const rect = shell.getBoundingClientRect();
       const strip = shell.querySelector(".paneTabs")!.getBoundingClientRect().bottom;
@@ -2695,6 +2716,13 @@ function startTabDrag(from: PaneLeaf, index: number, down: PointerEvent): void {
       if (zone && allowed) target = { leaf, zone };
     }
   }, () => {
+    clearMarks();
+    if (reorderAt !== null) {
+      workspace.reorderTab(from, index, reorderAt);
+      renderPanes();
+      saveLayout();
+      return true;
+    }
     if (!target) return false;
     moveTab(from, index, target.leaf, target.zone, tab);
     return true;
@@ -2812,7 +2840,7 @@ terminalPanel.addEventListener("drop", (event) => {
 
 /** Lands a dragged tab: into `to` (reordered when it is the same pane), or a new pane split off at that edge. */
 function moveTab(from: PaneLeaf, index: number, to: PaneLeaf, zone: Zone, tab: PaneTab): void {
-  // ponytail: a tab dropped on its own pane goes last; drop-position reorder via reorder.ts moved() when asked.
+  // Dropped on its own pane's middle it goes last; along its own tab strip startTabDrag reorders it in place.
   const landing = workspace.moveTab(from, index, to, zone, tab, (id, direction) => splitBlocked(id, direction) === null);
   activeKey = shownKey(landing) ?? undefined;
   renderPanes();
@@ -2968,10 +2996,22 @@ function belongsToNode(key: string, nodeId: string): boolean {
  */
 function refitVisiblePanes(): void {
   if (terminalPanel.hidden !== false) return;
-  for (const key of workspace.visibleSessions()) terminals.get(key)?.fit.fit();
+  for (const key of workspace.visibleSessions()) {
+    const entry = terminals.get(key);
+    if (!entry) continue;
+    entry.fit.fit();
+    // The session takes the pane's size even when the pane kept it: onResize fires only on a change, so a size
+    // pushed while the PC slept (or the panel was hidden) left Claude drawing in a dozen columns of a wide pane.
+    // An unchanged size is no signal to the program running there.
+    cockpit.resizeSession(key, entry.term.cols, entry.term.rows);
+  }
   positionFileOverlays();
   updateSplitLimits();
 }
+// Back from sleep or from behind other windows: fit again, and tell every shown session its size.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") refitVisiblePanes();
+});
 
 /**
  * Main already closes the node's sessions (same `key.startsWith(id + "::")`

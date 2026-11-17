@@ -43,14 +43,14 @@ test("a TOTP step is spent once used", () => {
   assert.equal(auth.freshStep(11), true);
 });
 
-test("a sign-in lasts a day and has no idle limit", () => {
+test("a sign-in lasts three days and has no idle limit", () => {
   const auth = new PhoneAuth();
   const token = auth.open(0, 1);
-  // Untouched for nine hours: still signed in.
-  assert.equal(auth.check(token, 9 * 60 * minute), true);
-  assert.equal(auth.check(token, 24 * 60 * minute - 1), true);
-  assert.equal(auth.check(token, 24 * 60 * minute), false);
-  assert.equal(auth.check(token, 24 * 60 * minute), false, "and stays ended");
+  // Untouched for two days: still signed in.
+  assert.equal(auth.check(token, 2 * 24 * 60 * minute), true);
+  assert.equal(auth.check(token, 3 * 24 * 60 * minute - 1), true);
+  assert.equal(auth.check(token, 3 * 24 * 60 * minute), false);
+  assert.equal(auth.check(token, 3 * 24 * 60 * minute), false, "and stays ended");
 });
 
 test("the server keeps only the cookie's hash", () => {
@@ -82,7 +82,7 @@ test("a sign-in survives a restart as its hash only, and still expires", () => {
   assert.ok(!Object.keys(disk).includes(token), "the cookie itself is never kept");
   const after = new PhoneAuth(disk, (sessions) => { disk = sessions; });
   assert.equal(after.check(token, 2_000), true);
-  assert.equal(after.check(token, 1_000 + 24 * 60 * 60 * 1000), false);
+  assert.equal(after.check(token, 1_000 + 3 * 24 * 60 * 60 * 1000), false);
   after.closeAll();
   assert.deepEqual(disk, {});
 });

@@ -528,6 +528,9 @@
         font: inherit; padding: 0 6px; cursor: pointer;
       }
       .paneTab.shown { color: var(--text); background: var(--ground); }
+      /* Where a tab dragged along its own strip would go. */
+      .paneTab.dropBefore { box-shadow: inset 2px 0 0 var(--link); }
+      .paneTab.dropAfter { box-shadow: inset -2px 0 0 var(--link); }
       /* One per strip, moved by main.ts showTabsMoved: amber where typing goes. */
       .tabInk { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--muted); pointer-events: none; }
       .paneLeaf.focused .tabInk { background: var(--live); }
@@ -975,6 +978,23 @@
       #settingsPanel .setChartLegend span { display: inline-flex; align-items: center; gap: 6px; }
       #settingsPanel .setChartLegend i { width: 8px; height: 8px; border-radius: 2px; }
       #settingsPanel .setNote.bad { color: var(--stop); }
+      /* Usage by AI and model under the chart: one table its width, figures right-aligned in tabular digits. */
+      #settingsPanel .setUsage { width: 100%; border-collapse: collapse; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13px; font-variant-numeric: tabular-nums; }
+      #settingsPanel .setUsage th, #settingsPanel .setUsage td { padding: 7px 14px; text-align: left; font-weight: 400; }
+      #settingsPanel .setUsage .num { text-align: right; white-space: nowrap; }
+      #settingsPanel .setUsage thead th { color: var(--muted); font-size: 11.5px; border-bottom: 1px solid var(--line); background: var(--panel); }
+      #settingsPanel .setUsage tr.agent { border-top: 1px solid var(--line); }
+      #settingsPanel .setUsage tbody tr.agent:first-child { border-top: 0; }
+      #settingsPanel .setUsage tr.agent th { position: relative; font-weight: 600; }
+      #settingsPanel .setUsage tr.agent .share { position: absolute; left: 14px; bottom: 3px; height: 2px; border-radius: 1px; background: var(--live); max-width: calc(100% - 28px); }
+      #settingsPanel .setUsage .money { font-weight: 600; }
+      #settingsPanel .setUsage tr.model th, #settingsPanel .setUsage tr.model td { padding-top: 3px; padding-bottom: 3px; color: var(--muted); font-size: 12px; }
+      #settingsPanel .setUsage tr.model th { padding-left: 28px; display: flex; align-items: center; gap: 8px; }
+      #settingsPanel .setUsage tr.model:last-child th, #settingsPanel .setUsage tr.model:last-child td { padding-bottom: 8px; }
+      #settingsPanel .setUsage .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+      #settingsPanel .setUsage .pct { display: inline-block; min-width: 3.2em; margin-right: 10px; color: var(--muted); font-size: 11px; }
+      #settingsPanel .setUsage tfoot tr { border-top: 1px solid var(--line); background: var(--panel); }
+      #settingsPanel .setUsage tfoot th { font-weight: 600; }
       /* 원격 PC 관리: a count line, then one card per PC -- lamp, name and
          address as one button that opens its details, a switch, and ⋯. */
       #settingsPanel .setSummary { display: flex; align-items: center; gap: 12px; max-width: 440px; color: var(--muted); font-size: 12px; }

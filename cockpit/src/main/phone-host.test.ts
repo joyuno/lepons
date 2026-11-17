@@ -479,7 +479,7 @@ test("a session turning to waiting pushes its folder's name, a named PC and why,
   assert.deepEqual(data, { session: sessionId(KEY) });
   assert.match(String(pc), /^[0-9a-f]{16}$/);
   assert.match(String(bodies[0]!.title), /^lepons · .*내 서버$/);
-  assert.equal(bodies[0]!.body, "실행·수정 허락을 기다려요");
+  assert.equal(bodies[0]!.body, "실행하거나 고쳐도 될지 묻고 있어요");
   assert.ok(!JSON.stringify(bodies[0]).includes(root.replaceAll("\\", "\\\\")));
 });
 
@@ -490,7 +490,7 @@ test("an AI that fails or hits its limit pushes once, in its own slot", async (t
   snapshot([{ ...session("idle"), folder: "lepons", limited: true }]);
   snapshot([{ ...session("idle"), folder: "lepons", limited: true }]);
   assert.equal(bodies.length, 1);
-  assert.equal(bodies[0]!.body, "사용량 한도에 걸려 멈췄어요");
+  assert.equal(bodies[0]!.body, "사용량 한도가 차서 멈췄어요");
   assert.equal(bodies[0]!.tag, "lepons-stop");
   snapshot([{ ...session("failed"), folder: "lepons" }]);
   assert.equal(bodies.length, 1, "it was not at work when it closed");
@@ -506,7 +506,7 @@ test("a limit menu rings once: the stop push, not a waiting push beside it", asy
   snapshot([{ ...session("working"), folder: "lepons" }]);
   snapshot([{ ...session("waiting"), folder: "lepons", asks: "choose", limited: true }]);
   await new Promise((done) => setTimeout(done, 20));
-  assert.deepEqual(bodies.map((body) => body.body), ["사용량 한도에 걸려 멈췄어요"]);
+  assert.deepEqual(bodies.map((body) => body.body), ["사용량 한도가 차서 멈췄어요"]);
 });
 
 test("no push with the phone switch off, with no token, or while someone is at the desk", async (t) => {

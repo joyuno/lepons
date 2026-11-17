@@ -2,7 +2,7 @@ import type { t as translate } from "../i18n/i18n.ts";
 import type { PcState } from "../shared/status.ts";
 import type { AgentAccount, PhoneSettingsView, SettingsAction, SettingsInfo } from "../shared/ipc.ts";
 import type { TokenStats } from "../agent/token-stats.ts";
-import { modelLabel, modelStacks, modelTotals, tokenDates, tokenTotals, usdCeiling, usdDays, usdText, usdTick } from "./token-totals.ts";
+import { compactTokens, modelLabel, modelStacks, modelTotals, NAMED_MODELS, tokenDates, tokenTotals, usdCeiling, usdDays, usdText, usdTick } from "./token-totals.ts";
 import { agentKinds, agents, type AgentKind } from "../agent/agents.ts";
 import { accountAction } from "../agent/install.ts";
 import { AUTO_MINUTES, autoAnswerWait, autoMinutes } from "../phone/auto-answer.ts";
@@ -713,6 +713,80 @@ function keyForm(deps: SettingsDeps): HTMLElement {
  * The phone's usage chart (home.tsx UsdBars): a week of dollars a day, stacked by model, one colour per model
  * however the project changes. Nothing priced in view: no chart, or a note when some rows had no price.
  */
+/**
+ * The week by AI, then by model under it: one table as wide as the chart, counts short (6.1억, 611.2M; exact on
+ * hover), the dollars lined up on the right with each AI's share of the total, and a model's swatch the colour it
+ * has in the chart. AIs with no record share one line under it.
+ */
+function usageTable(stats: TokenStats, project: string, t: typeof translate): HTMLElement[] {
+  const locale = document.documentElement.lang || "ko";
+  const make = (tag: string, className = "", text = "") => { const node = document.createElement(tag); node.className = className; node.textContent = text; return node; };
+  const count = (value: number) => { const cell = make("td", "num", compactTokens(value, locale)); cell.title = value.toLocaleString(locale); return cell; };
+  const kinds = agentKinds.filter((candidate) => agents[candidate].can.usage.tokens);
+  const totals = tokenTotals(stats.days, project);
+  const used = kinds.flatMap((kind) => { const total = totals.find((one) => one.agent === kind); return total ? [{ kind, total }] : []; })
+    .sort((a, b) => (b.total.usd ?? 0) - (a.total.usd ?? 0));
+  const idle = kinds.filter((kind) => !used.some((one) => one.kind === kind));
+  const out: HTMLElement[] = [];
+  if (used.length) {
+    const slots = modelStacks(stats.days, tokenDates(stats.days, stats.today), project).shown;
+    const slotOf = (model: string) => slots.find((one) => one.model === model)?.slot ?? NAMED_MODELS;
+    const name = (model: string) => model === "unknown" ? t("settings.tokens.unknownModel") : model === "other" ? t("settings.tokens.otherModels") : modelLabel(model);
+    const sum = used.reduce((acc, { total }) => acc + (total.usd ?? 0), 0);
+    const table = make("table", "setUsage");
+    const head = make("thead");
+    const headRow = make("tr");
+    headRow.append(make("th", "", t("settings.tokens.who")), make("th", "num", t("settings.tokens.input")), make("th", "num", t("settings.tokens.output")), make("th", "num", t("settings.tokens.cost")));
+    head.append(headRow);
+    const body = make("tbody");
+    let partial = false;
+    for (const { kind, total } of used) {
+      const row = make("tr", "agent");
+      const who = make("th");
+      who.setAttribute("scope", "row");
+      who.append(make("span", "", agents[kind].label));
+      const share = sum > 0 && total.usd !== undefined ? total.usd / sum : 0;
+      const bar = make("i", "share");
+      bar.style.width = `${Math.max(share * 100, share > 0 ? 2 : 0)}%`;
+      who.append(bar);
+      const cost = make("td", "num money", total.usd === undefined ? "—" : usdText(total.usd) + (total.unpriced ? " *" : ""));
+      partial ||= total.unpriced;
+      row.append(who, count(total.input), count(total.output), cost);
+      body.append(row);
+      for (const { model, usd } of modelTotals(stats.days, project, kind)) {
+        const sub = make("tr", "model");
+        const label = make("th");
+        label.setAttribute("scope", "row");
+        const swatch = make("i", "swatch");
+        swatch.style.background = `var(--series${model === "other" ? NAMED_MODELS : slotOf(model)})`;
+        label.append(swatch, make("span", "", name(model)));
+        const pct = sum > 0 ? Math.round(usd / sum * 100) : 0;
+        // A model's dollars with its share of the whole beside them; it has no split of input and output here.
+        const cost = make("td", "num");
+        cost.append(make("span", "pct", pct > 0 ? `${pct}%` : "<1%"), usdText(usd));
+        const gap = make("td");
+        gap.setAttribute("colspan", "2");
+        sub.append(label, gap, cost);
+        body.append(sub);
+      }
+    }
+    table.append(head, body);
+    if (used.length > 1) {
+      const foot = make("tfoot");
+      const row = make("tr");
+      const label = make("th", "", t("settings.tokens.total"));
+      label.setAttribute("scope", "row");
+      row.append(label, count(used.reduce((acc, { total }) => acc + total.input, 0)), count(used.reduce((acc, { total }) => acc + total.output, 0)), make("td", "num money", usdText(sum) + (partial ? " *" : "")));
+      foot.append(row);
+      table.append(foot);
+    }
+    out.push(table);
+    if (partial) out.push(make("p", "setNote", `* ${t("settings.tokens.partialCost")}`));
+  }
+  if (idle.length) out.push(make("p", "setNote", t("settings.tokens.idle", { agents: idle.map((kind) => agents[kind].label).join(", ") })));
+  return out;
+}
+
 function usageChart(stats: TokenStats, project: string, t: typeof translate): HTMLElement | undefined {
   const dates = tokenDates(stats.days, stats.today);
   const { usd, partial } = usdDays(stats.days, dates, project);
@@ -818,37 +892,7 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
     nodes.push(chips);
     const chart = usageChart(tokens, tokenProject, t);
     if (chart) nodes.push(chart);
-    const totals = tokenTotals(tokens.days, tokenProject);
-    for (const kind of agentKinds.filter((candidate) => agents[candidate].can.usage.tokens)) {
-      const total = totals.find((candidate) => candidate.agent === kind);
-      const row = document.createElement("div");
-      row.className = "setAccount";
-      const name = document.createElement("strong");
-      name.textContent = agents[kind].label;
-      row.append(name);
-      if (total?.usd !== undefined) {
-        const money = document.createElement("span");
-        money.className = "setMoney";
-        money.textContent = usdText(total.usd);
-        row.append(money);
-      }
-      const values = document.createElement("span");
-      values.className = "setNote";
-      values.textContent = !total ? t("settings.tokens.empty") : [
-        `${t("settings.tokens.input")} ${total.input.toLocaleString()}`,
-        `${t("settings.tokens.output")} ${total.output.toLocaleString()}`,
-        ...(total.unpriced ? [t("settings.tokens.partialCost")] : []),
-      ].join(" · ");
-      row.append(values);
-      const models = modelTotals(tokens.days, tokenProject, kind);
-      if (models.length) {
-        const byModel = document.createElement("span");
-        byModel.className = "setNote";
-        byModel.textContent = models.map(({ model, usd }) => `${model === "unknown" ? t("settings.tokens.unknownModel") : model === "other" ? t("settings.tokens.otherModels") : modelLabel(model)} ${usdText(usd)}`).join(" · ");
-        row.append(byModel);
-      }
-      nodes.push(row);
-    }
+    nodes.push(...usageTable(tokens, tokenProject, t));
     if (tokens.incomplete) nodes.push(line(t("settings.tokens.partial")));
     return nodes;
   },

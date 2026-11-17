@@ -158,10 +158,10 @@ test("a wrong TOTP is refused, and so is a right one replayed", async () => {
   assert.equal((await post("/api/login", { password, code: code(1) })).status, 200, "the next step, within the window");
 });
 
-test("a sign-in lasts a day, idle or not", async () => {
+test("a sign-in lasts three days, idle or not", async () => {
   const token = await signIn();
-  clock += 23 * 60 * 60_000;
-  assert.equal((await get("/api/state", token)).status, 200, "23 idle hours");
+  clock += 71 * 60 * 60_000;
+  assert.equal((await get("/api/state", token)).status, 200, "71 idle hours");
   clock += 60 * 60_000;
   assert.equal((await get("/api/state", token)).status, 401);
 });

@@ -284,6 +284,17 @@ export class Workspace {
   }
 
   /**
+   * A tab moved within its own pane to just before the tab at `to` (`to` = length: last). The tab on show stays on show.
+   */
+  reorderTab(leaf: PaneLeaf, from: number, to: number): void {
+    const shown = leaf.tabs[leaf.active];
+    const [tab] = leaf.tabs.splice(from, 1);
+    if (!tab) return;
+    leaf.tabs.splice(to > from ? to - 1 : to, 0, tab);
+    if (shown) leaf.active = leaf.tabs.indexOf(shown);
+  }
+
+  /**
    * Lands a dragged tab: into `to` (last, when it is the same pane), or a new
    * pane split off at that edge. A pane it leaves empty closes. Returns where it landed.
    */

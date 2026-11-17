@@ -588,3 +588,19 @@ test("a drop splitting a zoomed pane lets go of the zoom, so the new pane is see
   assert.equal(ws.zoomed, null);
   assert.equal(shownKey(ws.focusedLeaf()!), "c");
 });
+
+test("a tab dragged within its pane lands before the tab it is dropped at, and the shown tab stays shown", () => {
+  const ws = new Workspace();
+  const leaf = ws.leaf(ws.focused)!;
+  for (const key of ["a", "b", "c", "d"]) ws.addTab(leaf, "p", session(key));
+  leaf.active = 2; // c on show
+  const keys = () => leaf.tabs.map((tab) => (tab.kind === "session" ? tab.key : ""));
+  ws.reorderTab(leaf, 0, 3);
+  assert.deepEqual(keys(), ["b", "c", "a", "d"]);
+  assert.equal(keys()[leaf.active], "c");
+  ws.reorderTab(leaf, 3, 0);
+  assert.deepEqual(keys(), ["d", "b", "c", "a"]);
+  ws.reorderTab(leaf, 1, 4);
+  assert.deepEqual(keys(), ["d", "c", "a", "b"]);
+  assert.equal(keys()[leaf.active], "c");
+});

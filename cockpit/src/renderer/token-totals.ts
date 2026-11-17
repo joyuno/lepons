@@ -16,6 +16,10 @@ export function tokenTotals(days: readonly TokenDay[], project: string): TokenTo
   return [...totals.values()];
 }
 
+/** A token count short enough to read at a glance in the reader's language: 6.1억 / 611.2M; the exact number goes in a tooltip. */
+export const compactTokens = (count: number, locale: string): string =>
+  new Intl.NumberFormat(locale, { notation: "compact", maximumFractionDigits: 1, useGrouping: "always" }).format(count);
+
 /** One agent's priced models, dearest first, past the third folded into "other". */
 export function modelTotals(days: readonly TokenDay[], project: string, agent: string): Array<{ model: string; usd: number }> {
   const totals = new Map<string, number>();

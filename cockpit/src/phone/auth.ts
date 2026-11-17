@@ -21,12 +21,13 @@ export async function passwordMatches(password: string, stored: string): Promise
 const MAX_FAILURES = 5;
 const LOCKOUT_MS = 15 * 60_000;
 /**
- * A day from sign-in, with no idle limit -- the user's call, once a day: the API
+ * Three days from sign-in, with no idle limit -- the user's call (a day until
+ * 2026-11-17, three since, so the home-screen widget keeps working): the API
  * is reachable only from the paired phone app and behind password + TOTP, and
  * signing in again on the subway was the cost they would not pay. The
  * desktop's "끊기" still ends every phone's sign-in at once.
  */
-export const SESSION_MS = 24 * 60 * 60_000;
+export const SESSION_MS = 3 * 24 * 60 * 60_000;
 
 const digest = (token: string) => createHash("sha256").update(token).digest("hex");
 

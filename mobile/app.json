@@ -11,9 +11,11 @@
     "backgroundColor": "#171E26",
     "ios": {
       "bundleIdentifier": "app.lepons.mobile",
+      "appleTeamId": "22HC22JU45",
       "supportsTablet": false,
       "entitlements": {
-        "com.apple.developer.usernotifications.time-sensitive": true
+        "com.apple.developer.usernotifications.time-sensitive": true,
+        "com.apple.security.application-groups": ["group.app.lepons.mobile"]
       },
       "infoPlist": {
         "CFBundleAllowMixedLocalizations": true,
@@ -32,7 +34,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#171E26"
       },
-      "permissions": ["android.permission.CAMERA", "android.permission.POST_NOTIFICATIONS"],
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.SYSTEM_ALERT_WINDOW",
@@ -46,7 +51,11 @@
       "expo-router",
       [
         "expo-splash-screen",
-        { "backgroundColor": "#171E26", "image": "./assets/splash-icon.png", "imageWidth": 200 }
+        {
+          "backgroundColor": "#171E26",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200
+        }
       ],
       [
         "expo-camera",
@@ -64,9 +73,26 @@
           "microphonePermission": false
         }
       ],
-      ["expo-audio", { "microphonePermission": false, "recordAudioAndroid": false, "enableBackgroundPlayback": false }],
-      ["expo-secure-store", { "faceIDPermission": false }],
-      ["expo-notifications", { "defaultChannel": "waiting" }],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "waiting"
+        }
+      ],
       [
         "expo-font",
         {
@@ -82,22 +108,34 @@
               {
                 "fontFamily": "Pretendard",
                 "fontDefinitions": [
-                  { "path": "./assets/fonts/Pretendard-Regular.otf", "weight": 400 },
-                  { "path": "./assets/fonts/Pretendard-SemiBold.otf", "weight": 600 },
-                  { "path": "./assets/fonts/Pretendard-Bold.otf", "weight": 700 }
+                  {
+                    "path": "./assets/fonts/Pretendard-Regular.otf",
+                    "weight": 400
+                  },
+                  {
+                    "path": "./assets/fonts/Pretendard-SemiBold.otf",
+                    "weight": 600
+                  },
+                  {
+                    "path": "./assets/fonts/Pretendard-Bold.otf",
+                    "weight": 700
+                  }
                 ]
               }
             ]
           }
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
     "extra": {
-      "eas": { "projectId": "0b739dbd-9fb1-4ba9-9e57-88e5013c32b9" }
+      "eas": {
+        "projectId": "0b739dbd-9fb1-4ba9-9e57-88e5013c32b9"
+      }
     }
   }
 }

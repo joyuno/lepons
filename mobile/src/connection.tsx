@@ -13,6 +13,7 @@ import { expoPushToken } from "./push.ts";
 import { RelayClient, type RelaySocket, type RelayStatus, type Reply } from "./relay/client.ts";
 import { DEFAULT_SERVER, type QrPayload } from "./relay/protocol.ts";
 import * as store from "./store.ts";
+import { updateWidget } from "./widget";
 
 export interface Connection {
   loaded: boolean;
@@ -306,6 +307,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     await store.savePcs(list, next?.id);
     if (next) await open({ server: next.server, pairing: next, token: nextToken });
   };
+
+  // The home-screen widget shows the PC in use while this app has it (widget.ts); signed out, nothing.
+  useEffect(() => {
+    if (demo) return;
+    updateWidget(pairing && token !== undefined && phone ? pcLabel(pairing) : undefined, phone?.sessions);
+  }, [demo, phone, pairing?.id, pairing?.name, token]);
 
   // A PC with no name here takes the one its owner gave it on the PC, if any.
   // ponytail: the PC lists itself first (its local node leads its node list); a reorder there only costs a wrong default name.

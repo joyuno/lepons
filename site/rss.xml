@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Tue, 17 Nov 2026 18:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Wed, 18 Nov 2026 00:30:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.10: 탭 순서 바꾸기, 읽기 쉬운 사용량</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.10</guid>
+      <pubDate>Wed, 18 Nov 2026 00:30:00 +0900</pubDate>
+      <description>칸 안의 탭을 같은 패널 탭 줄에서 끌어 순서를 바꿔요. 사용량은 AI와 모델별로 한 표에 모아 6.2억처럼 짧은 숫자로 보여 줘요. PC가 잠들었다 깨어난 뒤 터미널이 좁은 폭에 멈추던 문제를 고쳤어요. 폰 로그인은 3일 동안 유지되고, 알림 문구를 더 쉬운 말로 바꿨어요. Mac은 이 버전부터 앱 안에서 업데이트돼요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.9: Mac도 앱 안에서 업데이트, 이름은 Lepons로</title>
       <link>https://lepons.app/#download</link>
