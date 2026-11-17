@@ -5,11 +5,11 @@ import { SymbolView, type AndroidSymbol, type SFSymbol } from "expo-symbols";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Appearance, Pressable, Text, useColorScheme, View, type ColorValue } from "react-native";
 
-import { useConnection } from "@/connection";
+import { pcLabel, useConnection } from "@/connection";
 import { t } from "@/i18n";
 import { ms, useLive } from "@/motion";
 import { badgePops, POP_PEAK, thereAndBack } from "@/phone/motion";
-import { tappedList, tappedSession } from "@/push";
+import { tappedList, tappedPc, tappedSession } from "@/push";
 import { saveScheme } from "@/store";
 import { DemoBadge, font, Lamp, size, space, useTheme } from "@/ui";
 
@@ -35,13 +35,32 @@ export default function TabsLayout() {
     saveScheme(next);
   };
   const ready = c.demo || !!(c.pairing && c.signedIn);
+  const now = useRef(c);
+  now.current = c;
+  /** A session named by a push from another paired PC: opened once that PC, switched to, lists it. */
+  const [pending, setPending] = useState<string>();
+  useEffect(() => {
+    if (pending !== undefined && c.phone?.sessions.some((session) => session.id === pending)) {
+      setPending(undefined);
+      router.push({ pathname: "/session/[id]", params: { id: pending } });
+    }
+  }, [pending, c.phone]);
   // A tapped push opens its session, or the sessions tab when it names none; once signed in (here, under the tabs).
+  // One from another paired PC moves there first (an older PC names none: this one is meant).
   useEffect(() => {
     if (!ready) return;
     const open = (response: Notifications.NotificationResponse | null) => {
       const id = tappedSession(response);
       const list = tappedList(response);
+      const pc = tappedPc(response);
       Notifications.clearLastNotificationResponse();
+      const c = now.current;
+      if (pc !== undefined && !c.demo && pc !== c.pairing?.id && c.pcs.some((one) => one.id === pc)) {
+        void c.switchPc(pc);
+        if (id !== undefined) setPending(id);
+        else if (list) router.navigate("/sessions");
+        return;
+      }
       if (id !== undefined) router.push({ pathname: "/session/[id]", params: { id } });
       else if (list) router.navigate("/sessions");
     };
@@ -76,6 +95,22 @@ export default function TabsLayout() {
       {c.demo ? <DemoBadge label={t.demo} /> : null}
     </View>
   );
+
+  // Home's title is the PC in use, a button to the others (PC 바꾸기).
+  const pcTitle = c.pairing ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${pcLabel(c.pairing)}, ${connectionLabel}`}
+      accessibilityHint={t.pcSwitch}
+      hitSlop={{ top: 8, bottom: 8 }}
+      onPress={() => router.push("/pcs")}
+      style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44, opacity: pressed ? 0.5 : 1 })}
+    >
+      <Text style={{ ...font.bold, color: p.text, fontSize: size.screen, flexShrink: 1 }} numberOfLines={1}>{pcLabel(c.pairing)}</Text>
+      <SymbolView name={{ ios: "chevron.down", android: "expand_more" }} tintColor={p.muted} size={16} />
+      <Lamp state={connectionLamp} size={8} />
+    </Pressable>
+  ) : null;
 
   return (
     <Tabs
@@ -116,7 +151,7 @@ export default function TabsLayout() {
         ),
       }}
     >
-      <Tabs.Screen name="home" options={{ title: t.home, tabBarAccessibilityLabel: t.home, tabBarIcon: icon("house", "house.fill", "home"), headerTitle: ({ children }) => title(children, true) }} />
+      <Tabs.Screen name="home" options={{ title: t.home, tabBarAccessibilityLabel: t.home, tabBarIcon: icon("house", "house.fill", "home"), headerTitle: ({ children }) => (c.pairing && !c.demo ? pcTitle : title(children, true)) }} />
       <Tabs.Screen
         name="sessions"
         options={{

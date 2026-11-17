@@ -58,6 +58,7 @@ export default function Layout() {
         <Stack.Screen name="login" options={{ title: t.login }} />
         <Stack.Screen name="settings" options={{ title: t.settings }} />
         <Stack.Screen name="accounts" options={{ title: t.accounts }} />
+        <Stack.Screen name="pcs" options={{ title: t.pcSwitch, presentation: "modal" }} />
         <Stack.Screen name="licenses" options={{ title: t.licenses }} />
         <Stack.Screen name="session/[id]" options={{ title: "", headerShown: false }} />
         <Stack.Screen name="doc" options={{ title: t.docs }} />

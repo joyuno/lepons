@@ -3,11 +3,12 @@ import { useHeaderHeight } from "expo-router/react-navigation";
 import { useEffect, useState } from "react";
 import { Alert, KeyboardAvoidingView, Linking, Switch, Text, TextInput, View } from "react-native";
 
-import { useConnection } from "@/connection";
-import { t } from "@/i18n";
-import { bytesToHex, validServer } from "@/relay/protocol";
+import { pcLabel, useConnection } from "@/connection";
+import { fmt, t } from "@/i18n";
+import { validServer } from "@/relay/protocol";
 import { Button, font, Group, GroupRow, Screen, Section, Segments, space, useTheme } from "@/ui";
 import type { TermSize } from "@/store";
+import { installed, newerVersion, openUpdate, storeVersion } from "@/update";
 
 /** The paired PC, its AI accounts, the pushes, the terminal text size, the relay address (advanced), unpairing, and the privacy policy and licenses. */
 export default function Settings() {
@@ -17,7 +18,9 @@ export default function Settings() {
   const [server, setServer] = useState(c.server);
   const [note, setNote] = useState("");
   const [pushDenied, setPushDenied] = useState(false);
+  const [latest, setLatest] = useState<string>();
   useEffect(() => setServer(c.server), [c.server]);
+  useEffect(() => { void storeVersion().then(setLatest); }, []);
 
   const save = async () => {
     const value = server.trim();
@@ -35,6 +38,7 @@ export default function Settings() {
     router.replace("/");
   };
 
+  // The next paired PC, if any, takes the place of the one let go; with none left, back to the start.
   const unpair = () =>
     Alert.alert(t.unpair, t.unpairConfirm, [
       { text: t.cancel, style: "cancel" },
@@ -42,6 +46,7 @@ export default function Settings() {
         text: t.unpair,
         style: "destructive",
         onPress: () => {
+          // Back to the start, which goes on to the next PC's home, its sign-in, or pairing when none is left.
           void c.unpair().then(toStart);
         },
       },
@@ -70,8 +75,9 @@ export default function Settings() {
         <Section title={t.pairedPc}>
           {c.pairing ? (
             <Group>
-              {/* The PC key's first bytes: enough to tell two PCs apart. */}
-              <Text style={[s.text, { paddingHorizontal: space.lg, paddingVertical: space.md }]}>PC {bytesToHex(c.pairing.pcStaticPub.slice(0, 4)).toUpperCase()}</Text>
+              <Text style={[s.text, { paddingHorizontal: space.lg, paddingVertical: space.md }]}>{pcLabel(c.pairing)}</Text>
+              {/* Every PC paired here, each its own Lepons: switch, add, rename. */}
+              <GroupRow title={t.pcSwitch} detail={c.pcs.length > 1 ? c.pcs.map(pcLabel).join(", ") : undefined} onPress={() => router.push("/pcs")} />
               <GroupRow title={t.unpair} danger onPress={unpair} />
             </Group>
           ) : (
@@ -119,6 +125,15 @@ export default function Settings() {
           />
           <Text style={note === t.serverBad ? s.error : s.dim}>{note || t.serverHint}</Text>
           <Button title={t.save} kind="plain" onPress={() => void save()} disabled={server.trim() === c.server} />
+        </Section>
+
+        <Section title={t.appVersion}>
+          <Group>
+            <Text style={[s.text, { paddingHorizontal: space.lg, paddingVertical: space.md }]}>
+              {latest === undefined ? fmt(t.versionNow, { now: installed }) : newerVersion(latest, installed) ? fmt(t.versionNewer, { now: installed, latest }) : fmt(t.versionLatest, { now: installed })}
+            </Text>
+            <GroupRow title={t.updateApp} onPress={() => openUpdate(latest)} />
+          </Group>
         </Section>
 
         <Group>

@@ -142,7 +142,6 @@ export default function Sessions() {
         {folded ? item.kids.map((kid) => <Lamp key={rowKey(kid)} state={kid.kind === "session" ? lampState(kid.session) : "off"} size={6} />) : null}
       </View>
     ) : null;
-    const into = item.unfolded ? <SymbolView name={{ ios: "chevron.right", android: "chevron_right" }} tintColor={p.dim} size={14} /> : null;
     const fold = item.kids.length > 0 ? (
       <Pressable accessibilityRole="button" accessibilityLabel={item.unfolded ? t.worktreesHide : t.worktreesShow} accessibilityState={{ expanded: item.unfolded }} hitSlop={4} onPress={() => toggle(foldKey(row))}
         style={({ pressed }) => ({ width: 40, marginLeft: -space.sm, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
@@ -163,7 +162,7 @@ export default function Sessions() {
         <SwipeRow actions={sessionActions(session, item.key)} open={swiped === item.key} editing={editing} onOpen={onOpen(item.key)}
           style={nested ? { backgroundColor: "transparent" } : shape} surface={nested ? p.tray : undefined}>
           <View style={{ flexDirection: "row", alignItems: "stretch" }}>
-            <SessionRow session={session} moodLabel={moodLabel(session)} onPress={go(() => open(session.id))} showPc={false} badge={badge} after={into} tray={nested} hint={folded ? t.worktreesShow : undefined}
+            <SessionRow session={session} moodLabel={moodLabel(session)} onPress={go(() => open(session.id))} showPc={false} badge={badge} tray={nested} hint={folded ? t.worktreesShow : undefined}
               style={{ flex: 1, ...(nested ? { paddingHorizontal: space.md } : {}) }} />
             {fold}
           </View>
@@ -181,7 +180,6 @@ export default function Sessions() {
           {badge}
           <View style={{ flex: 1 }} />
           {busy === folder.id || busy === item.key ? <ActivityIndicator size="small" color={p.muted} /> : <Text style={[font.semibold, { fontSize: size.footnote, color: p.link }]}>{t.openFolder}</Text>}
-          {into}
         </Pressable>
         {fold}
       </View>,

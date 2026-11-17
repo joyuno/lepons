@@ -146,6 +146,8 @@ const api: CockpitApi = {
   copyEntry: (nodeId: string, from: string, to: string) => ipcRenderer.invoke(channels.copyEntry, nodeId, from, to),
   placeEntries: (toNodeId: string, dir: string, sources: Array<{ nodeId: string; path: string }>, move: boolean): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke(channels.placeEntries, toNodeId, dir, sources, move),
+  prepareDragOut: (nodeId: string, path: string): Promise<boolean> => ipcRenderer.invoke(channels.prepareDragOut, nodeId, path),
+  startDragOut: (): void => ipcRenderer.send(channels.startDragOut),
   clipboardFiles: (): Promise<string[]> => ipcRenderer.invoke(channels.clipboardFiles),
   locateFile: (nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke(channels.locateFile, nodeId, path, root),

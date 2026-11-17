@@ -9,6 +9,8 @@ import { size, space, useTheme } from "@/ui";
 
 /** The link has been up since the app started: before that, a link coming up is the app opening, not coming back. */
 let wasUp = false;
+/** The PC that link was to: another one's first link is not a return either. */
+let wasPc: string | undefined;
 
 /**
  * Says in words what the header's lamp shows: the PC cannot be reached, and what is on screen may be old; then, in green,
@@ -23,8 +25,9 @@ export function LinkNotice({ after = 0 }: { after?: number }) {
   const [word, setWord] = useState<LinkNoticeWord>();
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    // Unpaired: the next link, to whichever PC, is a first one.
-    if (!c.pairing) wasUp = false;
+    // Unpaired, or moved to another paired PC: the next link is a first one.
+    if (c.pairing?.id !== wasPc) wasUp = false;
+    wasPc = c.pairing?.id;
     if (words === undefined) {
       if (saysBack(open && word !== "linkBack", kind, wasUp)) setWord("linkBack");
       else setOpen(false);

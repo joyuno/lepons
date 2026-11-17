@@ -31,7 +31,8 @@ export async function putWith(sftp: TreeSftp, local: string, remote: string, ski
   const info = await lstat(local);
   if (info.isDirectory()) {
     await call((done) => sftp.mkdir(remote, done));
-    for (const name of await readdir(local)) await putWith(sftp, join(local, name), `${remote}/${name}`, skipped);
+    // NFC: a Mac's decomposed Korean names would show as loose jamo on Windows.
+    for (const name of await readdir(local)) await putWith(sftp, join(local, name), `${remote}/${name.normalize("NFC")}`, skipped);
   } else if (info.isFile()) {
     // fastPut replaces: the top name was picked free, and below it every folder is new.
     await call((done) => sftp.fastPut(local, remote, done));

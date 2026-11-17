@@ -37,25 +37,63 @@ export async function phoneKey(): Promise<KeyPair> {
   return pair;
 }
 
-export async function loadPairing(): Promise<Pairing | undefined> {
-  const raw = await get("pairing");
-  if (!raw) return undefined;
+/** A PC this phone is paired with: one per Lepons install, each its own relay, sign-in and name. */
+export interface Pc extends Pairing {
+  /** The PC key's first 8 bytes in hex: what a push names it by (cockpit phone-host sendPush). */
+  id: string;
+  server: string;
+  /** What the owner called it here; undefined until named or learned from the PC. */
+  name?: string;
+}
+
+export const pcIdOf = (pcStaticPub: Uint8Array) => bytesToHex(pcStaticPub).slice(0, 16);
+
+const pcOf = (raw: unknown): Pc | undefined => {
+  const p = raw as { roomId?: unknown; pcStaticPub?: unknown; server?: unknown; name?: unknown } | null;
+  if (typeof p?.roomId !== "string" || !/^[0-9a-f]{32}$/.test(p.roomId) || typeof p.pcStaticPub !== "string" || !/^[0-9a-f]{64}$/.test(p.pcStaticPub)) return undefined;
+  const pcStaticPub = hexToBytes(p.pcStaticPub);
+  return {
+    id: pcIdOf(pcStaticPub), roomId: p.roomId, pcStaticPub,
+    server: typeof p.server === "string" && validServer(p.server) ? p.server : DEFAULT_SERVER,
+    ...(typeof p.name === "string" && p.name.trim() ? { name: p.name.trim().slice(0, 40) } : {}),
+  };
+};
+
+/** The paired PCs and the one in use. A phone paired before there could be several has its one PC moved over. */
+export async function loadPcs(): Promise<{ pcs: Pc[]; active: string | undefined }> {
+  let pcs: Pc[] = [];
   try {
-    const p = JSON.parse(raw) as { roomId?: unknown; pcStaticPub?: unknown };
-    if (typeof p.roomId === "string" && /^[0-9a-f]{32}$/.test(p.roomId) && typeof p.pcStaticPub === "string" && /^[0-9a-f]{64}$/.test(p.pcStaticPub)) {
-      return { roomId: p.roomId, pcStaticPub: hexToBytes(p.pcStaticPub) };
-    }
+    pcs = (JSON.parse((await get("pcs")) ?? "[]") as unknown[]).map(pcOf).filter((pc): pc is Pc => pc !== undefined);
   } catch {}
-  return undefined;
+  let active = (await get("activePc")) ?? undefined;
+  const old = await get("pairing");
+  if (pcs.length === 0 && old) {
+    try {
+      const pc = pcOf({ ...JSON.parse(old), server: await loadServer() });
+      if (pc) {
+        pcs = [pc];
+        active = pc.id;
+        const token = await get("token");
+        if (token) await set(`token_${pc.id}`, token);
+        await savePcs(pcs, active);
+        // Only once the list holds it: a failed write leaves the old pairing to move next time.
+        await Promise.all([del("pairing"), del("token")]);
+      }
+    } catch {}
+  }
+  return { pcs, active: pcs.some((pc) => pc.id === active) ? active : pcs[0]?.id };
 }
 
-export async function savePairing(pairing: Pairing): Promise<void> {
-  await set("pairing", JSON.stringify({ roomId: pairing.roomId, pcStaticPub: bytesToHex(pairing.pcStaticPub) }));
+export async function savePcs(pcs: readonly Pc[], active: string | undefined): Promise<void> {
+  await set("pcs", JSON.stringify(pcs.map((pc) => ({ roomId: pc.roomId, pcStaticPub: bytesToHex(pc.pcStaticPub), server: pc.server, ...(pc.name ? { name: pc.name } : {}) }))));
+  await (active ? set("activePc", active) : del("activePc"));
 }
 
-/** Forgets the PC and its sign-in; the phone's own key stays. */
-export async function clearPairing(): Promise<void> {
-  await Promise.all([del("pairing"), del("token"), drafts.clear()]);
+/** Forgets one PC's sign-in; with the last PC gone, also what was typed, opened and placed on the map. The phone's own key stays. */
+export async function forgetPc(id: string, last: boolean): Promise<void> {
+  await del(`token_${id}`);
+  if (!last) return;
+  await drafts.clear();
   forgetOpened();
   // The project and PC names in it go with the PC, as the privacy page says.
   mapSpots = {};
@@ -74,8 +112,9 @@ export async function saveServer(server: string): Promise<void> {
   await set("server", server);
 }
 
-export const loadToken = async () => (await get("token")) || undefined;
-export const saveToken = (token: string) => (token ? set("token", token) : del("token"));
+/** A PC's sign-in, by its id. */
+export const loadToken = async (pc: string) => (await get(`token_${pc}`)) || undefined;
+export const saveToken = (pc: string, token: string) => (token ? set(`token_${pc}`, token) : del(`token_${pc}`));
 
 /** "입력 대기 알림" turned off in settings; on unless the user said so. */
 export const loadPushOff = async () => (await get("pushOff")) === "1";

@@ -464,6 +464,18 @@ function fileTree(node: NodeConfig, repo: RepoConfig, path: string, key: string,
     });
     // From Explorer: into the folder, or the folder a file sits in.
     filesDrop(item, node, entry.isDirectory ? childPath : path);
+    // Out to Explorer or Finder: the OS drag, which only main can start.
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      draggedOut = { nodeId: node.id, path: childPath };
+      let held = true;
+      window.addEventListener("mouseup", () => (held = false), { once: true });
+      void cockpit.prepareDragOut(node.id, childPath).then((ready) => {
+        if (ready && held) cockpit.startDragOut();
+      });
+    });
     box.append(item);
     if (childKey === revealKey) {
       revealKey = undefined;
@@ -5775,6 +5787,9 @@ const baseName = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 const parentOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
 const isUnder = (path: string, folder: string): boolean => path === folder || path.startsWith(`${folder}/`);
 
+/** The tree entry last dragged out, so a drag that ends back where it began does nothing. */
+let draggedOut: { nodeId: string; path: string } | undefined;
+
 /**
  * Files or folders dragged in from Explorer or Finder land in `dir` as
  * copies, on this PC or another; a drag inside Lepons is not one of these.
@@ -5796,7 +5811,10 @@ function filesDrop(target: HTMLElement, node: NodeConfig, dir: string): void {
     event.preventDefault();
     event.stopPropagation();
     target.classList.remove("filesOver");
-    const paths = [...event.dataTransfer!.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== "");
+    // An entry dragged out and let go over its own folder, or itself, is no copy anyone asked for.
+    const home = (path: string) =>
+      draggedOut?.nodeId === node.id && baseName(path).normalize("NFC") === baseName(draggedOut.path).normalize("NFC") && (dir === parentOf(draggedOut.path) || isUnder(dir, draggedOut.path));
+    const paths = [...event.dataTransfer!.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== "" && !home(path));
     if (paths.length === 0) return;
     void cockpit.placeEntries(node.id, dir, paths.map((path) => ({ nodeId: localNodeId, path })), false).then(() => refreshDir(node, dir));
   });

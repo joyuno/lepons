@@ -149,10 +149,16 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   const sendPush = (message: (to: string) => object): void => {
     const to = phone.get().relay?.phone?.pushToken;
     if (phone.get().allowed !== true || to === undefined) return;
+    // Which PC it is from, for a phone paired with several: its key's first bytes, public and the same across pairings.
+    // Read, never made here: making one forgets the paired phone (relayPcKey).
+    const sent = message(to) as { data?: Record<string, unknown> };
+    const sealed = relaySettings().pcKey;
+    const raw = sealed === undefined ? undefined : openSecret(sealed, safeStorage);
+    if (raw?.length === 32) sent.data = { ...sent.data, pc: Buffer.from(keyPairFromPrivate(raw).publicKey).toString("hex").slice(0, 16) };
     void fetch(EXPO_PUSH_URL, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
-      body: JSON.stringify(message(to)),
+      body: JSON.stringify(sent),
       signal: AbortSignal.timeout(10_000),
     }).then(async (response) => {
       const reply: unknown = await response.json().catch(() => undefined);

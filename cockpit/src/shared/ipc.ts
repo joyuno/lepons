@@ -617,6 +617,10 @@ export interface CockpitApi {
   copyEntry(nodeId: string, from: string, to: string): Promise<{ ok: boolean }>;
   /** Into `dir` of `toNodeId` from any PC, or from this one's Explorer; a move only from another PC's tree. */
   placeEntries(toNodeId: string, dir: string, sources: Array<{ nodeId: string; path: string }>, move: boolean): Promise<{ ok: boolean }>;
+  /** A tree entry about to be dragged out to Explorer or Finder; another PC's is fetched here first. False if it cannot be. */
+  prepareDragOut(nodeId: string, path: string): Promise<boolean>;
+  /** The OS drag of what `prepareDragOut` made ready; only while the mouse button is still down. */
+  startDragOut(): void;
   /** A printed path checked before a tab opens it: the file to open, or why not (missing, a folder, too big). */
   locateFile(nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   /** Files copied in Explorer, this PC's paths; none on a Mac. */
@@ -902,6 +906,8 @@ export const channels = {
   moveEntry: "files:move",
   copyEntry: "files:copy",
   placeEntries: "files:place",
+  prepareDragOut: "files:prepareDragOut",
+  startDragOut: "files:startDragOut",
   locateFile: "files:locate",
   clipboardFiles: "files:clipboard",
   openForEdit: "files:open-for-edit",

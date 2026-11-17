@@ -20,6 +20,9 @@
     "production-apk": {
       "extends": "production",
       "autoIncrement": false,
+      "env": {
+        "EXPO_PUBLIC_STORE": "github"
+      },
       "android": {
         "buildType": "apk"
       }

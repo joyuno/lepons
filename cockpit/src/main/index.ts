@@ -106,6 +106,7 @@ import { readTurn } from "../workflow/turn.ts";
 import type { TurnEnd } from "../shared/status.ts";
 import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
 import { collectTokenStats, type TokenStats } from "../agent/token-stats.ts";
+import { mergeTokenStats, remoteTokenStats, remoteUsageCommand } from "../agent/remote-token-stats.ts";
 import { TranscriptWatchers, type TranscriptTarget, type WatchHandle } from "./transcript-watch.ts";
 import { posixQuote } from "../session/state.ts";
 import type { ProbedRead } from "../workflow/probe.ts";
@@ -1785,8 +1786,22 @@ app.whenReady().then(() => {
   let tokenStatsRead: Promise<TokenStats> | undefined;
   const readTokenStats = (): Promise<TokenStats> => {
     // The folders registered on this PC name the projects; work in their subfolders counts as theirs.
-    const roots = nodes.list().filter((node) => node.kind === "local").flatMap((node) => node.repos.map((repo) => ({ path: repo.path, label: repo.label })));
-    if (!tokenStatsRead) tokenStatsRead = collectTokenStats(undefined, undefined, roots).finally(() => { tokenStatsRead = undefined; });
+    const rootsOf = (node: NodeConfig) => node.repos.map((repo) => ({ path: repo.path, label: repo.label }));
+    const roots = nodes.list().filter((node) => node.kind === "local").flatMap(rootsOf);
+    // Each other PC counts its own records over SSH, once per address however many entries name it.
+    // ponytail: POSIX shells only, as the remote project scan; a Windows PC's usage there is not read.
+    const others = new Map<string, NodeConfig[]>();
+    for (const node of nodes.list()) if (node.kind === "ssh" && !node.windows) others.set(node.destination, [...others.get(node.destination) ?? [], node]);
+    const now = new Date();
+    tokenStatsRead ??= Promise.all([
+      collectTokenStats(undefined, now, roots),
+      ...[...others.values()].map(async ([node, ...same]) => {
+        const ran = await machineOf(node!).run(remoteUsageCommand, { timeoutMs: 60_000 }).catch(() => undefined);
+        const stats = ran && !ran.timedOut && ran.code === 0 ? await remoteTokenStats(ran.output, now, [node!, ...same].flatMap(rootsOf)).catch(() => undefined) : undefined;
+        return { pc: node!.label, stats };
+      }),
+    ]).then(([local, ...read]) => mergeTokenStats(local as TokenStats, read as Array<{ pc: string; stats?: TokenStats }>))
+      .finally(() => { tokenStatsRead = undefined; });
     return tokenStatsRead;
   };
   ipcMain.handle(channels.tokenStats, () => readTokenStats());
@@ -2448,14 +2463,16 @@ app.whenReady().then(() => {
     const registered = to.repos.some((repo) => repo.path.replace(/\/+$/, "") === into) || containingRepo(to.repos, into) !== undefined;
     if (!registered || !Array.isArray(sources)) return entryFailed(t("files.outside"));
     const listing = await machineOf(to).list(into);
-    const taken = new Set(listing.ok ? listing.entries.map((entry) => entry.name) : []);
+    // NFC on both sides: a Mac names Korean files decomposed, which Windows shows as loose jamo,
+    // and a Mac disk counts the two forms as one name, so a check in one form would miss the other.
+    const taken = new Set(listing.ok ? listing.entries.map((entry) => entry.name.normalize("NFC")) : []);
     for (const source of sources) {
       const from = requireNode(source.nodeId);
       const path = typeof source.path === "string" ? source.path.replace(/\/+$/, "") : "";
       // Another PC's entry comes from its tree, so from a registered folder; this PC's may come from Explorer.
       if (path === "" || (from.kind !== "local" && !containingRepo(from.repos, path))) return entryFailed(t("files.outside"));
       if (from.id === to.id && (into === path || into.startsWith(`${path}/`))) return entryFailed(t("files.intoItself"));
-      const name = path.slice(path.lastIndexOf("/") + 1);
+      const name = path.slice(path.lastIndexOf("/") + 1).normalize("NFC");
       if (move && taken.has(name)) return entryFailed(t("files.nameTaken"));
       const isDirectory = (await machineOf(from).list(path)).ok;
       const target = `${into}/${move ? name : freeCopyName(name, taken, isDirectory)}`;
@@ -2478,6 +2495,39 @@ app.whenReady().then(() => {
     return { ok: true };
   });
   ipcMain.handle(channels.copyEntry, (_event, nodeId: string, from: string, to: string) => transferEntry(nodeId, from, to, false));
+
+  /**
+   * Out to Explorer or Finder, which take only a file on this PC: another
+   * PC's entry is fetched first, while the mouse is still held. Two steps:
+   * the page starts the drag only if the button is still down, since an OS
+   * drag begun after it was let go holds the mouse until Esc.
+   * ponytail: one staged copy at a time, gone at the next drag; a large folder makes the drag wait for it.
+   */
+  let dragStage: string | undefined;
+  let dragReady: string | undefined;
+  ipcMain.handle(channels.prepareDragOut, async (_event, nodeId: string, path: string): Promise<boolean> => {
+    dragReady = undefined;
+    const node = requireNode(nodeId);
+    if (typeof path !== "string" || containingRepo(node.repos, path) === undefined) return false;
+    let file = path;
+    if (node.kind !== "local") {
+      const ready = await machineOf(node).ready();
+      const source = machineOf(node).connection();
+      if (!ready.ok || !source) return (entryFailed(ready.ok ? t("reason.unreachable") : ready.reason), false);
+      if (dragStage) await rm(dragStage, { recursive: true, force: true });
+      dragStage = await mkdtemp(join(tmpdir(), "lepons-drag-"));
+      file = join(dragStage, path.slice(path.lastIndexOf("/") + 1).normalize("NFC"));
+      const got = await getTree(source, path, file);
+      if ("failed" in got) return (entryFailed(got.failed), false);
+    }
+    dragReady = normalize(file);
+    return true;
+  });
+  ipcMain.on(channels.startDragOut, async (event) => {
+    const file = dragReady;
+    dragReady = undefined;
+    if (file) event.sender.startDrag({ file, icon: await app.getFileIcon(file) });
+  });
 
   /**
    * Markdown is the one format worth rendering in place: it is where an

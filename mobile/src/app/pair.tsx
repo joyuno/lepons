@@ -21,6 +21,12 @@ export default function Pair() {
   useEffect(() => {
     if (started && c.status.kind === "connected") router.replace("/login");
   }, [started, c.status.kind]);
+  // Left by the back button or a swipe with a pairing unfinished: given up as 취소 does, so the PC in use comes back.
+  const now = useRef(c);
+  now.current = c;
+  useEffect(() => () => {
+    if (scanned.current && now.current.status.kind !== "connected") now.current.cancelPairing();
+  }, []);
 
   /** For store reviewers and anyone without a PC at hand: the whole app against demo.ts. */
   const startDemo = () => {
@@ -30,6 +36,7 @@ export default function Pair() {
 
   const cancel = () => {
     if (started) c.cancelPairing();
+    scanned.current = false;
     router.back();
   };
 

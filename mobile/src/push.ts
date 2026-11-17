@@ -37,3 +37,9 @@ export function tappedSession(response: Notifications.NotificationResponse | nul
 /** A tapped push that names no one session (several waiting, or all done): the sessions tab. */
 export const tappedList = (response: Notifications.NotificationResponse | null | undefined): boolean =>
   response?.notification.request.content.data?.open === "sessions";
+
+/** The paired PC a tapped push came from (its key's first bytes, cockpit phone-host sendPush); undefined from an older PC. */
+export function tappedPc(response: Notifications.NotificationResponse | null | undefined): string | undefined {
+  const pc = response?.notification.request.content.data?.pc;
+  return typeof pc === "string" && /^[0-9a-f]{16}$/.test(pc) ? pc : undefined;
+}

@@ -466,14 +466,18 @@ const pairedWithPush = { allowed: true, relay: { phone: { key: "a2V5", label: "�
 
 test("a session turning to waiting pushes its folder's name, a named PC and why, never the folder's path", async (t) => {
   const bodies = fakeFetch(t);
-  const { snapshot, root } = setup(t, { kind: "ssh", saved: pairedWithPush });
+  // With the PC's relay key: the push names the PC by its key's first bytes, for a phone paired with several.
+  const pcKey = `plain:${Buffer.alloc(32, 7).toString("base64")}`;
+  const { snapshot, root } = setup(t, { kind: "ssh", saved: { ...pairedWithPush, relay: { ...pairedWithPush.relay, pcKey } } });
   const named = (mood: PhoneSession["mood"], extra: Partial<PhoneSession> = {}) => ({ ...session(mood), folder: "lepons", ...extra });
   snapshot([named("working")]);
   assert.equal(bodies.length, 0);
   snapshot([named("waiting", { asks: "approve" })]);
   assert.equal(bodies.length, 1);
   assert.equal(bodies[0]!.to, TOKEN);
-  assert.deepEqual(bodies[0]!.data, { session: sessionId(KEY) });
+  const { pc, ...data } = bodies[0]!.data as Record<string, unknown>;
+  assert.deepEqual(data, { session: sessionId(KEY) });
+  assert.match(String(pc), /^[0-9a-f]{16}$/);
   assert.match(String(bodies[0]!.title), /^lepons · .*내 서버$/);
   assert.equal(bodies[0]!.body, "실행·수정 허락을 기다려요");
   assert.ok(!JSON.stringify(bodies[0]).includes(root.replaceAll("\\", "\\\\")));

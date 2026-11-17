@@ -67,3 +67,15 @@ test("a script stays runnable, and a link is listed as left behind", { skip: pro
   assert.equal((await stat(join(there, "app", "run.sh"))).mode & 0o777, 0o755);
   assert.deepEqual(skipped, [join(here, "app", "current")]);
 }));
+
+test("a Mac's decomposed Korean name arrives composed, so Windows does not show loose jamo", () => scratch(async (here, there) => {
+  const decomposed = "한글.txt".normalize("NFD");
+  await mkdir(join(here, "src"));
+  await writeFile(join(here, "src", decomposed), "k");
+  const sftp = fakeSftp(there);
+  const sent: string[] = [];
+  const fastPut = sftp.fastPut;
+  sftp.fastPut = (local, remote, cb) => (sent.push(remote), fastPut(local, remote, cb));
+  await putWith(sftp, join(here, "src"), "/src");
+  assert.deepEqual(sent, ["/src/한글.txt".normalize("NFC")]);
+}));
