@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { PhoneSessionView } from "./types.ts";
-import { widgetSnapshot } from "./widget-snapshot.ts";
+import { screenSig, widgetSnapshot } from "./widget-snapshot.ts";
 
-const words = { waiting: "대기", working: "작업", done: "완료", open: "열기", more: "외 {n}개", asks: "답을 기다려요", empty: "없음" };
+const words = { waiting: "대기", working: "작업", done: "완료", open: "열기", more: "외 {n}개", asks: "답을 기다려요", empty: "없음", failed: "실패", changed: "바뀜", moods: {} };
 const session = (id: string, mood: PhoneSessionView["mood"], extra: Partial<PhoneSessionView> = {}): PhoneSessionView =>
   ({ id, pc: "회사 PC", folder: `/w/${id}`, mood, agent: true, agentName: "Claude Code", ...extra });
 
@@ -42,4 +42,19 @@ test("after the waiting ones, the session that moved last comes first, failed or
   assert.equal(snap.rows[1]!.now, "Edit src/app.ts");
   assert.equal(snap.rows[1]!.at, 50);
   assert.equal(snap.rows[2]!.now, "All tests pass", "a finished one shows its result");
+});
+
+test("a one-pick menu becomes buttons with the screen's fingerprint, its typing row left in the app; a multi-select does not", () => {
+  const menu = ["Do you want to make this edit to app.ts?", "❯ 1. Yes", "  2. Yes, allow all edits", "  3. No, and tell Claude what to do differently"].join("\n");
+  const typing = ["Which color?", "❯ 1. Red", "  2. Blue", "  3. Type something.", "  4. Chat about this"].join("\n");
+  const ticks = ["Which colors?", "❯ 1. [ ] Red", "  2. [ ] Blue", "  3. [ ] Type something"].join("\n");
+  const snap = widgetSnapshot("PC", [session("m", "waiting", { preview: "  " + menu + "\n" }), session("t", "waiting", { preview: typing }), session("x", "waiting", { preview: ticks })], words, String, 0);
+  const plain = snap.asks.find((ask) => ask.id === "m")!;
+  assert.deepEqual(plain.choices?.map((choice) => choice.n), [1, 2, 3]);
+  assert.equal(plain.choices?.[0]?.label, "Yes");
+  assert.equal(plain.question, "Do you want to make this edit to app.ts?");
+  assert.equal(plain.sig, screenSig(menu));
+  assert.match(plain.sig!, /^[0-9a-f]{64}$/);
+  assert.deepEqual(snap.asks.find((ask) => ask.id === "t")!.choices?.map((choice) => choice.n), [1, 2, 4], "Claude's question, without its typing row");
+  assert.equal(snap.asks.find((ask) => ask.id === "x")!.choices, undefined, "a multi-select stays in the app");
 });

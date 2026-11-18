@@ -197,7 +197,10 @@ test("the phone sends named keys and one line of text, nothing else", () => {
   assert.deepEqual(inputFor({ key: "enter" }), ["\r"]);
   assert.deepEqual(inputFor({ key: "esc" }), ["\x1b"]);
   assert.deepEqual(inputFor({ key: "9" }), ["9"]);
-  // No Ctrl+C, no arrows: Esc is the phone's only way to stop.
+  // Back to the question before, to change its answer: Left in Claude's, Shift+Tab in OpenCode's.
+  assert.deepEqual(inputFor({ key: "left" }), ["\x1b[D"]);
+  assert.deepEqual(inputFor({ key: "backtab" }), ["\x1b[Z"]);
+  // No Ctrl+C and no other arrows: Esc is the phone's only way to stop.
   assert.equal(inputFor({ key: "stop" }), "bad");
   assert.deepEqual(inputFor({ key: "up" }), ["[A"]);
   assert.equal(inputFor({ key: "down" }), "bad");

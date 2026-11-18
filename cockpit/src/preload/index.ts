@@ -95,6 +95,7 @@ const api: CockpitApi = {
   writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
   resizeSession: (key: string, cols: number, rows: number) =>
     ipcRenderer.send(channels.resizeSession, key, cols, rows),
+  tmuxScroll: (key: string, to?: number) => ipcRenderer.invoke(channels.tmuxScroll, key, to),
   stopSession: (nodeId: string, repoId: string | null) =>
     ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
   sessionWorkflow: (nodeId: string, repoId: string) =>

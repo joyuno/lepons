@@ -29,7 +29,7 @@ export function projectOfFile(repos: ReadonlyArray<{ id: string; path: string }>
  * Where a new tab of `project` goes, first match wins: the focused pane if it
  * is the project's and has room; another of its panes with room; the focused
  * pane if empty; any empty pane; a split beside the project's full pane, or
- * beside the focused one. Never another project's pane.
+ * beside the focused one, else beside any pane that still has room. Never another project's pane.
  */
 export function place(
   leaves: readonly LeafView[],
@@ -46,8 +46,10 @@ export function place(
   if (focused?.project === null) return { pane: focused.id };
   const empty = leaves.find((leaf) => leaf.project === null);
   if (empty) return { pane: empty.id };
-  const beside = leaves.find((leaf) => leaf.project === project)?.id ?? focused?.id ?? leaves[0]?.id;
-  return beside !== undefined && canSplit(beside) ? { split: beside } : { blocked: true };
+  // Too small to split there, any other pane with room does: a crowded corner does not mean a full screen.
+  const order = [leaves.find((leaf) => leaf.project === project)?.id, focused?.id, ...leaves.map((leaf) => leaf.id)];
+  const beside = order.find((id) => id !== undefined && canSplit(id));
+  return beside !== undefined ? { split: beside } : { blocked: true };
 }
 
 /** One of six band colours, the same for a project every time. */

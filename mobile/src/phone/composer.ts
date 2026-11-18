@@ -10,9 +10,14 @@ export function composerAction(mood: Mood, draft: string, sending = false, mainF
 }
 
 
-/** While a menu's text field is open a digit is a letter of the answer, so only the way out of it is on offer. */
-export function menuRows<T extends { freeText?: boolean }>(options: readonly T[], typing: boolean): readonly T[] {
-  return typing ? options.filter((option) => option.freeText) : options;
+/**
+ * The keys a tap on a menu row sends. While the menu's text field is open a digit would be a letter of the answer, so
+ * the way out of it (Up) goes first: the typing row only leaves, any other row leaves and then picks.
+ */
+export function menuKeys(option: { n: number; key?: string; freeText?: boolean }, typing: boolean): string[] {
+  const pick = option.key ?? String(option.n);
+  if (!typing) return [pick];
+  return option.freeText ? ["up"] : ["up", pick];
 }
 
 const rule = /^[\s─━═╌╍┄┅╭╮╰╯┌┐└┘├┤┬┴┼│┃║]*$/;

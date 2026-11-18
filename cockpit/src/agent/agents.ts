@@ -120,9 +120,8 @@ export interface AgentSpec {
   sessionEnv(token: string): Record<string, string>;
   can: AgentCapabilities;
   /**
-   * Continues the folder's most recent conversation as a new session.
-   * Always a fork: the original may still be open in VS Code or another
-   * terminal, and two processes appending to one conversation interleave.
+   * Continues the folder's most recent conversation. A fork for most agents: the original may still be open in VS
+   * Code or another terminal, and two processes appending to one conversation interleave. Not for Claude (see there).
    * Absent where the CLI cannot fork a conversation: resume then starts a
    * new one (resumeLine), and the dialog does not offer it.
    */
@@ -160,7 +159,10 @@ export const agents: Record<AgentKind, AgentSpec> = {
     // /effort. Per docs the effort choice is session-only, so it belongs on
     // the launch line rather than in any persisted setting.
     sessionCommand: "claude --effort high",
-    resumeCommand: "claude --effort high --continue --fork-session",
+    // Not a fork: Lepons continues its own sessions with this (every restart, every reopen), and --fork-session wrote a
+    // whole copy of the conversation under a new id each time -- /resume filled with duplicates, and the phone read the
+    // copy's old ending as the session's state. One Claude per folder in Lepons, so nothing else appends to it here.
+    resumeCommand: "claude --effort high --continue",
     resumeIdCommand: (id) => `claude --effort high --resume ${id} --fork-session`,
     bypassFlag: "--dangerously-skip-permissions",
     reviewFlag: "",

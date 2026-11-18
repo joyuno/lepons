@@ -141,3 +141,35 @@ export function tmuxCommand(
   if (command) parts.push(posixQuote(command));
   return `${sessionSweep(sessionName, RESUME_WINDOW_SECONDS)}; ${parts.join(" ")}`;
 }
+
+/** Where a tmux pane's view is: lines of history above the screen, how far up it is scrolled (0 at the bottom), screen rows. */
+export interface TmuxScroll {
+  history: number;
+  position: number;
+  height: number;
+}
+
+// A non-login shell over SSH may not have tmux on its PATH (Homebrew's on a Mac): where it usually is, after the rest.
+const TMUX = "PATH=$PATH:/opt/homebrew/bin:/usr/local/bin tmux";
+
+/**
+ * Reads where session `name`'s view is, after moving it to `to` lines above the bottom when given: copy mode's
+ * goto-line sets that offset itself (tmux clamps it to the history), so a move is the same whatever came before it;
+ * 0 leaves copy mode. One line of output, read by parseTmuxScroll.
+ */
+export function tmuxScrollCommand(name: string, to?: number): string {
+  // The session by exact name, its current window's active pane.
+  const target = posixQuote(`=${name}:`);
+  const steps: string[] = [];
+  if (to !== undefined && to <= 0) steps.push(`${TMUX} send -X -t ${target} cancel 2>/dev/null`);
+  else if (to !== undefined) steps.push(`${TMUX} copy-mode -e -t ${target} 2>/dev/null; ${TMUX} send -X -t ${target} goto-line ${Math.round(to)} 2>/dev/null`);
+  steps.push(`${TMUX} display -p -t ${target} 'LPS #{history_size} #{scroll_position} #{pane_height}' 2>/dev/null`);
+  return steps.join("; ");
+}
+
+/** The view from tmuxScrollCommand's output; undefined when tmux said nothing usable. Out of copy mode the position is empty: 0. */
+export function parseTmuxScroll(output: string): TmuxScroll | undefined {
+  const match = /^LPS (\d+) (\d*) (\d+)\s*$/m.exec(output);
+  if (!match) return undefined;
+  return { history: Number(match[1]), position: Number(match[2] || 0), height: Number(match[3]) };
+}

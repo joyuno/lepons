@@ -30,7 +30,7 @@ test("each agent starts in its own permission mode; skipping checks is a separat
   const flags = launchFlags(agents.claude, "cmd", true);
   assert.equal(
     resumeLine(agents.claude, (command) => command, "cmd", flags),
-    "claude --effort high --continue --fork-session --dangerously-skip-permissions || claude --effort high --dangerously-skip-permissions",
+    "claude --effort high --continue --dangerously-skip-permissions || claude --effort high --dangerously-skip-permissions",
     "a chosen bypass reaches the fallback too",
   );
 });
@@ -341,11 +341,10 @@ test("leaving a PC takes every command-held registration off", () => {
   ]);
 });
 
-// "Continue the last conversation" has to fork: the original may still be
-// open in VS Code or a terminal, and two processes appending to one
-// conversation would interleave it.
-test("each agent can continue a folder's last conversation as a new session", () => {
-  assert.equal(agents.claude.resumeCommand, `${agents.claude.sessionCommand} --continue --fork-session`);
+// Claude continues the conversation itself: Lepons reopens its own sessions this way, and a fork each time piled up
+// copies. Codex still forks (`fork --last`).
+test("each agent can continue a folder's last conversation", () => {
+  assert.equal(agents.claude.resumeCommand, `${agents.claude.sessionCommand} --continue`);
   assert.equal(agents.codex.resumeCommand, agents.codex.sessionCommand.replace(/^codex /, "codex fork --last "));
 });
 

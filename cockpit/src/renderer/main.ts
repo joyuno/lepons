@@ -43,6 +43,7 @@ import { cellChanges, dividerMove, EASE, FAST, MID, openingBox, paneChange, plac
 import { newActivity, onMenu, onOutput, onTick, onTurnEnd, petMood, type Activity, type PetMood, type PetSession } from "./pet.ts";
 import { pcFailReason, pcState, sessionStatus, turnMark, turnsEnded, type PcState, type TurnEnd } from "../shared/status.ts";
 import { between, moved } from "./reorder.ts";
+import { positionAt, thumbOf, type TmuxView } from "./tmux-bar.ts";
 import { livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
 import { statusFrom } from "../phone/status.ts";
 import { layoutOf, leaves, readLayout, restorable, type SavedLayout } from "./restore.ts";
@@ -1534,6 +1535,105 @@ function park(element: HTMLElement): void {
   document.body.append(element);
 }
 
+/**
+ * A remote session in tmux keeps its scrollback in tmux, so xterm has none and draws no scrollbar: this one is drawn
+ * here from where tmux says its view is (main's tmuxScroll; geometry in tmux-bar.ts). Read every few seconds while the
+ * pane shows and just after a wheel over it; dragging the thumb or clicking the track moves tmux's view there.
+ */
+const tmuxBars = new Map<string, { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> }>();
+
+function attachTmuxBar(key: string, element: HTMLElement): void {
+  const found = findByKey(key);
+  if (!found || found.node.kind !== "ssh" || !found.node.useTmux) return;
+  // No position set here: park() keeps a hidden terminal absolute and off-screen, and renderPanes() makes a shown one
+  // relative (the bar's anchor). Setting it here put a parked terminal back into the body's flex row, squeezing the app.
+  const bar = document.createElement("div");
+  bar.className = "tmuxBar";
+  bar.hidden = true;
+  const thumb = document.createElement("i");
+  bar.append(thumb);
+  element.append(bar);
+  const entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> } = { element, bar, thumb, busy: false, dragging: false };
+  tmuxBars.set(key, entry);
+  element.addEventListener("wheel", () => {
+    clearTimeout(entry.wheel);
+    entry.wheel = setTimeout(() => void readTmux(key), 250);
+  }, { passive: true });
+  thumb.addEventListener("pointerdown", (down) => {
+    const view = entry.view;
+    if (!view || down.button !== 0) return;
+    down.preventDefault();
+    down.stopPropagation();
+    thumb.setPointerCapture(down.pointerId);
+    entry.dragging = true;
+    const track = element.clientHeight;
+    const height = thumb.offsetHeight;
+    const startTop = Number.parseFloat(thumb.style.top) || 0;
+    let sentAt = 0;
+    let pending: number | undefined;
+    const move = (event: PointerEvent) => {
+      const top = Math.max(0, Math.min(track - height, startTop + event.clientY - down.clientY));
+      thumb.style.top = `${top}px`;
+      pending = positionAt(top, view, track, height);
+      // One move to tmux at a time, a few a second: each is a command over SSH.
+      if (Date.now() - sentAt > 120) {
+        sentAt = Date.now();
+        void readTmux(key, pending);
+        pending = undefined;
+      }
+    };
+    const up = () => {
+      thumb.removeEventListener("pointermove", move);
+      thumb.removeEventListener("pointerup", up);
+      thumb.removeEventListener("pointercancel", up);
+      entry.dragging = false;
+      void readTmux(key, pending);
+    };
+    thumb.addEventListener("pointermove", move);
+    thumb.addEventListener("pointerup", up);
+    thumb.addEventListener("pointercancel", up);
+  });
+  // A click on the track, off the thumb: the view centred there.
+  bar.addEventListener("pointerdown", (event) => {
+    const view = entry.view;
+    if (event.target !== bar || !view || event.button !== 0) return;
+    event.preventDefault();
+    const track = element.clientHeight;
+    const height = thumb.offsetHeight;
+    void readTmux(key, positionAt(event.clientY - bar.getBoundingClientRect().top - height / 2, view, track, height));
+  });
+}
+
+function drawTmuxBar(entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView }): void {
+  const place = entry.view && thumbOf(entry.view, entry.element.clientHeight);
+  entry.bar.hidden = !place;
+  if (!place) return;
+  entry.thumb.style.top = `${place.top}px`;
+  entry.thumb.style.height = `${place.height}px`;
+}
+
+/** Where tmux's view is (after moving it to `to` lines above the bottom), drawn on the pane's bar. */
+async function readTmux(key: string, to?: number): Promise<void> {
+  const entry = tmuxBars.get(key);
+  if (!entry || (entry.busy && to === undefined)) return;
+  entry.busy = true;
+  try {
+    const view = await cockpit.tmuxScroll(key, to);
+    if (!view) return;
+    entry.view = view;
+    if (!entry.dragging) drawTmuxBar(entry);
+  } catch {
+    // Unreachable for now: the bar keeps what it had.
+  } finally {
+    entry.busy = false;
+  }
+}
+
+setInterval(() => {
+  if (document.hidden || terminalPanel.hidden !== false) return;
+  for (const key of workspace.visibleSessions()) if (tmuxBars.has(key)) void readTmux(key);
+}, 3000);
+
 function terminalFor(key: string) {
   const existing = terminals.get(key);
   if (existing) return existing;
@@ -1563,6 +1663,7 @@ function terminalFor(key: string) {
   const fit = new FitAddon();
   term.loadAddon(fit);
   term.open(element);
+  attachTmuxBar(key, element);
   // Addresses a program printed -- a dev server, a pull request -- open with
   // Ctrl+click, as in an editor's terminal: a plain click is for selecting.
   // A program that breaks a long address over lines -- at the terminal's
@@ -2484,7 +2585,7 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     // tree, and with no terminal here no keystroke can reach one unseen.
   } else if (key) {
     const view = terminalFor(key);
-    view.element.style.position = "static";
+    view.element.style.position = "relative";
     view.element.style.left = "";
     view.element.style.top = "";
     const note = sessionNotes.get(key);
@@ -5073,6 +5174,20 @@ function openFileInPane(node: NodeConfig, path: string, name: string, repo?: Rep
 // iframe is its own document, so the app's :root custom properties don't
 // reach it and the colours have to be repeated here as literals, once per
 // mode, picked at render time from the app's own dark/light setting.
+/**
+ * The app's scrollbars for a page in a frame (a file view): the app's own rules in index.html do not reach into it,
+ * so it drew Chromium's default -- a white track down a dark pane.
+ */
+function frameScrollbars(): string {
+  const root = getComputedStyle(document.documentElement);
+  const thumb = root.getPropertyValue("--scroll").trim();
+  const hover = root.getPropertyValue("--scroll-hover").trim();
+  return `:root{color-scheme:${currentTheme() === "light" ? "light" : "dark"}}
+  ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+  ::-webkit-scrollbar-thumb{background:${thumb};border-radius:6px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:${hover};background-clip:content-box}`;
+}
+
 function markdownStyle(): string {
   const light = currentTheme() === "light";
   const bg = light ? "#f3f4f6" : "#11161d";
@@ -5126,6 +5241,7 @@ function markdownStyle(): string {
   .callout[data-callout=fail],.callout[data-callout=missing],.callout[data-callout=bug]{--c:#f85149}
   .callout[data-callout=example]{--c:#a371f7}
   .callout[data-callout=quote],.callout[data-callout=cite]{--c:${quote}}
+  ${frameScrollbars()}
 </style>`;
 }
 

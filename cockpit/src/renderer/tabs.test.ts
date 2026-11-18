@@ -39,6 +39,12 @@ test("splits beside a full pane of the project, else beside the focused one", ()
   assert.deepEqual(place([leaf("p1", "b"), leaf("p2", "c")], "p1", "a", 6, yes), { split: "p1" });
 });
 
+test("when the focused pane is too small to split, a pane elsewhere with room takes the new one", () => {
+  // 2x2: the left column's two panes are full height-wise, the right one is a single tall pane.
+  const leaves = [leaf("left-top", "b"), leaf("left-bottom", "c"), leaf("right", "d")];
+  assert.deepEqual(place(leaves, "left-top", "a", 6, (id) => id === "right"), { split: "right" });
+});
+
 test("never takes another project's pane: blocked when nothing can split", () => {
   assert.deepEqual(place([leaf("p1", "b"), leaf("p2", "c")], "p1", "a", 6, no), { blocked: true });
 });

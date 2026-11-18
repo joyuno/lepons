@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Wed, 18 Nov 2026 00:30:00 +0900</lastBuildDate>
+    <lastBuildDate>Wed, 18 Nov 2026 02:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.11: 폰에서 이전 질문으로 돌아가 답 고치기</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.11</guid>
+      <pubDate>Wed, 18 Nov 2026 02:00:00 +0900</pubDate>
+      <description>AI가 질문을 여러 개 할 때 폰에서 질문 탭을 눌러 앞 질문으로 돌아가 답을 고칠 수 있어요. 이전·다음 질문 버튼도 생겼어요. iPhone 홈 화면 위젯에서는 세션 상태를 보고 선택지를 바로 눌러 답할 수 있어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.10: 탭 순서 바꾸기, 읽기 쉬운 사용량</title>
       <link>https://lepons.app/#download</link>

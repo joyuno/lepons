@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { RESUME_WINDOW_SECONDS, sessionSweep, tmuxCommand, tmuxKillCommand, tmuxScope, tmuxSessionName } from "./tmux.ts";
+import { RESUME_WINDOW_SECONDS, sessionSweep, tmuxCommand, parseTmuxScroll, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSessionName } from "./tmux.ts";
 
 // Turning a session off has to end the one on screen. The scope carries the
 // executor because a machine registered as Claude can be running Codex right
@@ -113,4 +113,14 @@ test("the session can be scrolled back through", () => {
   assert.ok(mouse !== -1, "mouse mode is what makes the wheel scroll");
   assert.ok(history < create, "a pane takes the history limit in force when it is created");
   assert.ok(line.includes("tmux start-server"), "the options need a server to be set on");
+});
+
+test("a remote pane's scroll: read, moved up into copy mode, back out at the bottom", () => {
+  assert.match(tmuxScrollCommand("lepons-1a2b"), /^PATH=.* tmux display -p -t '=lepons-1a2b:' 'LPS #\{history_size\} #\{scroll_position\} #\{pane_height\}'/);
+  assert.match(tmuxScrollCommand("s", 30), /copy-mode -e -t '=s:'.*send -X -t '=s:' goto-line 30 .*display/);
+  assert.match(tmuxScrollCommand("s", 0), /send -X -t '=s:' cancel.*display/);
+  assert.doesNotMatch(tmuxScrollCommand("s", 0), /copy-mode/);
+  assert.deepEqual(parseTmuxScroll("motd\nLPS 1200 40 38\n"), { history: 1200, position: 40, height: 38 });
+  assert.deepEqual(parseTmuxScroll("LPS 1200  38"), { history: 1200, position: 0, height: 38 }, "out of copy mode");
+  assert.equal(parseTmuxScroll("no server running"), undefined);
 });

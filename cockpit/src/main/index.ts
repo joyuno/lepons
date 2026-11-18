@@ -15,7 +15,7 @@ import { ExecutorCheckError, localLaunch, localProbe } from "../agent/delegate.t
 import { freshWindowsPath, loginReply, loginWatch, outputTail, regValue, sudoAsks, tmuxInstallLine } from "../agent/install.ts";
 import { suggestShares, type Manifests } from "../repo/suggest.ts";
 import { confirmGone, spacedLooks, type AgentProbe } from "../session/agent-life.ts";
-import { tmuxCommand, tmuxKillCommand, tmuxScope, tmuxSessionName } from "../session/tmux.ts";
+import { parseTmuxScroll, tmuxCommand, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSessionName } from "../session/tmux.ts";
 import type { Session, SessionState } from "../session/state.ts";
 import type { BrowseResult } from "../browse/types.ts";
 import { openForwardTunnel, openReverseTunnel, type Tunnel } from "../ssh/tunnel.ts";
@@ -3391,6 +3391,20 @@ app.whenReady().then(() => {
   powerMonitor.on("suspend", () => startAwayCountdown("suspended for 2h"));
   powerMonitor.on("unlock-screen", cancelAwayCountdown);
   powerMonitor.on("resume", cancelAwayCountdown);
+  // A remote session in tmux keeps its scrollback in tmux: the pane's scrollbar asks where its view is, and moves it.
+  // One held connection per PC for these, opened at the first ask (a channel per ask, not a handshake).
+  // ponytail: held for as long as Lepons runs; stop it when no remote pane is on screen if that ever costs.
+  const scrollPool = new ProbePool();
+  scrollPool.start();
+  ipcMain.handle(channels.tmuxScroll, async (_event, key: string, to?: unknown) => {
+    const node = nodes.list().find((one) => key.startsWith(`${one.id}::`));
+    const agent = sessionExecutor.get(key);
+    if (node?.kind !== "ssh" || !node.useTmux || agent === undefined || !survivesDisconnect.has(key)) return undefined;
+    const name = tmuxSessionName(tmuxScope(key, agent));
+    const move = typeof to === "number" && Number.isFinite(to) ? Math.max(0, Math.round(to)) : undefined;
+    return parseTmuxScroll((await scrollPool.run(node.id, sshOptions(node), tmuxScrollCommand(name, move))) ?? "");
+  });
+
   ipcMain.on(channels.resizeSession, (_event, key: string, cols: number, rows: number) => {
     sessions.get(key)?.resize(cols, rows);
     const screen = screens.get(key);

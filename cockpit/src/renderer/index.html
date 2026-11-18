@@ -65,6 +65,8 @@
         font-display: swap;
       }
       :root {
+        /* The browser's own parts (an open select's list, a date picker, autofill) draw in the theme's colours too. */
+        color-scheme: dark;
         /* The rail's head and the bar over the panes: one height, so they line up. */
         --topBar: 32px;
         --ground: #11161d;
@@ -101,6 +103,7 @@
       /* Same instrument panel, lit from the front instead of the back --
          every surface and accent flips, the layout and spacing don't. */
       :root[data-theme="light"] {
+        color-scheme: light;
         /* Soft grey, not paper white: the rail and dialogs sit a step darker
            than the work area, as VS Code's Light Modern and Linear do, so the
            window has depth without one large white field. */
@@ -157,6 +160,11 @@
       ::-webkit-scrollbar-thumb:hover { background: var(--scroll-hover); background-clip: content-box; }
       /* Where two scrollbars meet; unstyled it is a pale square. */
       ::-webkit-scrollbar-corner { background: transparent; }
+      /* A remote tmux pane's scrollbar (main.ts attachTmuxBar): xterm's look, drawn over the pane's right edge. */
+      .tmuxBar { position: absolute; top: 0; right: 0; bottom: 0; width: 10px; z-index: 4; cursor: default; }
+      .tmuxBar[hidden] { display: none; }
+      .tmuxBar i { position: absolute; left: 2px; right: 2px; border-radius: 6px; background: var(--scroll); }
+      .tmuxBar i:hover, .tmuxBar i:active { background: var(--scroll-hover); }
 
       /* --- rail ------------------------------------------------------- */
       #rail {

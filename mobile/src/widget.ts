@@ -1,4 +1,5 @@
 import { ExtensionStorage } from "@bacons/apple-targets";
+import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 import { t } from "./i18n";
@@ -39,11 +40,30 @@ export function updateWidget(pc: string | undefined, sessions: readonly PhoneSes
     schedule("");
     return;
   }
+  const moodLabel = (mood: string) => (t as unknown as Record<string, string>)[`mood_${mood}`] ?? mood;
   const snap = widgetSnapshot(pc, sessions, {
     waiting: t.widgetWaiting, working: t.widgetWorking, done: t.widgetDone, open: t.widgetOpen, more: t.widgetMore, asks: t.widgetAsks, empty: t.widgetEmpty,
-  }, (mood) => (t as unknown as Record<string, string>)[`mood_${mood}`] ?? mood, 0);
+    failed: t.widgetFailed, changed: t.widgetChanged,
+    moods: Object.fromEntries(["working", "waiting", "done", "failed", "idle", "shellOnly"].map((mood) => [mood, moodLabel(mood)])),
+  }, moodLabel, 0);
   const body = JSON.stringify(snap);
   if (body === lastBody) return;
   lastBody = body;
   schedule(JSON.stringify({ ...snap, at: Date.now() }));
+}
+
+/**
+ * What the widget needs to answer by itself (targets/widget/Relay.swift): this phone's key, the PC in use and the
+ * sign-in. In the Keychain shared with the widget only (the App Group as access group), readable once the phone has
+ * been unlocked since it started, as the app's own items. Nothing when no PC is signed in.
+ */
+export async function updateWidgetLink(link: { key: string; room: string; pc: string; server: string; token: string } | undefined): Promise<void> {
+  if (Platform.OS !== "ios") return;
+  const options = { keychainService: "lepons.widget", accessGroup: "group.app.lepons.mobile", keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY };
+  try {
+    if (link) await SecureStore.setItemAsync("link", JSON.stringify(link), options);
+    else await SecureStore.deleteItemAsync("link", options);
+  } catch {
+    // A Keychain that refuses leaves the widget showing, not answering: it opens the app instead.
+  }
 }

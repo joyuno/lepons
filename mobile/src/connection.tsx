@@ -11,9 +11,9 @@ import { stateOf } from "./phone/validate.ts";
 import { forgetOpened } from "./open-file.ts";
 import { expoPushToken } from "./push.ts";
 import { RelayClient, type RelaySocket, type RelayStatus, type Reply } from "./relay/client.ts";
-import { DEFAULT_SERVER, type QrPayload } from "./relay/protocol.ts";
+import { bytesToHex, DEFAULT_SERVER, type QrPayload } from "./relay/protocol.ts";
 import * as store from "./store.ts";
-import { updateWidget } from "./widget";
+import { updateWidget, updateWidgetLink } from "./widget";
 
 export interface Connection {
   loaded: boolean;
@@ -313,6 +313,19 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     if (demo) return;
     updateWidget(pairing && token !== undefined && phone ? pcLabel(pairing) : undefined, phone?.sessions);
   }, [demo, phone, pairing?.id, pairing?.name, token]);
+
+  // And what the widget needs to answer by itself, for the same PC and sign-in.
+  useEffect(() => {
+    if (demo) return;
+    if (!pairing || token === undefined) {
+      void updateWidgetLink(undefined);
+      return;
+    }
+    const pc = pairing;
+    void store.phoneKey().then((key) => updateWidgetLink({
+      key: bytesToHex(key.privateKey), room: pc.roomId, pc: bytesToHex(pc.pcStaticPub), server: pc.server, token,
+    }));
+  }, [demo, pairing?.id, pairing?.server, token]);
 
   // A PC with no name here takes the one its owner gave it on the PC, if any.
   // ponytail: the PC lists itself first (its local node leads its node list); a reorder there only costs a wrong default name.

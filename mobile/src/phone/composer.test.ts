@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { composerAction, menuRows, menuQuestion } from "./composer.ts";
+import { composerAction, menuKeys, menuQuestion } from "./composer.ts";
 
 test("a menu's question is the text right above its first option", () => {
   const menu = [" 1. Yes", " 2. No"];
@@ -29,8 +29,9 @@ test("only background work runs: send, as the main AI can answer", () => {
   assert.equal(composerAction("done", "", false, true), "send");
 });
 
-test("with a menu's text field open only that row stays: a digit would land in the answer", () => {
-  const options = [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4, freeText: true }, { n: 5 }];
-  assert.deepEqual(menuRows(options, false), options);
-  assert.deepEqual(menuRows(options, true), [{ n: 4, freeText: true }]);
+test("with a menu's text field open a row leaves it first: a digit would land in the answer", () => {
+  assert.deepEqual(menuKeys({ n: 2 }, false), ["2"]);
+  assert.deepEqual(menuKeys({ n: 1, key: "enter" }, false), ["enter"]);
+  assert.deepEqual(menuKeys({ n: 4, freeText: true }, true), ["up"], "the typing row only leaves");
+  assert.deepEqual(menuKeys({ n: 2 }, true), ["up", "2"], "another row leaves, then picks");
 });

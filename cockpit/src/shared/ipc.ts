@@ -535,6 +535,11 @@ export interface CockpitApi {
   writeSession(key: string, data: string): void;
   resizeSession(key: string, cols: number, rows: number): void;
   /**
+   * A remote tmux session's scrolling, which lives in tmux rather than in the terminal: where its view is, after
+   * moving it to `to` lines above the bottom when given. Undefined for a session that is not in tmux, or unreachable.
+   */
+  tmuxScroll(key: string, to?: number): Promise<{ history: number; position: number; height: number } | undefined>;
+  /**
    * Ends the session rather than just letting go of it.
    *
    * Dropping this end of a tmux-backed session leaves the agent running on
@@ -860,6 +865,7 @@ export const channels = {
   restartSession: "session:restart",
   writeSession: "session:write",
   resizeSession: "session:resize",
+  tmuxScroll: "session:tmux-scroll",
   stopSession: "session:stop",
   data: "session:data",
   state: "session:state",
