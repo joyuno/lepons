@@ -1,6 +1,6 @@
 {
   "name": "lepons-cockpit",
-  "version": "1.10.12",
+  "version": "1.10.13",
   "private": true,
   "license": "MIT",
   "type": "module",

@@ -12,9 +12,34 @@ import { isSensitivePath } from "../mask/mask.ts";
 const MD_DEPTH = 4;
 const MD_FILES = 300;
 const skippedDirs = new Set(["node_modules", "dist", "build", "out", "target", "coverage", "__pycache__", "release", "vendor"]);
-const skipped = (name: string) => name.startsWith(".") || skippedDirs.has(name);
-/** With `hidden`, the PC's own file search: dot files and folders are listed too, all but .git. */
-const skippedHere = (name: string, hidden: boolean) => (hidden ? name === ".git" || skippedDirs.has(name) : skipped(name));
+
+/**
+ * Which dot-named files and folders a listing keeps: none (false, the phone's
+ * default), all but those that keep secrets ("safe", 숨김 폴더 보기), or all
+ * but .git (true, the PC's own file search).
+ */
+export type Hidden = boolean | "safe";
+
+/** Dot names that stay hidden from the phone with 숨김 폴더 보기 on: keys, tokens, sign-ins and session records. */
+const secretDotNames = new Set([".git", ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store",
+  ".npmrc", ".pypirc", ".netrc", ".pgpass", ".git-credentials", ".credentials.json", ".claude", ".claude.json", ".codex",
+  ".bash_history", ".zsh_history", ".python_history", ".node_repl_history"]);
+const secretDotName = (name: string) => secretDotNames.has(name.toLowerCase()) || /^\.env(\.|$)/i.test(name);
+
+/**
+ * Whether a relative path's dot-named parts may reach the phone: none of them
+ * when `showHidden` is off, and with it on all but the secret ones above and
+ * .config/gcloud. The one rule for both what is listed and what is read.
+ */
+export function hiddenAllowed(path: string, showHidden: boolean): boolean {
+  const parts = path.split("/");
+  if (!showHidden) return !parts.some((part) => part.startsWith("."));
+  return !parts.some(secretDotName) && !/(^|\/)\.config\/gcloud(\/|$)/i.test(path);
+}
+
+/** A folder `listFiles` does not walk into; `path` is relative, its last part the folder's name. */
+const skippedHere = (path: string, name: string, hidden: Hidden) =>
+  skippedDirs.has(name) || (hidden === true ? name === ".git" : !hiddenAllowed(path, hidden === "safe"));
 
 /**
  * A listed path the phone may name: relative, no `..`, no control
@@ -34,8 +59,8 @@ export function safePath(path: string): boolean {
  * secret (keys, credentials). The phone gets the bytes unmasked, so its folder
  * browser leaves these out and a read refuses them even when named.
  */
-export const phoneMayOpen = (path: string): boolean =>
-  safePath(path) && !path.split("/").some((part) => part.startsWith(".")) && !isSensitivePath(path);
+export const phoneMayOpen = (path: string, showHidden = false): boolean =>
+  safePath(path) && hiddenAllowed(path, showHidden) && !isSensitivePath(path);
 
 export const safeRelative = (path: string): boolean => safePath(path) && path.toLowerCase().endsWith(".md");
 
@@ -45,14 +70,14 @@ export function parseFindOutput(output: string, accept: (path: string) => boolea
 }
 
 /** The folder's files `accept` takes, breadth by depth, `maxFiles` at most. */
-export async function listFiles(root: string, accept: (name: string) => boolean, maxDepth: number, maxFiles: number, hidden = false): Promise<string[]> {
+export async function listFiles(root: string, accept: (name: string) => boolean, maxDepth: number, maxFiles: number, hidden: Hidden = false): Promise<string[]> {
   const found: string[] = [];
   const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (found.length >= maxFiles) return;
-      if (entry.isFile() && (hidden || !entry.name.startsWith(".")) && accept(entry.name)) found.push(prefix + entry.name);
-      else if (entry.isDirectory() && !skippedHere(entry.name, hidden) && depth < maxDepth) {
+      if (entry.isFile() && (hidden === true || hiddenAllowed(prefix + entry.name, hidden === "safe")) && accept(entry.name)) found.push(prefix + entry.name);
+      else if (entry.isDirectory() && !skippedHere(prefix + entry.name, entry.name, hidden) && depth < maxDepth) {
         await walk(join(dir, entry.name), `${prefix}${entry.name}/`, depth + 1);
       }
     }
@@ -67,8 +92,11 @@ export const markdownFiles = (root: string) => listFiles(root, (name) => name.to
  * The same listing on another PC, run in the folder; `find` does not follow
  * symlinks. NUL-separated, since a file name may contain a newline.
  */
-export function findScript(maxDepth: number, namePatterns: string[] = [], hidden = false): string {
-  const prune = [hidden ? "'.git'" : "'.?*'", ...[...skippedDirs].map((name) => `'${name}'`)].map((name) => `-name ${name}`).join(" -o ");
+export function findScript(maxDepth: number, namePatterns: string[] = [], hidden: Hidden = false): string {
+  // "safe" prunes the secret names here and parseFindOutput's hiddenAllowed catches the rest, as listFiles does.
+  const dots = hidden === true ? ["-name '.git'"] : hidden === "safe"
+    ? [...secretDotNames, ".env", ".env.*"].map((name) => `-iname '${name}'`).concat("-ipath '*/.config/gcloud'") : ["-name '.?*'"];
+  const prune = [...dots, ...[...skippedDirs].map((name) => `-name '${name}'`)].join(" -o ");
   const names = namePatterns.length === 0 ? "" : `\\( ${namePatterns.map((pattern) => `-iname '${pattern}'`).join(" -o ")} \\) `;
   return `find . -maxdepth ${maxDepth} \\( ${prune} \\) -prune -o -type f ${names}-print0 2>/dev/null`;
 }
@@ -89,8 +117,8 @@ export const viewable = (path: string): boolean => safePath(path) && Object.hasO
 
 const VIEW_DEPTH = 4;
 const VIEW_FILES = 500;
-export const viewableFiles = (root: string) => listFiles(root, viewable, VIEW_DEPTH, VIEW_FILES);
-export const viewableFindScript = findScript(VIEW_DEPTH, Object.keys(viewTypes).map((ext) => `*.${ext}`));
+export const viewableFiles = (root: string, showHidden = false) => listFiles(root, viewable, VIEW_DEPTH, VIEW_FILES, showHidden && "safe");
+export const viewableFindScript = (showHidden = false) => findScript(VIEW_DEPTH, Object.keys(viewTypes).map((ext) => `*.${ext}`), showHidden && "safe");
 
 export interface PhoneFileEntry { name: string; directory: boolean }
 

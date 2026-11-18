@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { posixQuote } from "../session/state.ts";
-import { markdownFiles, parseFindOutput, phoneMayOpen, safeRelative, viewable, viewableFindScript, phoneDirectory, phoneDirectoryScript, parsePhoneDirectory } from "./docs.ts";
+import { findScript, hiddenAllowed, listFiles, markdownFiles, parseFindOutput, phoneMayOpen, safeRelative, viewable, viewableFindScript, phoneDirectory, phoneDirectoryScript, parsePhoneDirectory } from "./docs.ts";
 
 test("lists .md files only, skipping hidden folders, node_modules and symlinks", async () => {
   const root = mkdtempSync(join(tmpdir(), "lepons-docs-"));
@@ -54,7 +54,7 @@ test("the viewer lists md, images, PDF and HTML, nothing else, with the same pat
   // A name not in UTF-8 (EUC-KR, say) arrives with its bytes lost, and no read finds it under that name.
   assert.deepEqual(parseFindOutput("./�.md\0./c.md\0", viewable), ["c.md"]);
   assert.deepEqual(parsePhoneDirectory("f�.md\0fc.md\0"), [{ name: "c.md", directory: false }]);
-  assert.match(viewableFindScript, /-iname '\*\.pdf'/);
+  assert.match(viewableFindScript(), /-iname '\*\.pdf'/);
 });
 
 
@@ -82,4 +82,40 @@ test("the remote directory script is sh's whatever the account's shell, and take
   assert.match(script, /^sh -c '/);
   const names = parsePhoneDirectory(execFileSync("bash", ["-c", script], { encoding: "utf8" })).sort((a, b) => a.name.localeCompare(b.name));
   assert.deepEqual(names, [{ name: ".env", directory: false }, { name: "empty", directory: true }]);
+});
+
+test("숨김 폴더 보기: off hides every dot name; on, all but those that keep secrets", () => {
+  for (const path of [".local-assets/a.png", "src/.github/x.md", ".config/app.toml", ".gitignore", ".vscode/settings.json", "a/.ssh-notes.md"]) {
+    assert.equal(hiddenAllowed(path, false), false, path);
+    assert.equal(hiddenAllowed(path, true), true, path);
+  }
+  for (const path of [".git/config", "a/.git/HEAD", ".ssh/config", ".SSH/config", ".gnupg/x", ".aws/config", ".azure/x", ".kube/config", ".docker/config.json",
+    ".config/gcloud/x.json", "a/.config/gcloud", ".env", ".env.local", "app/.env.production", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+    ".claude/projects/x.jsonl", ".claude.json", ".codex/sessions/x.jsonl", ".bash_history"]) {
+    assert.equal(hiddenAllowed(path, true), false, path);
+    assert.equal(phoneMayOpen(path, true), false, path);
+  }
+  for (const path of ["src/app.ts", ".envrc-notes/a.md", "environment/.environment.md"]) assert.equal(hiddenAllowed(path, true), true, path);
+  // On or off, what isSensitivePath calls a secret is never read.
+  for (const path of ["keys/id_ed25519", "tls/server.pem", "aws/credentials", ".local-assets/server.pem"]) assert.equal(phoneMayOpen(path, true), false, path);
+  assert.equal(phoneMayOpen(".local-assets/a.png", true), true);
+  assert.equal(phoneMayOpen(".local-assets/a.png"), false);
+});
+
+test("a listing with hidden folders on, here and over SSH's find, names the same files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "lepons-hidden-")).replaceAll("\\", "/");
+  for (const dir of [".local-assets/video", ".git", ".ssh", ".claude/projects", ".config/gcloud", "src/.github", "node_modules/x"]) mkdirSync(join(root, dir), { recursive: true });
+  for (const file of [".local-assets/video/a.md", ".git/x.md", ".ssh/x.md", ".claude/projects/x.md", ".config/gcloud/x.md", ".config/app.md",
+    "src/.github/ci.md", "node_modules/x/r.md", ".env", ".env.md", ".gitignore", "README.md"]) writeFileSync(join(root, file), "x");
+  const all = () => true;
+  const safe = [".config/app.md", ".gitignore", ".local-assets/video/a.md", "README.md", "src/.github/ci.md"];
+  assert.deepEqual((await listFiles(root, all, 6, 100, "safe")).sort(), safe);
+  assert.deepEqual((await listFiles(root, all, 6, 100)).sort(), ["README.md"]);
+  // Today's PC search (true) is unchanged: all but .git.
+  assert.ok((await listFiles(root, all, 6, 100, true)).includes(".ssh/x.md"));
+  // find's prune alone, before machine.ts's hiddenAllowed: no walk into .claude and the like.
+  const found = (hidden: false | "safe") =>
+    parseFindOutput(execFileSync("bash", ["-c", `cd ${posixQuote(root)} && ${findScript(6, [], hidden)}`], { encoding: "utf8" }), all).sort();
+  assert.deepEqual(found("safe"), safe);
+  assert.deepEqual(found(false), ["README.md"]);
 });

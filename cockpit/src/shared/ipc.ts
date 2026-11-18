@@ -396,6 +396,8 @@ export interface PhoneSubagent {
 export interface PhoneSettingsView {
   /** "폰 접속 허용". */
   allowed: boolean;
+  /** "숨김 폴더 보기": what the PC lists and serves (docs.ts hiddenAllowed). */
+  showHidden: boolean;
   hasPassword: boolean;
   hasTotp: boolean;
   /** The key's code was typed back correctly at least once, or the key predates that check. */
@@ -756,6 +758,7 @@ export interface CockpitApi {
   phoneSnapshot(sessions: PhoneSession[]): void;
   phoneSettings(): Promise<PhoneSettingsView>;
   setPhoneAllowed(on: boolean): Promise<PhoneSettingsView>;
+  setShowHidden(on: boolean): Promise<PhoneSettingsView>;
   /** An error message when refused; the password itself never comes back. */
   setPhonePassword(password: string): Promise<string | undefined>;
   /** The Authenticator key, as a QR and as text; `renew` makes a new one. */
@@ -974,6 +977,7 @@ export const channels = {
   phoneSnapshot: "phone:snapshot",
   phoneSettings: "phone:settings",
   setPhoneAllowed: "phone:set-allowed",
+  setShowHidden: "phone:set-show-hidden",
   setPhonePassword: "phone:set-password",
   phoneTotp: "phone:totp",
   phoneTotpCheck: "phone:totp-check",

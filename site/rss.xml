@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Wed, 18 Nov 2026 18:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Wed, 18 Nov 2026 23:30:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.13: 터미널 스크롤·복사 되돌림, 숨김 폴더 보기</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.13</guid>
+      <pubDate>Wed, 18 Nov 2026 23:30:00 +0900</pubDate>
+      <description>다른 PC 칸의 스크롤 막대가 두 개 생기거나, 출력 중에 위로 올려 읽으면 맨 아래로 내려가던 문제를 고쳤어요. 끌어서 선택하면 바로 복사되던 것도 예전처럼 Ctrl+C나 오른쪽 클릭으로 복사하게 되돌렸어요. 설정에서 숨김 폴더 보기를 켜면 폰에서 점으로 시작하는 폴더도 볼 수 있어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.12: 폰에서 여러 질문에 한 번에 답하기, 터미널에 파일 끌어다 놓기</title>
       <link>https://lepons.app/#download</link>

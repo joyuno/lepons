@@ -218,6 +218,7 @@ const api: CockpitApi = {
   phoneSnapshot: (sessions) => ipcRenderer.send(channels.phoneSnapshot, sessions),
   phoneSettings: () => ipcRenderer.invoke(channels.phoneSettings),
   setPhoneAllowed: (on) => ipcRenderer.invoke(channels.setPhoneAllowed, on),
+  setShowHidden: (on) => ipcRenderer.invoke(channels.setShowHidden, on),
   setPhonePassword: (password) => ipcRenderer.invoke(channels.setPhonePassword, password),
   phoneTotp: (renew) => ipcRenderer.invoke(channels.phoneTotp, renew),
   phoneTotpCheck: (code) => ipcRenderer.invoke(channels.phoneTotpCheck, code),

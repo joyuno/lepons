@@ -65,6 +65,8 @@ export interface PhoneHost {
   deps: PhoneDeps;
   /** Takes the relay link down when the app quits. */
   stop(): void;
+  /** 숨김 폴더 보기: dot-named files and folders listed too, all but the secret ones (docs.ts hiddenAllowed). */
+  showHidden(): boolean;
   /**
    * The PC's one Authenticator key -- the phone's login -- as a second check
    * for anything else: set up from either side, it is done for both.
@@ -118,6 +120,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     return node && repo ? { node, repo } : undefined;
   };
   const phoneCache = new Map<string, { at: number; value: Promise<unknown> }>();
+  const showHidden = () => phone.get().showHidden === true;
   const phoneCached = <T>(key: string, make: () => Promise<T>): Promise<T> => {
     const hit = phoneCache.get(key);
     if (hit && Date.now() - hit.at < 60_000) return hit.value as Promise<T>;
@@ -279,6 +282,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     const settings = phone.get();
     return {
       allowed: settings.allowed === true,
+      showHidden: settings.showHidden === true,
       hasPassword: settings.passwordHash !== undefined,
       hasTotp: settings.totpSecret !== undefined,
       totpReady: settings.totpSecret !== undefined && settings.totpUnconfirmed !== true,
@@ -382,7 +386,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const node = nodes.list().find((candidate) => candidate.id === session?.nodeId);
       const repo = node?.repos.find((candidate) => candidate.id === session?.repoId);
       if (!node || !repo) return [];
-      const list = (await machineOf(node).viewableFiles(repo.path)).sort().slice(0, 500);
+      const list = (await machineOf(node).viewableFiles(repo.path, showHidden())).sort().slice(0, 500);
       const previous = phoneDocs.get(key);
       const files = previous?.root === repo.path && previous.nodeId === node.id ? previous.files : new Set<string>();
       for (const file of list) files.add(file);
@@ -397,7 +401,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     },
     docBytes: async (key, relative) => {
       const listed = phoneDocs.get(key);
-      if (!listed?.files.has(relative) || !phoneMayOpen(relative)) return undefined;
+      if (!listed?.files.has(relative) || !phoneMayOpen(relative, showHidden())) return undefined;
       const node = nodes.list().find((candidate) => candidate.id === listed.nodeId);
       return node && machineOf(node).readInside(listed.root, relative, 20 * 1024 * 1024);
     },
@@ -439,7 +443,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const { node, repo } = found;
       // Left out what a read would refuse anyway: hidden and secret-shaped names.
       const entries = (await machineOf(node).listInside(repo.path, relative))
-        ?.filter((entry) => phoneMayOpen(relative ? `${relative}/${entry.name}` : entry.name));
+        ?.filter((entry) => phoneMayOpen(relative ? `${relative}/${entry.name}` : entry.name, showHidden()));
       if (!entries) return undefined;
       const previous = phoneDocs.get(key);
       const files = previous?.root === repo.path && previous.nodeId === node.id ? previous.files : new Set<string>();
@@ -450,7 +454,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     files: (key) => phoneCached(`files\0${key}`, async () => {
       const found = phoneSessionPlace(key);
       if (!found) return [];
-      return machineOf(found.node).allFiles(found.repo.path);
+      return machineOf(found.node).allFiles(found.repo.path, showHidden() && "safe");
     }),
     // The composer's clip, saved where a desktop paste for that PC goes (index.ts pasteImage):
     // its temp folder, readable by that account only, the path then typed into the agent.
@@ -630,6 +634,12 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     phone.set({ allowed: on === true });
     return syncPhone();
   });
+  ipcMain.handle(channels.setShowHidden, (_event, on: boolean) => {
+    phone.set({ showHidden: on === true });
+    // The "@" list is kept a minute: the next one asked is listed under the new setting.
+    phoneCache.clear();
+    return syncPhone();
+  });
   ipcMain.handle(channels.setPhonePassword, async (_event, password: string) => {
     if (typeof password !== "string" || password.length < 8) return t("phone.passwordShort");
     phone.set({ passwordHash: await hashPassword(password) });
@@ -708,6 +718,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   return {
     api,
     deps: phoneDeps,
+    showHidden,
     twoFactor: {
       ready: () => phoneView().totpReady,
       // Five wrong codes and it stops listening for five minutes: six digits are few, and the window asking may not be the owner's.

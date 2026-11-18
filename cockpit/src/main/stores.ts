@@ -220,6 +220,8 @@ export class GrantStore {
 export interface PhoneSettings {
   /** "폰 접속 허용": off until the operator turns it on. */
   allowed?: boolean;
+  /** 숨김 폴더 보기: off until turned on (docs.ts hiddenAllowed). */
+  showHidden?: boolean;
   /** scrypt, see phone/auth.ts; never the password. */
   passwordHash?: string;
   /** The Authenticator app's base32 key, in sealSecret's form (phone-host seals a bare one from earlier builds). */

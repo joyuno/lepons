@@ -125,6 +125,25 @@ test("hidden and secret-shaped files are neither listed nor read, even when name
   assert.equal((await deps.files(KEY)).includes(".env"), false);
 });
 
+test("숨김 폴더 보기 lists and opens dot folders, never the secret ones, and off again closes them", async (t) => {
+  const { deps, snapshot, root, handlers } = setup(t);
+  for (const dir of [".git", ".local-assets", ".claude"]) mkdirSync(join(root, dir));
+  for (const file of [".env", ".git/config", ".local-assets/a.png", ".claude/x.md", "code.ts"]) writeFileSync(join(root, file), "x");
+  snapshot([session("idle")]);
+  assert.equal((await deps.files(KEY)).includes(".local-assets/a.png"), false);
+  const view = await handlers.get(channels.setShowHidden)!({}, true) as PhoneSettingsView;
+  assert.equal(view.showHidden, true);
+  assert.deepEqual((await deps.directory(KEY, ""))?.map((entry) => entry.name).sort(), [".local-assets", "code.ts", "docs"]);
+  assert.deepEqual(await deps.directory(KEY, ".local-assets"), [{ name: "a.png", directory: false }]);
+  assert.equal((await deps.docBytes(KEY, ".local-assets/a.png"))?.toString(), "x");
+  for (const path of [".env", ".git/config", ".claude/x.md"]) assert.equal(await deps.docBytes(KEY, path), undefined, path);
+  assert.deepEqual((await deps.files(KEY)).sort(), [".local-assets/a.png", "code.ts"]);
+  assert.deepEqual(await deps.docs(KEY), [".local-assets/a.png"]);
+  await handlers.get(channels.setShowHidden)!({}, false);
+  assert.equal(await deps.docBytes(KEY, ".local-assets/a.png"), undefined);
+  assert.equal((await deps.files(KEY)).includes(".local-assets/a.png"), false);
+});
+
 test("a file swapped for a symlink after the listing is not followed", async (t) => {
   const { deps, snapshot, root, outside } = setup(t);
   writeFileSync(join(root, "note.md"), "hello");

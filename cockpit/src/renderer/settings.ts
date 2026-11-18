@@ -1085,6 +1085,17 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
       start.firstElementChild!.className = "go";
       out.push(line(t("settings.phone.setupIntro")), start);
     }
+    // 숨김 폴더 보기: what this PC lists and serves to the phone (docs.ts hiddenAllowed).
+    const hiddenRow = document.createElement("label");
+    const hiddenBox = document.createElement("input");
+    hiddenBox.type = "checkbox";
+    hiddenBox.checked = view.showHidden;
+    hiddenBox.addEventListener("change", () => void cockpit.setShowHidden(hiddenBox.checked));
+    hiddenRow.append(hiddenBox, t("settings.phone.showHidden"));
+    const hiddenHint = document.createElement("p");
+    hiddenHint.className = "setNote";
+    hiddenHint.textContent = t("settings.phone.showHiddenHint");
+    out.push(hiddenRow, hiddenHint);
     // The relay server: relay.lepons.app unless the operator runs their own.
     const custom = relay.server !== DEFAULT_RELAY;
     const advanced = document.createElement("details");

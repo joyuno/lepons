@@ -125,11 +125,13 @@ export function tmuxCommand(
     // Mouse mode is what makes the wheel scroll at all: tmux owns the
     // scrollback and the terminal's own buffer stays empty. The prefix (Ctrl+B)
     // is the agent's (Claude Code pages up with it); tmux's keys are not used
-    // here. The status line took a row from every pane for nothing shown.
+    // here. The status line stays (on, for sessions 1.10.12 turned it off in):
+    // without it tmux scrolls the whole screen, and the lines it pushes up
+    // filled xterm's own scrollback, a second scrollbar beside tmux's.
     `set -q -t ${session} mouse on`,
     `set -q -t ${session} prefix None`,
     `set -q -t ${session} prefix2 None`,
-    `set -q -t ${session} status off`,
+    `set -q -t ${session} status on`,
     // window-size latest: with a second client still attached (another PC, a
     // dropped connection), tmux before 3.1 sizes the window to the smallest
     // one. The agent then draws narrower than this terminal, and the cells to

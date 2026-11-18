@@ -1563,7 +1563,7 @@ function park(element: HTMLElement): void {
  * here from where tmux says its view is (main's tmuxScroll; geometry in tmux-bar.ts). Read every few seconds while the
  * pane shows and just after a wheel over it; dragging the thumb or clicking the track moves tmux's view there.
  */
-const tmuxBars = new Map<string, { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout>; held?: string[] }>();
+const tmuxBars = new Map<string, { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> }>();
 
 function attachTmuxBar(key: string, element: HTMLElement): void {
   const found = findByKey(key);
@@ -1576,7 +1576,7 @@ function attachTmuxBar(key: string, element: HTMLElement): void {
   const thumb = document.createElement("i");
   bar.append(thumb);
   element.append(bar);
-  const entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout>; held?: string[] } = { element, bar, thumb, busy: false, dragging: false };
+  const entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> } = { element, bar, thumb, busy: false, dragging: false };
   tmuxBars.set(key, entry);
   element.addEventListener("wheel", (event) => {
     // Up is into copy mode, most likely: typing straight after must not wait for the read below to know it.
@@ -1665,15 +1665,9 @@ setInterval(() => {
  * that, in order. Anywhere else, and in tmux at the bottom, it goes straight through.
  */
 function typeInto(key: string, data: string): void {
-  const entry = tmuxBars.get(key);
-  if (!entry || (!entry.held && !entry.view?.inMode)) return cockpit.writeSession(key, data);
-  if (entry.held) return void entry.held.push(data);
-  const held = (entry.held = [data]);
-  // Settled either way: an unreachable tmux must not keep the keys.
-  void readTmux(key, 0).finally(() => {
-    entry.held = undefined;
-    for (const each of held) cockpit.writeSession(key, each);
-  });
+  // Straight through, as before 1.10.12: leaving tmux's copy mode on any input pulled a pane scrolled up to read
+  // back to the bottom on every focus and mouse report, while the agent printed.
+  cockpit.writeSession(key, data);
 }
 
 function terminalFor(key: string) {
@@ -1797,10 +1791,7 @@ function terminalFor(key: string) {
   // given to the program as if it had been reported from the press: both scroll
   // with the button held and copy the whole selection on release, tmux joining
   // wrapped lines. The drag stays xterm's until then, so one that keeps to the
-  // screen is selected, copied and right-clicked as before -- except in a
-  // remote tmux pane, where every drag is tmux's: the screen xterm holds there
-  // is tmux's drawing, a long line broken at the edge, and xterm's copy kept
-  // those breaks where tmux's joins the line again.
+  // screen is selected, copied and right-clicked as before.
   let handOverDrag: ((x: number, y: number) => void) | undefined;
   let watchedDrag: AbortController | undefined;
   let handedOverAt = -Infinity;
@@ -1815,8 +1806,8 @@ function terminalFor(key: string) {
     const node = nodes.find((candidate) => candidate.id === key.split("::")[0]);
     const remoteTmux = node?.kind === "ssh" && node.useTmux;
     if ((sessionExecutors.get(key) ?? "shell") === "shell" && !remoteTmux) return;
-    // Lepons' tmux sessions have no status line (tmuxCommand), so their last row is the pane's own.
-    const statusRows = remoteTmux ? 0 : 1;
+    // tmux keeps its status line on the last row (tmuxCommand).
+    const statusRows = 1;
     const screen = term.element!.querySelector(".xterm-screen")!;
     const drag = (clientX: number, clientY: number) =>
       document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX, clientY, buttons: 1 }));
@@ -1849,8 +1840,10 @@ function terminalFor(key: string) {
         return;
       }
       if (!handed) {
-        if (!remoteTmux && !dragLeavesScreen(term.modes.mouseTrackingMode, moved.clientY, box.top, box.bottom)) return;
-        // A click's jitter is not a drag: tmux would copy on its release.
+        // On screen the terminal's own selection stays (Ctrl+C or the menu copies it); only a drag past the edge,
+        // into history the screen does not hold, is tmux's to copy.
+        if (!dragLeavesScreen(term.modes.mouseTrackingMode, moved.clientY, box.top, box.bottom)) return;
+        // A click's jitter over the edge is not a drag: tmux would copy on its release.
         if (Math.hypot(moved.clientX - press.clientX!, moved.clientY - press.clientY!) <= 4) return;
         handOverDrag?.(moved.clientX, moved.clientY);
       }

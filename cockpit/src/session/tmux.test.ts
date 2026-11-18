@@ -62,7 +62,7 @@ test("a scope with no usable segment still produces a valid name", () => {
 const SETUP = "COLORTERM=truecolor tmux -u start-server \\; set -sq set-clipboard on \\; set -sq escape-time 10 \\; set -sq focus-events on \\; set -g history-limit 20000 \\;";
 const OWN = (name: string) =>
   ` \\; set -q -t '=${name}' mouse on \\; set -q -t '=${name}' prefix None \\; set -q -t '=${name}' prefix2 None` +
-  ` \\; set -q -t '=${name}' status off \\; set -wq -t '=${name}:' window-size latest`;
+  ` \\; set -q -t '=${name}' status on \\; set -wq -t '=${name}:' window-size latest`;
 
 const SWEEP = (name: string) => sessionSweep(name, RESUME_WINDOW_SECONDS);
 
@@ -96,7 +96,7 @@ test("options reach only this session where tmux allows it", () => {
   const globals = [...line.matchAll(/set -(s|g)q? (\S+)/g)].map((match) => match[2]).sort();
   assert.deepEqual(globals, ["escape-time", "focus-events", "history-limit", "set-clipboard"]);
   const create = line.indexOf("new-session");
-  for (const option of ["mouse on", "prefix None", "prefix2 None", "status off", "window-size latest"]) {
+  for (const option of ["mouse on", "prefix None", "prefix2 None", "status on", "window-size latest"]) {
     assert.ok(line.indexOf(option) > create, `${option} is set on the session, once it exists`);
   }
   assert.ok(line.indexOf("history-limit") < create, "a pane takes the history limit in force when it is created");

@@ -2228,7 +2228,7 @@ app.whenReady().then(() => {
     const base = typeof root === "string" ? root.replace(/\/+$/, "") : "";
     if (size === "missing" && base !== "" && at.startsWith(`${base}/`)) {
       const relative = at.slice(base.length + 1);
-      const hits = (await machineOf(node).allFiles(base)).filter((file) => file === relative || file.endsWith(`/${relative}`));
+      const hits = (await machineOf(node).allFiles(base, phoneHost?.showHidden() === true && "safe")).filter((file) => file === relative || file.endsWith(`/${relative}`));
       if (hits.length === 1) {
         at = `${base}/${hits[0]}`;
         size = await sizeOn(node, at);

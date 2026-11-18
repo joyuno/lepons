@@ -16,7 +16,7 @@ import { probeCommand, readWithProbe, type ProbedRead } from "../workflow/probe.
 import { latestTranscript, latestTranscriptTail, projectSlug, remoteTranscriptTailScript, transcriptStamp } from "../workflow/transcript.ts";
 import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
 import { pickOpencodeSession } from "../workflow/opencode.ts";
-import { findScript, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, safePath, stepsInside, viewable, viewableFiles, viewableFindScript, type PhoneFileEntry } from "../phone/docs.ts";
+import { findScript, hiddenAllowed, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, stepsInside, viewable, viewableFiles, viewableFindScript, type Hidden, type PhoneFileEntry } from "../phone/docs.ts";
 import { askHookListing, askHookName, askHookScript, type AskHookFile } from "../phone/ask.ts";
 import { commandFrom, commandScript, parseCommandOutput, type CommandSuggestion } from "../phone/suggest.ts";
 import type { ReadResponse } from "../read/envelope.ts";
@@ -88,10 +88,10 @@ export interface Machine {
   list(path: string): Promise<BrowseResult>;
   /** One folder under `root`, never through a link and listing none. Undefined when refused or unreadable. */
   listInside(root: string, relative: string): Promise<PhoneFileEntry[] | undefined>;
-  /** Files under `root` a phone can open. Empty when the machine cannot be asked. */
-  viewableFiles(root: string): Promise<string[]>;
-  /** Every file under `root`, for a phone's "@". Empty when the machine cannot be asked. */
-  allFiles(root: string, hidden?: boolean): Promise<string[]>;
+  /** Files under `root` a phone can open; dot-named ones by hiddenAllowed. Empty when the machine cannot be asked. */
+  viewableFiles(root: string, showHidden?: boolean): Promise<string[]>;
+  /** Every file under `root`, for a phone's "@"; dot-named ones as `hidden` says. Empty when the machine cannot be asked. */
+  allFiles(root: string, hidden?: Hidden): Promise<string[]>;
   /** The slash commands and skills in these folders. Empty when the machine cannot be asked. */
   customCommands(dirs: Parameters<typeof commandScript>[0]): Promise<CommandSuggestion[]>;
   /** The folder's dependency manifests. Undefined when the machine cannot be asked. */
@@ -399,16 +399,16 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       const output = await reach.runRemoteStatus(options(), script);
       return output?.code === 0 ? parsePhoneDirectory(output.output) : undefined;
     },
-    viewableFiles: async (root) => {
+    viewableFiles: async (root, showHidden = false) => {
       if (!(await ready())) return [];
-      const output = await reach.runRemote(options(), `cd ${posixQuote(root)} && ${viewableFindScript}`);
-      return parseFindOutput(output ?? "", viewable);
+      const output = await reach.runRemote(options(), `cd ${posixQuote(root)} && ${viewableFindScript(showHidden)}`);
+      return parseFindOutput(output ?? "", (path) => viewable(path) && hiddenAllowed(path, showHidden));
     },
     allFiles: async (root, hidden = false) => {
       if (!(await ready())) return [];
       const output = (await reach.runRemote(options(), `cd ${posixQuote(root)} && ${findScript(6, [], hidden)} | head -c 400000`)) ?? "";
       // What follows the last NUL is a name `head` cut in two.
-      return parseFindOutput(output.slice(0, output.lastIndexOf("\0") + 1), safePath).slice(0, 3000);
+      return parseFindOutput(output.slice(0, output.lastIndexOf("\0") + 1), (path) => hidden === true || hiddenAllowed(path, hidden === "safe")).slice(0, 3000);
     },
     customCommands: async (dirs) => {
       if (!(await ready())) return [];
