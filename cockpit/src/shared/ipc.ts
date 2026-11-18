@@ -280,6 +280,41 @@ export type LlmState = "up" | "down" | "nokey" | "notools";
 /** A server found at a usual port, with the models it lists. */
 export interface LlmFound { baseUrl: string; models: string[] }
 
+/**
+ * A waiting session's menu as the PC reads it off its terminal (phone/ask.ts), so the phone and its widget draw
+ * buttons from this rather than from their own copy of the screen. `id` is a short hex fingerprint of the question,
+ * the options' labels and ticks, the tabs and the tab: the widget answers only while the PC still shows the same one.
+ * Labels are at most 120 characters, details 200, the question 300; nine options at most. `tab`: which of `tabs` is
+ * on screen, when the terminal shows it.
+ */
+export interface PhoneAsk {
+  id: string;
+  question?: string;
+  options: Array<{ n: number; label: string; detail?: string; freeText?: true; checked?: boolean; key?: "enter" | "esc"; keys?: string[] }>;
+  tabs?: Array<{ label: string; done: boolean }>;
+  tab?: number;
+  /** Claude's whole AskUserQuestion set on screen, read from its record (phone/ask.ts askForm): the phone answers it all, and the PC types it (POST /api/answer). */
+  form?: PhoneAskForm;
+}
+
+/**
+ * A pending AskUserQuestion as Claude's record has it, sent only while it is the one on screen. `id` is its
+ * tool_use id. Four questions at most, four options each; labels at most 120 characters, descriptions 200, questions 500.
+ */
+export interface PhoneAskForm {
+  id: string;
+  questions: Array<{ header: string; question: string; multiSelect: boolean; options: Array<{ label: string; description?: string }> }>;
+}
+
+/** One question's answer from the phone: its options' indexes (0-based), or a single-select's typed words. */
+export type PhoneAnswer = { picks: number[] } | { text: string };
+/**
+ * How the PC's typing of a form went (phone/answer.ts). `step`: the question it stopped at, 0-based, the questions'
+ * count for the review. "where": the set is not on screen; "stuck": a key did not show; "typed": the words did not;
+ * "submit": the set stayed after Submit; "busy", "closed", "timeout": the PC could not type it.
+ */
+export type PhoneAnswerResult = { ok: true } | { ok: false; step: number; reason: "where" | "stuck" | "typed" | "submit" | "busy" | "closed" | "timeout" };
+
 export interface PhoneSession {
   key: string;
   nodeId: string;
@@ -302,6 +337,10 @@ export interface PhoneSession {
   turn?: "starting" | "finished";
   /** The last line the terminal shows. */
   preview?: string;
+  /** The menu on its screen, read once on the PC (phone/ask.ts); sent while it is there, whatever the mood. */
+  ask?: PhoneAsk;
+  /** That menu is Claude's AskUserQuestion (phone/answer.ts askUserMenu): main reads the set from the record. The phone is not sent it. */
+  askUser?: true;
   /** Where it sits on the PC: its pane (1 = first in screen order), its place among that pane's tabs, and whether it is the tab the pane shows. None when no pane holds it. */
   pane?: { n: number; tab: number; shown: boolean };
   /** Its last workflow steps' kinds, oldest first, five at most (work map's dot chain); none when unread. */
@@ -536,9 +575,10 @@ export interface CockpitApi {
   resizeSession(key: string, cols: number, rows: number): void;
   /**
    * A remote tmux session's scrolling, which lives in tmux rather than in the terminal: where its view is, after
-   * moving it to `to` lines above the bottom when given. Undefined for a session that is not in tmux, or unreachable.
+   * moving it to `to` lines above the bottom when given, or to the next match of `find`'s text up or down (copy mode).
+   * Undefined for a session that is not in tmux, or unreachable.
    */
-  tmuxScroll(key: string, to?: number): Promise<{ history: number; position: number; height: number } | undefined>;
+  tmuxScroll(key: string, to?: number, find?: { text: string; up: boolean }): Promise<{ history: number; position: number; height: number; inMode: boolean } | undefined>;
   /**
    * Ends the session rather than just letting go of it.
    *
@@ -676,6 +716,8 @@ export interface CockpitApi {
   /** The usage after any read, the ones main makes by itself included (this PC's status line saved a new one). */
   onUsage(handler: (usage: import("../agent/usage.ts").Usage) => void): void;
   pasteImage(nodeId: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  /** Files dropped onto a session on another PC, copied into a new folder in its temp: their paths there. */
+  dropFiles(nodeId: string, paths: string[]): Promise<{ ok: true; paths: string[] } | { ok: false; error: string }>;
   onData(handler: (key: string, chunk: string) => void): void;
   onState(handler: (key: string, state: SessionState) => void): void;
   /** A session's AI found gone, or back: session/agent-life.ts. */
@@ -740,6 +782,9 @@ export interface CockpitApi {
   onPhoneForgot(handler: (key: string) => void): void;
   /** The phone said a session's question waits for the person (POST /api/auto-keep). */
   onPhoneAutoKeep(handler: (key: string) => void): void;
+  /** The phone answered the question set on a session's screen (POST /api/answer): type it there (phone/answer.ts), then replyPhoneAnswer. */
+  onPhoneAnswer(handler: (requestId: string, key: string, form: PhoneAskForm, answers: PhoneAnswer[]) => void): void;
+  replyPhoneAnswer(requestId: string, result: PhoneAnswerResult): void;
 }
 
 /** What creating a secret-bearing file inside a repository found out. */
@@ -823,6 +868,7 @@ export const channels = {
   usageChanged: "app:usage-changed",
   setMcpAgents: "share:mcp-agents",
   pasteImage: "app:paste-image",
+  dropFiles: "app:drop-files",
   powerAction: "window:power-action",
   toggleMaximize: "window:toggle-maximize",
   windowControl: "window:control",
@@ -937,6 +983,8 @@ export const channels = {
   phoneReconnect: "phone:reconnect",
   phoneTerminal: "phone:terminal",
   phoneAutoKeep: "phone:auto-keep",
+  phoneAnswer: "phone:answer",
+  phoneAnswerReply: "phone:answer-reply",
   phoneOpen: "phone:open",
   phoneForgot: "phone:forgot",
   phoneQr: "phone:qr",

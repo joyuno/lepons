@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { findPaths, resolvePath } from "./term-paths.ts";
+import { dropFolder, findPaths, resolvePath, typedPaths } from "./term-paths.ts";
 
 const paths = (line: string) => findPaths(line).map((found) => found.path);
 
@@ -25,4 +25,18 @@ test("a printed path resolves from the session's folder", () => {
   assert.equal(resolvePath("/home/me/app", "/home/me", "~/notes.md"), "/home/me/notes.md");
   assert.equal(resolvePath("/srv", "/root", "C:\\x\\y.txt"), "C:/x/y.txt");
   assert.equal(resolvePath("/srv", "/root", "/etc/hosts.conf"), "/etc/hosts.conf");
+});
+
+test("dropped paths are typed quoted where the shell needs it", () => {
+  assert.equal(typedPaths(["C:/Users/me/a.txt"], true), String.raw`C:\Users\me\a.txt `);
+  assert.equal(typedPaths(["C:/My Files/a b.txt", "C:/x/y"], true), String.raw`"C:\My Files\a b.txt" C:\x\y `);
+  assert.equal(typedPaths(["C:/x/a&b(1).txt"], true), String.raw`"C:\x\a&b(1).txt" `);
+  assert.equal(typedPaths(["/tmp/lepons-drop-1/a.txt"], false), "/tmp/lepons-drop-1/a.txt ");
+  assert.equal(typedPaths(["/tmp/d/it's here.md", "/tmp/d/$x"], false), String.raw`'/tmp/d/it'\''s here.md' '/tmp/d/$x' `);
+  assert.equal(typedPaths(["/tmp/d/보고서.md"], false), "'/tmp/d/보고서.md' ");
+});
+
+test("a drop folder is in the other PC's temp", () => {
+  assert.equal(dropFolder("/home/me", false, "ab12cd34"), "/tmp/lepons-drop-ab12cd34");
+  assert.equal(dropFolder("C:/Users/me/", true, "ab12cd34"), "C:/Users/me/AppData/Local/Temp/lepons-drop-ab12cd34");
 });

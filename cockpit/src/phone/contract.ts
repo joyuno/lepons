@@ -1,5 +1,5 @@
 import type { TokenStats } from "../agent/token-stats.ts";
-import type { PhoneSession, SessionWorkflow, SessionWorkflowResult } from "../shared/ipc.ts";
+import type { PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflow, SessionWorkflowResult } from "../shared/ipc.ts";
 import type { PcState } from "../shared/status.ts";
 import type { PhoneFileEntry } from "./docs.ts";
 import type { CommandSuggestion } from "./suggest.ts";
@@ -19,7 +19,7 @@ import type { CommandSuggestion } from "./suggest.ts";
  * readers catches those. mobile/src/phone/contract.test.ts does both.
  */
 
-export type { CommandSuggestion, PhoneFileEntry, TokenStats };
+export type { CommandSuggestion, PhoneAnswer, PhoneAnswerResult, PhoneFileEntry, TokenStats };
 
 /** What the phone gets for one session: no key, no path -- an opaque id. */
 export interface PhoneSessionView {
@@ -30,6 +30,8 @@ export interface PhoneSessionView {
   /** Its terminal is up and its AI has gone, so nothing would read a message; absent otherwise. */
   agentGone?: boolean;
   preview?: string;
+  /** The menu it waits on, read on the PC; only while waiting. A PC older than this sends none, and the phone reads its own screen. */
+  ask?: PhoneSession["ask"];
   /** An agent session, the only kind the phone may type into. */
   agent: boolean;
   pane?: PhoneSession["pane"];
@@ -127,6 +129,12 @@ export interface PhoneRoutes {
   "POST /api/push-token": { body: { token: string | null; prefs?: { done?: boolean } }; reply: Ok };
   /** One of key and text. */
   "POST /api/input": { body: { s: string; key?: string; text?: string }; reply: Ok };
+  /**
+   * Every answer to the question set `s` shows (`form`: its ask.form id), in one go: the PC types them into its
+   * terminal, key by key as the screen takes each, then presses Submit, and says how that went. 409 "stale" when that
+   * set is no longer the one on screen. A PC older than this answers 404.
+   */
+  "POST /api/answer": { body: { s: string; form: string; answers: PhoneAnswer[] }; reply: PhoneAnswerResult };
   /** The terminal tab: `s`'s project's plain terminal, asked open on the PC if it is not; its id may reach the list a moment later. */
   "POST /api/terminal": { body: { s: string }; reply: { id: string } };
   /** The question `s` shows waits for the person after all: no answer by itself (PhoneSessionView.auto). */

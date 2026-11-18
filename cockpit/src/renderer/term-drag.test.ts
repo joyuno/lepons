@@ -28,6 +28,14 @@ test("a handed-over drag stays off the last row, tmux's status line", () => {
   assert.equal(reportedY(50, 100, 500, 20), 50);
 });
 
+// Lepons' tmux sessions have no status line: the last row is the pane's, where
+// tmux scrolls down under a drag, so a drag past the bottom is held in it.
+test("with no status line a handed-over drag reaches the last row, never past it", () => {
+  assert.equal(Math.floor((reportedY(490, 100, 500, 20, 0) - 100) / 20), 19);
+  assert.equal(Math.floor((reportedY(900, 100, 500, 20, 0) - 100) / 20), 19);
+  assert.equal(reportedY(300, 100, 500, 20, 0), 300);
+});
+
 test("the first drag lands in another cell, whatever whole pixel it is cut to, and stays on the screen", () => {
   const cellOf = (x: number) => Math.floor((x - 100) / 10);
   for (const x of [100, 105, 109, 490, 500, 890, 899]) {

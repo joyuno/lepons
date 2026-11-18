@@ -128,6 +128,53 @@ test("a bad pane leaves the session outside", () => {
   assert.deepEqual(stateOf({ sessions: [{ id: "ab", pc: "p", folder: "f", mood: "idle", agent: true, pane: { n: 3, tab: 2, shown: false } }], pcs: [] })?.sessions[0]?.pane, { n: 3, tab: 2, shown: false });
 });
 
+test("the PC's ask is kept whole or dropped whole, never the session with it", () => {
+  const good = {
+    id: "0a1b2c3d", question: "Which fruits?", tabs: [{ label: "Fruits", done: false }, { label: "Submit", done: false }], tab: 0,
+    options: [{ n: 1, label: "Apple", detail: "red", checked: true }, { n: 2, label: "Type something", freeText: true, checked: false }],
+  };
+  const trust = { id: "ff", options: [{ n: 1, label: "No, exit", keys: ["enter"] }, { n: 2, label: "Yes", keys: ["down", "enter"] }] };
+  const ask = (value: unknown) => stateOf({ sessions: [{ id: "ab", pc: "p", folder: "f", mood: "waiting", agent: true, ask: value }], pcs: [] })?.sessions[0];
+  assert.deepEqual(ask(good)?.ask, good);
+  assert.deepEqual(ask(trust)?.ask, trust);
+  for (const bad of [
+    { ...good, id: "XYZ" },
+    { ...good, question: "q".repeat(301) },
+    { ...good, options: [] },
+    { ...good, options: Array.from({ length: 10 }, (_, i) => ({ n: (i % 9) + 1, label: "x" })) },
+    { ...good, options: [{ n: 1, label: "x".repeat(121) }] },
+    { ...good, options: [{ n: 1, label: "x", freeText: false }] },
+    { ...good, options: [{ n: 1, label: "x", key: "space" }] },
+    { ...trust, options: [{ n: 1, label: "x", keys: ["\x1b[2J"] }] },
+    { ...good, tab: 2 },
+    { ...trust, tab: 0 },
+    "nope",
+  ]) {
+    const session = ask(bad);
+    assert.ok(session, "the session stays");
+    assert.equal(session.ask, undefined, JSON.stringify(bad));
+  }
+});
+
+test("the whole question set is kept whole, or only it is dropped", () => {
+  const form = { id: "toolu_01", questions: [{ header: "Fruits", question: "Which fruits?", multiSelect: true, options: [{ label: "Apple", description: "red" }, { label: "Pear" }] }] };
+  const menu = { id: "0a1b2c3d", tabs: [{ label: "Fruits", done: false }, { label: "Submit", done: false }], options: [{ n: 1, label: "Apple" }] };
+  const ask = (value: unknown) => stateOf({ sessions: [{ id: "ab", pc: "p", folder: "f", mood: "waiting", agent: true, ask: value }], pcs: [] })?.sessions[0]?.ask;
+  assert.deepEqual(ask({ ...menu, form })?.form, form);
+  const one = form.questions[0]!;
+  for (const bad of [
+    { ...form, id: "toolu 01" },
+    { ...form, questions: [] },
+    { ...form, questions: Array.from({ length: 5 }, () => one) },
+    { ...form, questions: [{ ...one, multiSelect: "yes" }] },
+    { ...form, questions: [{ ...one, options: Array.from({ length: 5 }, () => ({ label: "x" })) }] },
+    { ...form, questions: [{ ...one, options: [{ label: "" }] }] },
+    { ...form, questions: [{ ...one, header: "h".repeat(41) }] },
+  ]) assert.deepEqual(ask({ ...menu, form: bad }), menu, JSON.stringify(bad));
+  // No tab line read (a lone question, or a narrow pane that wraps it): the form still comes.
+  assert.deepEqual(ask({ id: "0a", options: [{ n: 1, label: "Apple" }], form })?.form, form);
+});
+
 test("usage, PC ids and accounts are checked like the rest", () => {
   const state = stateOf({
     sessions: [],

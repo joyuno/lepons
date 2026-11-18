@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMain, WebContents } from "electron";
+import { randomUUID } from "node:crypto";
 import { appendFile } from "node:fs/promises";
 import { homedir, hostname, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,8 @@ import { t } from "../i18n/i18n.ts";
 import { hashPassword, PhoneAuth } from "../phone/auth.ts";
 import type { Machine } from "../machine/machine.ts";
 import { maskForEgress } from "../mask/mask.ts";
+import { answersFit } from "../phone/answer.ts";
+import { askForm, formFits, hookForm } from "../phone/ask.ts";
 import { phoneMayOpen, viewable } from "../phone/docs.ts";
 import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/outside.ts";
 import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
@@ -22,7 +25,7 @@ import { relayBridge } from "../relay/bridge.ts";
 import { RelayClient, type RelaySocket, type RelayStatus } from "../relay/client.ts";
 import { DEFAULT_SERVER, encodeQr, generateKeyPair, keyPairFromPrivate, newPairingSecret, newRoomId, validServer, type KeyPair } from "../relay/protocol.ts";
 import type { Session } from "../session/state.ts";
-import { channels, machineLabel, type NodeConfig, type PhoneSession, type PhoneSettingsView, type SessionWorkflowResult } from "../shared/ipc.ts";
+import { channels, machineLabel, type NodeConfig, type PhoneAnswerResult, type PhoneAskForm, type PhoneSession, type PhoneSettingsView, type SessionWorkflowResult } from "../shared/ipc.ts";
 import { pcState } from "../shared/status.ts";
 import type { agentAccounts } from "./setup-info.ts";
 import { openSecret, PhoneStore, sealSecret, type NodeStore, type SecretBox } from "./stores.ts";
@@ -133,6 +136,59 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   };
   /** Each session's last read workflow and its record's stamp: an unchanged record is not read or parsed again. */
   const phoneFlows = new Map<string, { stamp: string; result: SessionWorkflowResult }>();
+  /**
+   * Each session's AskUserQuestion set while the menu shows one: from the file Claude's hook saved as it asked
+   * (phone/ask.ts hookForm), else read from its record (askForm). Once per set, over SSH too, and again a few times, as
+   * the questions can show before either is there. Dropped when the menu goes, with the hook's file, so the same
+   * questions asked again are read again; read again when the menu shows another set.
+   */
+  const askForms = new Map<string, { form?: PhoneAskForm; reading: boolean; drop?: () => void }>();
+  const readAskForms = (list: PhoneSession[]): void => {
+    for (const { key, ask, askUser } of list) {
+      const kept = askForms.get(key);
+      if (!ask || !askUser) {
+        kept?.drop?.();
+        askForms.delete(key);
+        continue;
+      }
+      if (kept && (kept.reading || !kept.form || formFits(kept.form, ask))) continue;
+      kept?.drop?.();
+      const entry: { form?: PhoneAskForm; reading: boolean; drop?: () => void } = { reading: true };
+      askForms.set(key, entry);
+      const place = phoneSessionPlace(key);
+      if (!place || recordFormat(key, place.node) !== "claude") {
+        entry.reading = false;
+        continue;
+      }
+      const machine = machineOf(place.node);
+      const fits = (form: PhoneAskForm | undefined): form is PhoneAskForm => {
+        const now = phoneSessions.find((session) => session.key === key)?.ask;
+        return form !== undefined && now !== undefined && formFits(form, now);
+      };
+      const found = async (): Promise<{ form: PhoneAskForm; drop?: () => void } | undefined> => {
+        const hooked = hookForm(await machine.askHooks().catch(() => []), place.repo.path, machine.windows);
+        if (fits(hooked?.form)) return { form: hooked.form, drop: () => void machine.dropAskHook(hooked.name).catch(() => undefined) };
+        const jsonl = await machine.record("claude", place.repo.path).catch(() => undefined);
+        const form = jsonl === undefined ? undefined : askForm(jsonl);
+        return fits(form) ? { form } : undefined;
+      };
+      // Still none after the last try: no form, and the phone goes question by question.
+      const attempt = (left: number): void => {
+        void found().then((got) => {
+          if (askForms.get(key) !== entry) return;
+          if (got) {
+            Object.assign(entry, got, { reading: false });
+            api.changed();
+          } else if (left > 0) setTimeout(() => attempt(left - 1), 1500);
+          else entry.reading = false;
+        });
+      };
+      attempt(4);
+    }
+  };
+  /** Each question set's typing the window was asked for (POST /api/answer), by request id: told how it went. */
+  const pendingAnswers = new Map<string, (result: PhoneAnswerResult) => void>();
+  ipcMain.on(channels.phoneAnswerReply, (_event, requestId: string, result: PhoneAnswerResult) => pendingAnswers.get(requestId)?.(result));
   /** Working sessions whose main AI's turn is over (turnOver), as last read. */
   let mainFree = new Set<string>();
   /** When the phone last told each session something (MAIN_TOLD_MS). */
@@ -207,6 +263,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     const pushes = snapshotPushes(phoneSessions, list);
     const stopped = newlyStopped(phoneSessions, list);
     phoneSessions = list;
+    readAskForms(list);
     for (const { key, mood } of list) if (mood !== "working") mainFree.delete(key);
     api.changed();
     if (pushes.waiting) waitingTurned();
@@ -245,8 +302,10 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     credentials: () => ({ passwordHash: phone.get().passwordHash, totpSecret: totpSecret() }),
     sessions: () => phoneSessions.map((session) => {
       const kind = sessionExecutor.get(session.key);
+      const form = askForms.get(session.key)?.form;
       return {
         ...session,
+        ...(session.ask && form ? { ask: { ...session.ask, form } } : {}),
         ...(phoneDeps.isAgent(session.key) && isAgentKind(kind) ? { agentName: agents[kind].label } : {}),
         ...(session.mood === "working" && mainFree.has(session.key) && sessions.get(session.key)?.state.kind === "ready" ? { mainFree: true } : {}),
       };
@@ -279,6 +338,27 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       mainToldAt.set(key, Date.now());
       if (mainFree.delete(key)) api.changed();
       return true;
+    },
+    // The window types it, beside the terminal it reads (renderer phoneAnswer): logged and told on the desktop as write is.
+    answer: (key, formId, answers) => {
+      const form = askForms.get(key)?.form;
+      if (form?.id !== formId) return Promise.resolve("stale");
+      if (!answersFit(form, answers)) return Promise.resolve("bad");
+      if (sessions.get(key)?.state.kind !== "ready" || window.isDestroyed()) return Promise.resolve({ ok: false, step: 0, reason: "closed" });
+      void appendFile(join(userData, "phone-audit.log"), auditLine(new Date(), key, [JSON.stringify(answers)])).catch(() => undefined);
+      window.webContents.send(channels.phoneInput, key);
+      mainToldAt.set(key, Date.now());
+      const requestId = randomUUID();
+      return new Promise<PhoneAnswerResult>((resolve) => {
+        const timer = setTimeout(() => done({ ok: false, step: 0, reason: "timeout" }), 45_000);
+        const done = (result: PhoneAnswerResult) => {
+          clearTimeout(timer);
+          pendingAnswers.delete(requestId);
+          resolve(result);
+        };
+        pendingAnswers.set(requestId, done);
+        window.webContents.send(channels.phoneAnswer, requestId, key, form, answers);
+      });
     },
     workflow: async (key) => {
       const session = phoneSessions.find((candidate) => candidate.key === key);

@@ -33,6 +33,13 @@ export interface MenuOption {
    * and Esc to reject (checked against OpenCode 1.19.5).
    */
   key?: "enter" | "esc";
+  /**
+   * Pressed as these keys in turn: an unnumbered picker (Claude's "trust this
+   * folder", a new MCP server) moves its cursor with the arrows and takes
+   * Enter, so a row is reached from where the cursor is now, e.g.
+   * ["down", "down", "enter"] (checked against Claude Code 2.1.327).
+   */
+  keys?: string[];
 }
 
 /** One question of several (Claude's AskUserQuestion): its header, and whether it has an answer. The last one is Submit. */
@@ -72,33 +79,41 @@ export function withoutSidebar(lines: readonly string[]): readonly string[] {
 /** OpenCode's "Favorite color   Sizes   Confirm": no marks, so which have answers is not on screen. */
 const opencodeTabsLine = /^(\S.*?\s{2,}\S.*?)\s{2,}Confirm$/;
 
-/** The tab line of the questions a menu belongs to, the last one on screen; undefined for a lone question. */
+/**
+ * The tab line of the questions a menu belongs to: above the menu, under the rule Claude draws over its whole
+ * dialog, so an older question's tabs further up are not read. Undefined for a lone question.
+ */
 export function menuTabs(screen: readonly string[]): MenuTab[] | undefined {
   const lines = withoutSidebar(screen);
-  for (let i = lines.length - 1; i >= 0; i--) {
+  for (let i = (menuAt(lines)?.start ?? lines.length) - 1; i >= 0; i--) {
+    if (solidRule(unboxed(lines[i]!).text)) return undefined;
     const opencode = opencodeTabsLine.exec(unboxed(lines[i]!).text);
     if (opencode) return [...opencode[1]!.split(/\s{2,}/), "Submit"].map((label) => ({ label: label.trim().slice(0, 40), done: false }));
     const match = tabsLine.exec(unboxed(lines[i]!).text);
     if (!match) continue;
-    const tabs = match[1]!.split(/\s{2,}/).map((part) => /^([☐☒✔])\s*(.+)$/.exec(part.trim())).filter((tab): tab is RegExpExecArray => tab !== null)
-      .map((tab) => ({ label: tab[2]!.slice(0, 40), done: tab[1] === "☒" }));
+    // Windows' Claude Code draws them in ASCII: "[ ] Colors  [×] Size  √ Submit".
+    const tabs = match[1]!.split(/\s{2,}/).map((part) => /^([☐☒✔√]|\[[^\]]\])\s*(.+)$/.exec(part.trim())).filter((tab): tab is RegExpExecArray => tab !== null)
+      .map((tab) => ({ label: tab[2]!.slice(0, 40), done: tab[1] === "☒" || /^\[[^ \]]\]$/.test(tab[1]!) }));
     return tabs.length >= 2 ? tabs : undefined;
   }
   return undefined;
 }
 
 /** A multi-select row's box: "[ ]" or "[✔]" (or "[x]"), before its label. */
-const box = /^\[([ ✔✓xX])\]\s*/;
+const box = /^\[([ ✔✓×xX√])\]\s*/;
 
 const rule = /^[\s─━═╌╍┄┅╭╮╰╯┌┐└┘├┤┬┴┼│┃║]*$/;
+/** A rule that is drawn, not a blank line. */
+const solidRule = (text: string) => text !== "" && rule.test(text);
 const option = /^((?:[❯›>▶➜→*]\s*)?)(\d)[.)]\s+(\S.*)$/;
-/** "Esc to cancel · Tab to amend", "Enter to select · ↑/↓ to navigate", "enter confirm · esc skip". */
-const footer = /\b(esc|enter|cancel|confirm|navigate)\b|↑|↓/i;
+/** "Esc to cancel · Tab to amend", "Enter to select · ↑/↓ to navigate", "enter confirm · esc skip", "ctrl+g to edit in Notepad · …". */
+const footer = /\b(esc|enter|cancel|confirm|navigate)\b|↑|↓|\bctrl\+\w\b/i;
 /** Claude Code's bar under a named session (`--name`): a rule with the name in it. */
 const nameBar = /^[─━═╌╍┄┅-]{3,}\s+\S.*?(?:\s+[─━═╌╍┄┅-]+)?$/;
 /** tmux's status line, which a session in tmux has under everything: `[name] 0:bash* "title" 13:50 05-Nov-26`. */
 const tmuxBar = /^\[.*"[^"]*"\s+\d{1,2}:\d{2}\b/;
-const freeText = /^(type something|something else|type your own answer|other|직접 입력|기타)\.?$/i;
+/** A row whose digit opens a text field: Claude's "Type something." and its plan's "Tell Claude what to change", OpenCode's. */
+const freeText = /^(type something|something else|type your own answer|tell claude what to change|other|직접 입력|기타)\.?$/i;
 /** OpenCode's permission prompt: a row of three buttons, the screen's last, under "△ Permission required". */
 const permissionRow = /^Allow once\s{2,}Allow always\s{2,}Reject\b/;
 
@@ -115,19 +130,58 @@ function unboxed(line: string): { text: string; indent: number } {
  * arrow keys reach it, so it stays the PC's. The request is the first line
  * under the title: "→ Edit a.txt", "# Shell command".
  */
-function opencodePermission(rows: ReadonlyArray<{ text: string }>): MenuOption[] | undefined {
+function opencodePermission(rows: ReadonlyArray<{ text: string }>): { options: MenuOption[]; start: number } | undefined {
   const last = rows.findLastIndex(({ text }) => text !== "" && !rule.test(text));
   if (last < 0 || !permissionRow.test(rows[last]!.text)) return undefined;
   const title = rows.findLastIndex(({ text }) => /^△\s*Permission required$/.test(text));
   if (title < 0 || last - title > 30) return undefined;
   const request = rows.slice(title + 1, last).map(({ text }) => text).find((text) => text !== "" && !rule.test(text));
-  return [
-    { n: 1, label: "Allow once", ...(request ? { detail: request.slice(0, 200) } : {}), key: "enter" },
-    { n: 2, label: "Reject", key: "esc" },
-  ];
+  return {
+    options: [
+      { n: 1, label: "Allow once", ...(request ? { detail: request.slice(0, 200) } : {}), key: "enter" },
+      { n: 2, label: "Reject", key: "esc" },
+    ],
+    start: last,
+  };
+}
+
+/** "❯ No, exit": the cursor's row of an unnumbered picker. */
+const cursorRow = /^[❯>]\s+(\S.*)$/;
+
+/**
+ * Claude's unnumbered pickers ("❯ No, exit" / "  Yes, I trust this folder" over "Enter to confirm · Esc to
+ * cancel"). Only with a key-hint footer under them (`end`: where that tail starts), as 2 to 6 rows right above it
+ * with a blank line over them, one of them the cursor's, none numbered, every label starting in the same column.
+ * Each option carries the arrows from the cursor's row to its own, then Enter.
+ */
+function cursorMenu(rows: ReadonlyArray<{ text: string; indent: number }>, end: number): { options: MenuOption[]; start: number } | undefined {
+  let start = end;
+  while (start > 0 && !rule.test(rows[start - 1]!.text)) start -= 1;
+  const block = rows.slice(start, end);
+  if (block.length < 2 || block.length > 6 || start === 0 || rows[start - 1]!.text !== "") return undefined;
+  const cursor = block.findIndex(({ text }) => cursorRow.test(text));
+  if (cursor < 0 || block.filter(({ text }) => cursorRow.test(text)).length !== 1 || block.some(({ text }) => option.test(text))) return undefined;
+  const labels = block.map(({ text, indent }) => {
+    const label = cursorRow.exec(text)?.[1] ?? text;
+    return { label, column: indent + text.length - label.length };
+  });
+  if (labels.some(({ column }) => column !== labels[0]!.column)) return undefined;
+  return {
+    options: labels.map(({ label }, i) => ({
+      n: i + 1,
+      label: label.replace(/\s+/g, " ").slice(0, 120),
+      keys: [...Array<string>(Math.abs(i - cursor)).fill(i > cursor ? "down" : "up"), "enter"],
+    })),
+    start,
+  };
 }
 
 export function menuFrom(lines: readonly string[]): MenuOption[] | undefined {
+  return menuAt(lines)?.options;
+}
+
+/** menuFrom's reading, with the row its first option is on (in withoutSidebar(lines)). */
+function menuAt(lines: readonly string[]): { options: MenuOption[]; start: number } | undefined {
   const rows = withoutSidebar(lines).map(unboxed);
   const permission = opencodePermission(rows);
   if (permission) return permission;
@@ -150,7 +204,12 @@ export function menuFrom(lines: readonly string[]): MenuOption[] | undefined {
       break;
     }
   }
-  if (start < 0) return undefined;
+  const numbered = start < 0 ? undefined : numberedMenu(rows, start, end);
+  if (numbered) return { options: numbered, start };
+  return hints > 0 ? cursorMenu(rows, end) : undefined;
+}
+
+function numberedMenu(rows: ReadonlyArray<{ text: string; indent: number }>, start: number, end: number): MenuOption[] | undefined {
   const options: MenuOption[] = [];
   let indent = 0;
   for (let i = start; i < end; i++) {
@@ -185,4 +244,26 @@ export function menuFrom(lines: readonly string[]): MenuOption[] | undefined {
       ...(ticked ? { checked: ticked[1] !== " " } : {}),
     };
   });
+}
+
+/**
+ * What the menu at the foot of the screen asks: the paragraph right over its first option (up to two blank lines or
+ * rules between), its lines joined. It ends at a blank line, a rule, a tab line or an older list's option, and holds
+ * 8 lines at most, so Claude's header chip ("☐ Color", a blank line over the question) is no part of it.
+ */
+export function menuQuestion(screen: readonly string[]): string | undefined {
+  const lines = withoutSidebar(screen);
+  const found = menuAt(lines);
+  if (!found) return undefined;
+  const rows = lines.map(unboxed);
+  let i = found.start - 1;
+  for (let skipped = 0; i >= 0 && skipped < 2 && rule.test(rows[i]!.text); skipped++) i -= 1;
+  const said: string[] = [];
+  for (; i >= 0 && said.length < 8; i--) {
+    const { text } = rows[i]!;
+    if (rule.test(text) || tabsLine.test(text) || opencodeTabsLine.test(text) || option.test(text)) break;
+    said.unshift(text);
+  }
+  const text = said.join(" ").replace(/\s+/g, " ").trim().slice(0, 300);
+  return text === "" ? undefined : text;
 }

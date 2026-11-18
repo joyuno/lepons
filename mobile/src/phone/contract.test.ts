@@ -77,6 +77,10 @@ test("what the real server sends, every optional field filled, the phone's reade
     subagents: [{ label: "l", running: false, since: 1, doneAt: 2, result: "r" }],
     agentName: "Claude Code", mainFree: true, worktreeOf: "lepons", worktree: "로그인 수정",
     auto: { at: 1_800_000_000_000, n: 2, option: "SQLite (Recommended)" },
+    ask: {
+      id: "0a1b2c3d", question: "Which?", tabs: [{ label: "A", done: true }, { label: "Submit", done: false }], tab: 1,
+      options: [{ n: 1, label: "x", detail: "d", checked: false }, { n: 2, label: "Type something", freeText: true as const }, { n: 3, label: "y", key: "enter" as const }, { n: 4, label: "z", keys: ["down", "enter"] }],
+    },
   };
   const workflow = {
     title: "t",

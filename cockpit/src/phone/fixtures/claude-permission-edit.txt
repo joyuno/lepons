@@ -1,0 +1,40 @@
+● Bash(echo hi)
+  ⎿  hi
+
+● echo hi를 실행했고, 출력은 hi입니다.
+
+✻ Churned for 3s · done 오후 12:30
+
+❯ Create a new file named a.txt containing the word hello. Use the Write tool.                      
+
+● Write(a.txt)                                                                                      
+  ⎿  Wrote 1 line to a.txt
+      1 hello
+
+● C:\work\demo\a.txt 파일을 Write 도구로 만들었고, 내용은 hello입니다.
+
+✻ Sautéed for 3s · done 오후 12:32
+
+❯ Change hello to world in a.txt using the Edit tool.                                               
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(a.txt)
+                                                                                                    
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Edit file
+ a.txt                                                                                              
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1 -hello                                                                                           
+   \ No newline at end of file 
+ 1 +world                                                                                           
+   \ No newline at end of file
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to a.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this
+      session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+

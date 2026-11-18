@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { RESUME_WINDOW_SECONDS, sessionSweep, tmuxCommand, parseTmuxScroll, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSessionName } from "./tmux.ts";
+import { RESUME_WINDOW_SECONDS, sessionSweep, tmuxCommand, parseTmuxScroll, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSearchPattern, tmuxSessionName } from "./tmux.ts";
 
 // Turning a session off has to end the one on screen. The scope carries the
 // executor because a machine registered as Claude can be running Codex right
@@ -56,31 +56,50 @@ test("a scope with no usable segment still produces a valid name", () => {
   assert.match(tmuxSessionName("/"), /^lepons-shell-[0-9a-f]{8}$/);
 });
 
-// Options, then the session. Kept as one constant so the three cases below
-// stay about what they are each testing.
-const SETUP = "tmux start-server \\; set -g mouse on \\; set -g history-limit 20000 \\; set -gq set-clipboard on \\; set -gq window-size latest \\;";
+// Server options and the history limit, then the session, then the options
+// that are the session's own. Kept as constants so the three cases below stay
+// about what they are each testing.
+const SETUP = "COLORTERM=truecolor tmux -u start-server \\; set -sq set-clipboard on \\; set -sq escape-time 10 \\; set -sq focus-events on \\; set -g history-limit 20000 \\;";
+const OWN = (name: string) =>
+  ` \\; set -q -t '=${name}' mouse on \\; set -q -t '=${name}' prefix None \\; set -q -t '=${name}' prefix2 None` +
+  ` \\; set -q -t '=${name}' status off \\; set -wq -t '=${name}:' window-size latest`;
 
 const SWEEP = (name: string) => sessionSweep(name, RESUME_WINDOW_SECONDS);
 
 test("attaches when present and creates otherwise", () => {
   assert.equal(
     tmuxCommand("lepons-api-0123abcd", "/srv/api", "claude"),
-    `${SWEEP("lepons-api-0123abcd")}; ${SETUP} new-session -A -s 'lepons-api-0123abcd' -c '/srv/api' 'claude'`,
+    `${SWEEP("lepons-api-0123abcd")}; ${SETUP} new-session -A -s 'lepons-api-0123abcd' -c '/srv/api' 'claude'${OWN("lepons-api-0123abcd")}`,
   );
 });
 
 test("quotes a working directory containing spaces", () => {
   assert.equal(
     tmuxCommand("s", "/srv/my repo", "claude"),
-    `${SWEEP("s")}; ${SETUP} new-session -A -s 's' -c '/srv/my repo' 'claude'`,
+    `${SWEEP("s")}; ${SETUP} new-session -A -s 's' -c '/srv/my repo' 'claude'${OWN("s")}`,
   );
 });
 
 test("omits the directory and command when they are not set", () => {
   assert.equal(
     tmuxCommand("s", undefined, undefined),
-    `${SWEEP("s")}; ${SETUP} new-session -A -s 's'`,
+    `${SWEEP("s")}; ${SETUP} new-session -A -s 's'${OWN("s")}`,
   );
+});
+
+// Another tmux user's sessions on a shared server keep their mouse, Ctrl+B
+// prefix and status line: every option that tmux lets be scoped is set on this
+// session only (after it exists), and only server options and the history
+// limit are global.
+test("options reach only this session where tmux allows it", () => {
+  const line = tmuxCommand("s", "/srv/api", "claude");
+  const globals = [...line.matchAll(/set -(s|g)q? (\S+)/g)].map((match) => match[2]).sort();
+  assert.deepEqual(globals, ["escape-time", "focus-events", "history-limit", "set-clipboard"]);
+  const create = line.indexOf("new-session");
+  for (const option of ["mouse on", "prefix None", "prefix2 None", "status off", "window-size latest"]) {
+    assert.ok(line.indexOf(option) > create, `${option} is set on the session, once it exists`);
+  }
+  assert.ok(line.indexOf("history-limit") < create, "a pane takes the history limit in force when it is created");
 });
 
 // A forgotten `/exit` must not leak the node's resources forever, a stale
@@ -103,24 +122,38 @@ test("the resume window is 2 hours, matching the operator-stepped-away grace per
 // tmux owns the scrollback (it runs in the outer terminal's alternate screen),
 // so without mouse mode the wheel does nothing and the agent's earlier output
 // is unreachable. The limit has to be set before the pane exists to apply to
-// it, which is why both land ahead of new-session.
+// it, which is why it lands ahead of new-session.
 test("the session can be scrolled back through", () => {
   const line = tmuxCommand("s", "/srv/api", "claude");
-  const mouse = line.indexOf("set -g mouse on");
   const history = line.indexOf("set -g history-limit 20000");
   const create = line.indexOf("new-session");
 
-  assert.ok(mouse !== -1, "mouse mode is what makes the wheel scroll");
+  assert.ok(line.includes("set -q -t '=s' mouse on"), "mouse mode is what makes the wheel scroll");
   assert.ok(history < create, "a pane takes the history limit in force when it is created");
-  assert.ok(line.includes("tmux start-server"), "the options need a server to be set on");
+  assert.ok(line.includes("tmux -u start-server"), "the options need a server to be set on");
 });
 
 test("a remote pane's scroll: read, moved up into copy mode, back out at the bottom", () => {
-  assert.match(tmuxScrollCommand("lepons-1a2b"), /^PATH=.* tmux display -p -t '=lepons-1a2b:' 'LPS #\{history_size\} #\{scroll_position\} #\{pane_height\}'/);
+  assert.match(tmuxScrollCommand("lepons-1a2b"), /^PATH=.* tmux display -p -t '=lepons-1a2b:' 'LPS #\{history_size\} #\{scroll_position\} #\{pane_height\} #\{pane_in_mode\}'/);
   assert.match(tmuxScrollCommand("s", 30), /copy-mode -e -t '=s:'.*send -X -t '=s:' goto-line 30 .*display/);
   assert.match(tmuxScrollCommand("s", 0), /send -X -t '=s:' cancel.*display/);
   assert.doesNotMatch(tmuxScrollCommand("s", 0), /copy-mode/);
-  assert.deepEqual(parseTmuxScroll("motd\nLPS 1200 40 38\n"), { history: 1200, position: 40, height: 38 });
-  assert.deepEqual(parseTmuxScroll("LPS 1200  38"), { history: 1200, position: 0, height: 38 }, "out of copy mode");
+  assert.deepEqual(parseTmuxScroll("motd\nLPS 1200 40 38 1\n"), { history: 1200, position: 40, height: 38, inMode: true });
+  assert.deepEqual(parseTmuxScroll("LPS 1200  38 0"), { history: 1200, position: 0, height: 38, inMode: false }, "out of copy mode");
+  assert.deepEqual(parseTmuxScroll("LPS 1200  38"), { history: 1200, position: 0, height: 38, inMode: false }, "a reply without the mode");
   assert.equal(parseTmuxScroll("no server running"), undefined);
+});
+
+// Searching a remote pane is tmux's search, in copy mode: what the operator
+// typed is found as text, not read as a pattern, and a `;` at its end must not
+// be taken by tmux as the end of the command.
+test("a remote pane's search: copy mode, the text searched literally, the view read back", () => {
+  const up = tmuxScrollCommand("s", undefined, { text: "a.b (c)", up: true });
+  assert.match(up, /copy-mode -t '=s:' .*send -X -t '=s:' search-backward 'a\\\.b \\\(c\\\)' .*display/);
+  assert.doesNotMatch(up, /copy-mode -e/, "a match on the bottom screen must not end the search");
+  assert.match(tmuxScrollCommand("s", undefined, { text: "x", up: false }), /search-forward 'x'/);
+  assert.equal(tmuxSearchPattern("1+1=2?"), "1\\+1=2\\?");
+  assert.equal(tmuxSearchPattern("a\\b"), "a\\\\b");
+  assert.equal(tmuxSearchPattern("end;"), "end[;]");
+  assert.match("x 1+1=2? y", new RegExp(tmuxSearchPattern("1+1=2?")), "the escaped text finds itself");
 });

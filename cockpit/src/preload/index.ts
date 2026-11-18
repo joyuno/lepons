@@ -11,6 +11,8 @@ import type {
   EditedText,
   NodeConfig,
   PassphraseRequest,
+  PhoneAnswer,
+  PhoneAskForm,
   RepoAction,
   SessionState,
   SettingsAction,
@@ -95,7 +97,7 @@ const api: CockpitApi = {
   writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
   resizeSession: (key: string, cols: number, rows: number) =>
     ipcRenderer.send(channels.resizeSession, key, cols, rows),
-  tmuxScroll: (key: string, to?: number) => ipcRenderer.invoke(channels.tmuxScroll, key, to),
+  tmuxScroll: (key: string, to?: number, find?: { text: string; up: boolean }) => ipcRenderer.invoke(channels.tmuxScroll, key, to, find),
   stopSession: (nodeId: string, repoId: string | null) =>
     ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
   sessionWorkflow: (nodeId: string, repoId: string) =>
@@ -173,6 +175,7 @@ const api: CockpitApi = {
   writeClipboard: (text: string) => clipboard.writeText(text),
   clipboardHasImage: () => !clipboard.readImage().isEmpty(),
   pasteImage: (nodeId: string) => ipcRenderer.invoke(channels.pasteImage, nodeId),
+  dropFiles: (nodeId: string, paths: string[]) => ipcRenderer.invoke(channels.dropFiles, nodeId, paths),
   usage: (only?: string) => ipcRenderer.invoke(channels.usage, only),
   tokenStats: () => ipcRenderer.invoke(channels.tokenStats),
   onUsage: (handler: (usage: import("../agent/usage.ts").Usage) => void) => {
@@ -239,6 +242,10 @@ const api: CockpitApi = {
   onPhoneAutoKeep: (handler) => {
     ipcRenderer.on(channels.phoneAutoKeep, (_event, key: string) => handler(key));
   },
+  onPhoneAnswer: (handler) => {
+    ipcRenderer.on(channels.phoneAnswer, (_event, requestId: string, key: string, form: PhoneAskForm, answers: PhoneAnswer[]) => handler(requestId, key, form, answers));
+  },
+  replyPhoneAnswer: (requestId, result) => ipcRenderer.send(channels.phoneAnswerReply, requestId, result),
   onPhoneChanged: (handler) => {
     ipcRenderer.on(channels.phoneChanged, (_event, view) => handler(view));
   },
@@ -246,9 +253,9 @@ const api: CockpitApi = {
 
 contextBridge.exposeInMainWorld("cockpit", api);
 
-// A file dragged in from the desktop lands nowhere: no drop zone here takes
-// one (the rail, tabs and map move the app's own items, never "Files"), and
-// left alone the window would open it (main refuses that navigation too).
+// A file dragged in from the desktop lands only where a zone takes it and
+// stops it there (the file tree, a terminal); anywhere else it lands nowhere,
+// as left alone the window would open it (main refuses that navigation too).
 // Last in the bubble, so a zone that wants a drag has already had it.
 for (const type of ["dragover", "drop"] as const) {
   window.addEventListener(type, (event) => {

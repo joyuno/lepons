@@ -1,0 +1,40 @@
+ ▐▛███▛█   Claude Code v2.1.327
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   C:\work\demo
+
+
+❯ Call the AskUserQuestion tool exactly once with two questions. Question 1: header Fruits,         
+  multiSelect true, question: Which fruits? Options Apple, Banana. Question 2: header Size, single  
+  select, question: Which size? Options Small and Large.                                            
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruits  ☐ Size  ✔ Submit  →
+
+Which size?
+
+❯ 1. Small
+     작은 크기
+  2. Large
+     큰 크기
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

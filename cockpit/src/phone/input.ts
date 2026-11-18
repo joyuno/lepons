@@ -6,7 +6,8 @@
 
 /**
  * The keys the phone can press: a menu option's digit, Enter (an empty
- * send), Esc (멈추기), Up (out of a menu's text field), Tab (on to the next
+ * send), Esc (멈추기), Up (out of a menu's text field), Up and Down (along
+ * an unnumbered picker, menu.ts keys), Tab (on to the next
  * of several questions, which a multi-select one needs), and back to the one
  * before to change its answer: Left in Claude's ("Tab/Arrow keys to
  * navigate"), Shift+Tab in OpenCode's. Only these; never raw bytes from the
@@ -14,7 +15,7 @@
  */
 const keys: Record<string, string> = {
   "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9",
-  enter: "\r", esc: "\x1b", up: "\x1b[A", tab: "\t", left: "\x1b[D", backtab: "\x1b[Z",
+  enter: "\r", esc: "\x1b", up: "\x1b[A", down: "\x1b[B", tab: "\t", left: "\x1b[D", backtab: "\x1b[Z",
 };
 export const MAX_INPUT = 2000;
 

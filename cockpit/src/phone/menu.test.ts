@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { menuFrom, menuTabs, withoutSidebar } from "./menu.ts";
+import { menuFrom, menuQuestion, menuTabs, withoutSidebar } from "./menu.ts";
 
 const screen = (text: string) => text.split("\n");
 /** Screens captured from the real CLIs under node-pty (src/phone/fixtures). */
@@ -175,6 +175,12 @@ test("the next question of several is a plain menu with the same tabs; the revie
   assert.equal(menuTabs(captured("claude-ask-question.txt")), undefined, "a lone question has no tabs");
 });
 
+test("Windows' Claude Code draws the tabs and boxes in ASCII", () => {
+  const lines = ["←  [ ] 재현  [×] 두번째  √ Submit  →", "", "Which?", "", "> 1. [×] Red", "  2. [ ] Blue", "", "Enter to select · Esc to cancel"];
+  assert.deepEqual(menuTabs(lines), [{ label: "재현", done: false }, { label: "두번째", done: true }, { label: "Submit", done: false }]);
+  assert.deepEqual(menuFrom(lines)?.map((option) => option.checked), [true, false]);
+});
+
 // OpenCode 1.19.5, captured under node-pty and a headless xterm (src/phone/fixtures/opencode-*).
 test("OpenCode's question: numbered options with descriptions, its free-text row, the tab line", () => {
   const lines = captured("opencode-ask-question.txt");
@@ -218,4 +224,82 @@ test("OpenCode in a wide pane: its sidebar shares the rows, and is cut off befor
   ];
   assert.deepEqual(menuFrom(korean)?.map((option) => option.label), ["빨강", "초록"]);
   assert.deepEqual(withoutSidebar(korean)[1], "  ┃  1. 빨강");
+});
+
+// Claude Code 2.1.327, captured under node-pty (src/phone/fixtures/claude-*).
+test("Claude's permission prompts: the question over the menu, a wrapped label's rest as its detail", () => {
+  const bash = captured("claude-permission-bash.txt");
+  assert.deepEqual(menuFrom(bash)?.map((option) => option.label), ["Yes", "Yes, and don’t ask again for: node *", "Yes, and switch to auto mode · auto mode handles these prompts for you", "No"]);
+  assert.equal(menuQuestion(bash), "Do you want to proceed?", "not the line over the blank one");
+  assert.equal(menuTabs(bash), undefined);
+  for (const [name, question] of [["claude-permission-write.txt", "Do you want to create a.txt?"], ["claude-permission-edit.txt", "Do you want to make this edit to a.txt?"]] as const) {
+    const lines = captured(name);
+    assert.deepEqual(menuFrom(lines)?.[1], { n: 2, label: "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this", detail: "session (shift+tab)" }, name);
+    assert.equal(menuFrom(lines)?.length, 3, name);
+    assert.equal(menuQuestion(lines), question, name);
+  }
+});
+
+test("Claude's plan approval: its ctrl+g footer, and the row that takes feedback is typed", () => {
+  const lines = captured("claude-plan.txt");
+  assert.deepEqual(menuFrom(lines), [
+    { n: 1, label: "Yes, and use auto mode" },
+    { n: 2, label: "Yes, manually approve edits" },
+    { n: 3, label: "Tell Claude what to change", detail: "shift+tab to approve with this feedback", freeText: true },
+  ]);
+  assert.equal(menuQuestion(lines), "Claude has written up a plan and is ready to execute. Would you like to proceed?");
+});
+
+test("Claude's unnumbered pickers: the arrows from the cursor's row to the one picked, then Enter", () => {
+  const trust = captured("claude-trust.txt");
+  assert.deepEqual(menuFrom(trust), [
+    { n: 1, label: "No, exit", keys: ["enter"] },
+    { n: 2, label: "Yes, I trust this folder", keys: ["down", "enter"] },
+  ]);
+  const mcp = captured("claude-mcp.txt");
+  assert.deepEqual(menuFrom(mcp), [
+    { n: 1, label: "Use this MCP server", keys: ["up", "up", "enter"] },
+    { n: 2, label: "Use this and all future MCP servers in this project", keys: ["up", "enter"] },
+    { n: 3, label: "Continue without using this MCP server", keys: ["enter"] },
+  ]);
+  assert.equal(menuQuestion(mcp), "MCP servers may execute code or access system resources. All tool calls require approval. Learn more in the MCP documentation.");
+  // Without its footer, with a row out of line, with no cursor or no blank line over it, it is no menu.
+  const picker = ["Pick one", "", " ❯ No, exit", "   Yes, I trust this folder", "", " Enter to confirm · Esc to cancel"];
+  assert.equal(menuFrom(picker)?.length, 2);
+  assert.equal(menuFrom(picker.slice(0, 4)), undefined, "no footer");
+  assert.equal(menuFrom(picker.with(3, "  Yes, I trust this folder")), undefined, "a row out of line");
+  assert.equal(menuFrom(picker.with(2, "   No, exit")), undefined, "no cursor");
+  assert.equal(menuFrom(picker.with(1, "text right above")), undefined, "no blank line over it");
+  // Claude's input box between its rules, with a two-line draft, is no picker.
+  assert.equal(menuFrom(["output", "────────", "❯ first line", "  second line", "────────", "  esc to interrupt"]), undefined);
+});
+
+test("a tall multi-select question: every line of it, its bars gone, and its tabs", () => {
+  const lines = captured("claude-ask-long-multi.txt");
+  assert.equal(menuQuestion(lines), "Which fruits should go into the smoothie this morning? Pick every fruit you would actually enjoy drinking, keeping in mind that some of them are sour and some are quite sweet, and that the blender is small.");
+  assert.deepEqual(menuFrom(lines)?.map(({ label, checked, freeText }) => [label, checked, freeText]), [["Apple", false, undefined], ["Banana", false, undefined], ["Mango", false, undefined], ["Type something", false, true], ["Chat about this", undefined, undefined]]);
+  assert.deepEqual(menuTabs(lines), [{ label: "Fruits", done: false }, { label: "Size", done: false }, { label: "Submit", done: false }]);
+});
+
+test("the questions after a pick: ticked, the second, the review", () => {
+  const ticked = captured("claude-ask-ticked.txt");
+  assert.deepEqual(menuFrom(ticked)?.map(({ label, checked }) => [label, checked]), [["Apple", true], ["Banana", false], ["Type something", false], ["Chat about this", undefined]]);
+  assert.equal(menuQuestion(ticked), "Which fruits?");
+  assert.deepEqual(menuTabs(ticked)?.map((tab) => tab.done), [true, false, false]);
+  const second = captured("claude-ask-second.txt");
+  assert.deepEqual(menuFrom(second)?.map((option) => option.label), ["Small", "Large", "Type something.", "Chat about this"]);
+  assert.equal(menuQuestion(second), "Which size?");
+  const review = captured("claude-ask-review2.txt");
+  assert.deepEqual(menuFrom(review)?.map((option) => option.label), ["Submit answers", "Cancel"]);
+  assert.equal(menuQuestion(review), "● Which fruits? → Apple ● Which size? → Small");
+  assert.deepEqual(menuTabs(review), [{ label: "Fruits", done: true }, { label: "Size", done: true }, { label: "Submit", done: false }]);
+});
+
+test("a lone question's header chip is not its question; an older question's tabs over Claude's rule are not its tabs", () => {
+  assert.equal(menuQuestion(captured("claude-ask-question.txt")), "Which color do you like?");
+  const older = ["←  ☒ Colors  ☐ Size  ✔ Submit  →", "old question", "────────", "Do you want to proceed?", "❯ 1. Yes", "  2. No", "", "Esc to cancel"];
+  assert.equal(menuTabs(older), undefined);
+  assert.equal(menuQuestion(["1. old list", "Ask", "────", " 1. Yes", " 2. No"]), "Ask", "past a rule, and not into an older list");
+  assert.equal(menuQuestion(["far away", "", "", "", " 1. Yes", " 2. No"]), undefined);
+  assert.equal(menuQuestion(["│ Which one?          │", "│                     │", "│ ❯ 1. A              │", "│   2. B              │"]), "Which one?");
 });

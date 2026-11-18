@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, execSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,8 @@ import {
   agyStatusLineCommand,
   agyStatusLineWith,
   agyUsageFile,
+  claudeAskHookCommand,
+  claudeAskHookSettings,
   claudeStatusLineCommand,
   claudeStatusLineSettings,
   claudeUsageFile,
@@ -26,6 +28,7 @@ import {
   splitRemoteUsage,
   statusLineSettings,
 } from "./usage.ts";
+import { askHookListing, askHookScript } from "../phone/ask.ts";
 
 // Shapes as the two CLIs write them: Claude Code's status line input (per its
 // docs; checked on 2.1.300) and a Codex 0.154 token_count event.
@@ -339,4 +342,36 @@ test("Claude's /usage reads as a reading, its reset times in this PC's time", ()
   assert.equal(parseUsageCommand("Current week (all models): 1% used · resets Jan 2, 1am", new Date(2026, 11, 30))!.week!.resetsAt, new Date(2027, 0, 2, 1, 0).getTime() / 1000);
   assert.equal(parseUsageCommand("Current week (all models): 5% used", now)!.week!.resetsAt, undefined);
   assert.equal(parseUsageCommand("Not logged in · Please run /login", now), undefined);
+});
+
+// Run for real in sh, as the status line is. It must never block Claude or show anything: silent, exit 0, even unwritable.
+test("the question hook saves its input owner-only, drops day-old ones, and fails silently", () => {
+  const hooks = JSON.parse(claudeStatusLineSettings).hooks;
+  assert.deepEqual(hooks, JSON.parse(claudeAskHookSettings).hooks);
+  assert.deepEqual(hooks.PreToolUse[0].matcher, "AskUserQuestion");
+  assert.equal(hooks.PreToolUse[0].hooks[0].command, claudeAskHookCommand);
+  assert.equal(JSON.parse(statusLineSettings({ command: "printf hud" })).hooks.PreToolUse[0].hooks[0].timeout, 5);
+  const home = mkdtempSync(join(tmpdir(), "lepons-ask-"));
+  const run = () => execFileSync("sh", ["-c", claudeAskHookCommand], { input: claudeInput, env: { ...process.env, HOME: home } }).toString();
+  try {
+    const asks = join(home, ".lepons", "asks");
+    assert.equal(run(), "");
+    const [first] = readdirSync(asks);
+    assert.match(first!, /^\d+-\d+\.json$/);
+    assert.equal(readFileSync(join(asks, first!), "utf8"), claudeInput);
+    if (process.platform !== "win32") assert.equal(statSync(asks).mode & 0o777, 0o700);
+    // Another PC's listing of them (phone/ask.ts), in its shell.
+    const listed = execFileSync("sh", ["-c", askHookScript], { env: { ...process.env, HOME: home } }).toString();
+    assert.deepEqual(askHookListing(listed).map(({ name, text }) => [name, JSON.parse(text)]), [[first, JSON.parse(claudeInput)]]);
+    utimesSync(join(asks, first!), new Date(Date.now() - 2 * 86_400_000), new Date(Date.now() - 2 * 86_400_000));
+    run();
+    assert.equal(readdirSync(asks).includes(first!), false, "a day-old set is gone");
+    assert.equal(readdirSync(asks).length, 1);
+    // ~/.lepons a file: nothing can be made under it.
+    rmSync(join(home, ".lepons"), { recursive: true });
+    writeFileSync(join(home, ".lepons"), "");
+    assert.equal(run(), "", "no output and exit 0");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

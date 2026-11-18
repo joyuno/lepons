@@ -46,6 +46,10 @@ const deps: PhoneDeps = {
     writes.push([key, pieces]);
     return key !== "local::C:/work/api";
   },
+  answer: async (key, form, answers) => {
+    answered.push([key, form, answers]);
+    return form === "toolu_old" ? "stale" : form === "toolu_bad" ? "bad" : { ok: true };
+  },
   workflow: async (key) =>
     key.endsWith("::terminal")
       ? { ok: false, reason: "no_transcript" }
@@ -71,6 +75,7 @@ const deps: PhoneDeps = {
   },
 };
 const writes: Array<[string, string[]]> = [];
+const answered: Array<[string, string, unknown]> = [];
 const kept: string[] = [];
 const uploads: Array<[string, string, number]> = [];
 const reconnects: string[] = [];
@@ -203,7 +208,9 @@ test("the phone sends named keys and one line of text, nothing else", () => {
   // No Ctrl+C and no other arrows: Esc is the phone's only way to stop.
   assert.equal(inputFor({ key: "stop" }), "bad");
   assert.deepEqual(inputFor({ key: "up" }), ["[A"]);
-  assert.equal(inputFor({ key: "down" }), "bad");
+  // Along an unnumbered picker (Claude's "trust this folder"), from the cursor's row to the one picked.
+  assert.deepEqual(inputFor({ key: "down" }), ["[B"]);
+  assert.equal(inputFor({ key: "right" }), "bad");
   assert.equal(inputFor({ key: "10" }), "bad");
   assert.equal(inputFor({ key: "\x1b[2J" }), "bad");
   assert.equal(inputFor({ key: "toString" }), "bad");
@@ -253,6 +260,27 @@ test("input reaches agent sessions and plain terminals, length-capped", async ()
 
   assert.equal((await post("/api/input", { s: sessionId("local::C:/work/api"), key: "1" }, token)).status, 409, "closed on the PC");
   assert.equal((await post("/api/input", { s: web, key: "1" })).status, 401, "no sign-in");
+});
+
+test("a whole question set's answers: to an agent only, strictly shaped, and refused once that set has gone", async () => {
+  const token = await signIn();
+  answered.length = 0;
+  const web = sessionId("local::C:/work/web");
+  const answers = [{ picks: [1] }, { picks: [0, 2] }, { text: "Gamma\n" }];
+  const reply = await post("/api/answer", { s: web, form: "toolu_01", answers }, token);
+  assert.deepEqual([reply.status, reply.body], [200, { ok: true }]);
+  assert.deepEqual(answered, [["local::C:/work/web", "toolu_01", [{ picks: [1] }, { picks: [0, 2] }, { text: "Gamma" }]]]);
+  assert.equal((await post("/api/answer", { s: web, form: "toolu_old", answers }, token)).status, 409);
+  assert.equal((await post("/api/answer", { s: web, form: "toolu_bad", answers }, token)).status, 400);
+  answered.length = 0;
+  for (const bad of [[], [{ picks: [] }], [{ picks: [4] }], [{ picks: [1, 1] }], [{ picks: [1], text: "x" }], [{ text: "\x03" }], [{ text: "x".repeat(MAX_INPUT + 1) }], [{ key: "1" }], Array(5).fill({ picks: [0] }), "1"]) {
+    assert.equal((await post("/api/answer", { s: web, form: "toolu_01", answers: bad }, token)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await post("/api/answer", { s: web, form: "../x", answers }, token)).status, 400);
+  assert.equal((await post("/api/answer", { s: sessionId("local::C:/work/web::terminal"), form: "toolu_01", answers }, token)).status, 403);
+  assert.equal((await post("/api/answer", { s: "nope", form: "toolu_01", answers }, token)).status, 404);
+  assert.equal((await post("/api/answer", { s: web, form: "toolu_01", answers })).status, 401, "no sign-in");
+  assert.deepEqual(answered, []);
 });
 
 test("a plain terminal takes a shell line: exit and ! too, no control characters, length-capped", async () => {

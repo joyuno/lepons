@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, powerMonitor, safeStorage, screen, shell, type MenuItemConstructorOptions } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, watch as fsWatch } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { exec, execFile, spawn } from "node:child_process";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join, normalize } from "node:path";
@@ -105,7 +105,8 @@ import { parseOpencodeExport } from "../workflow/opencode.ts";
 import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
 import type { TurnEnd } from "../shared/status.ts";
-import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
+import { dropFolder } from "../shared/term-paths.ts";
+import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeAskHookSettings, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
 import { collectTokenStats, type TokenStats } from "../agent/token-stats.ts";
 import { mergeTokenStats, remoteTokenStats, remoteUsageCommand } from "../agent/remote-token-stats.ts";
 import { TranscriptWatchers, type TranscriptTarget, type WatchHandle } from "./transcript-watch.ts";
@@ -490,7 +491,8 @@ function sessionEnvFor(node: NodeConfig): Record<string, string> {
  * The status line that saves Claude's plan usage for the readout (agent/usage.ts).
  * Here: a settings file, written at startup, that also runs the operator's
  * own status line -- cmd.exe cannot pass the JSON inline. On another PC:
- * inline, and only when that PC has no status line of its own.
+ * a file too, its status line only when that PC has none of its own; the
+ * question hook (claudeAskHookSettings) either way.
  * ponytail: another PC's own status line is skipped (no reading from it);
  * chain it there too when someone runs a HUD on a remote PC.
  */
@@ -506,9 +508,11 @@ function usageFlag(node: NodeConfig, shell: "posix" | "cmd"): string {
     if (localStatusLine === undefined) return "";
     return shell === "cmd" ? `--settings "${localStatusLine}"` : `--settings ${posixQuote(localStatusLine)}`;
   }
+  // A PC with its own status line still gets the question hook (claudeAskHookSettings).
   return (
-    `$(grep -qs '"statusLine"' ~/.claude/settings.json ~/.claude/settings.local.json || ` +
-    `{ printf '%s' ${posixQuote(claudeStatusLineSettings)} > ${remoteStatusLineFile}; echo --settings ${remoteStatusLineFile}; })`
+    `$(if grep -qs '"statusLine"' ~/.claude/settings.json ~/.claude/settings.local.json; ` +
+    `then printf '%s' ${posixQuote(claudeAskHookSettings)}; else printf '%s' ${posixQuote(claudeStatusLineSettings)}; fi > ${remoteStatusLineFile}; ` +
+    `echo --settings ${remoteStatusLineFile})`
   );
 }
 
@@ -662,7 +666,10 @@ function launchLine(
       : wrap(spec.sessionCommand + launchFlags(spec, shell, bypass, name, extra(shell)));
   const launch = (line: string | undefined, shell: "posix" | "cmd"): string | undefined =>
     line !== undefined && update ? withUpdate(node.agent, line, shell) : line;
-  const withEnv = (command: string): string => envPrefix({ ...sessionEnvFor(node), ...llm?.env }) + command;
+  // Another PC's agent: an SSH login does not pass COLORTERM, so it drew in 256
+  // colours though the cockpit's terminal takes 24-bit (tmux rounds them back
+  // down for a client it does not know to be RGB: tmuxCommand).
+  const withEnv = (command: string): string => envPrefix({ COLORTERM: "truecolor", ...sessionEnvFor(node), ...llm?.env }) + command;
   if (node.kind === "local") {
     const shell = process.platform === "win32" ? "cmd" : "posix";
     return launch(agentLine((command) => command, shell), shell);
@@ -2495,6 +2502,50 @@ app.whenReady().then(() => {
     }
     return { ok: true };
   });
+
+  /**
+   * Files from Explorer or Finder dropped onto a session on another PC: copied
+   * into a new folder in its temp, as a pasted image is, for their paths there
+   * to be typed. Folders too, links left out as any copy between PCs leaves them.
+   */
+  const dropLimitMb = 200;
+  const sizeUnder = async (path: string, limit: number): Promise<number> => {
+    const info = await lstat(path);
+    if (!info.isDirectory()) return info.isFile() ? info.size : 0;
+    let total = 0;
+    for (const name of await readdir(path)) {
+      total += await sizeUnder(join(path, name), limit - total);
+      if (total > limit) break;
+    }
+    return total;
+  };
+  ipcMain.handle(channels.dropFiles, async (_event, nodeId: string, paths: string[]) => {
+    const node = requireNode(nodeId);
+    const failed = (detail: string) => ({ ok: false, error: t("err.dropFiles", { detail }) });
+    if (node.kind !== "ssh" || !Array.isArray(paths) || paths.length === 0 || !paths.every((path) => typeof path === "string" && path !== "")) return failed("no files");
+    const ready = await ensureKeyReady(node);
+    if (!ready.ok) return { ok: false, error: ready.reason };
+    let total = 0;
+    try {
+      for (const path of paths) total += await sizeUnder(path, dropLimitMb * 1024 * 1024 - total);
+    } catch (error) {
+      return failed(error instanceof Error ? error.message : String(error));
+    }
+    if (total > dropLimitMb * 1024 * 1024) return { ok: false, error: t("err.dropTooBig", { mb: dropLimitMb }) };
+    const dir = dropFolder(node.home, node.windows === true, randomUUID().slice(0, 8));
+    const made = await machineOf(node).makeFolder(dir);
+    if (!made.ok) return failed(made.detail ?? made.reason);
+    const local = requireNode(localNodeId);
+    const placed: string[] = [];
+    for (const path of paths) {
+      // ponytail: two dropped names alike (from a search window) would land on one; a folder per file if that ever matters.
+      const target = `${dir}/${path.slice(path.lastIndexOf("/") + 1).normalize("NFC")}`;
+      const copied = await copyBetween(local, path, node, target);
+      if ("failed" in copied) return failed(copied.failed);
+      placed.push(target);
+    }
+    return { ok: true, paths: placed };
+  });
   ipcMain.handle(channels.copyEntry, (_event, nodeId: string, from: string, to: string) => transferEntry(nodeId, from, to, false));
 
   /**
@@ -3396,13 +3447,14 @@ app.whenReady().then(() => {
   // ponytail: held for as long as Lepons runs; stop it when no remote pane is on screen if that ever costs.
   const scrollPool = new ProbePool();
   scrollPool.start();
-  ipcMain.handle(channels.tmuxScroll, async (_event, key: string, to?: unknown) => {
+  ipcMain.handle(channels.tmuxScroll, async (_event, key: string, to?: unknown, find?: { text?: unknown; up?: unknown }) => {
     const node = nodes.list().find((one) => key.startsWith(`${one.id}::`));
     const agent = sessionExecutor.get(key);
     if (node?.kind !== "ssh" || !node.useTmux || agent === undefined || !survivesDisconnect.has(key)) return undefined;
     const name = tmuxSessionName(tmuxScope(key, agent));
     const move = typeof to === "number" && Number.isFinite(to) ? Math.max(0, Math.round(to)) : undefined;
-    return parseTmuxScroll((await scrollPool.run(node.id, sshOptions(node), tmuxScrollCommand(name, move))) ?? "");
+    const search = typeof find?.text === "string" && find.text !== "" ? { text: find.text, up: find.up !== false } : undefined;
+    return parseTmuxScroll((await scrollPool.run(node.id, sshOptions(node), tmuxScrollCommand(name, move, search))) ?? "");
   });
 
   ipcMain.on(channels.resizeSession, (_event, key: string, cols: number, rows: number) => {

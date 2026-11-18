@@ -44,7 +44,18 @@ export const agyUsageFile = ".lepons-agy-usage.json";
  */
 export const claudeStatusLineCommand =
   `t=$(cat); case "$t" in *'"rate_limits"'*) printf '%s' "$t" > ~/${claudeUsageFile};; esac`;
-export const claudeStatusLineSettings = JSON.stringify({ statusLine: { type: "command", command: claudeStatusLineCommand } });
+/**
+ * A PreToolUse hook that saves a pending AskUserQuestion's input to ~/.lepons/asks (owner-only), so the phone gets the
+ * whole question set (phone/ask.ts hookForm): Claude Code may write it to its record only once it is answered. Quiet
+ * and always exit 0, so a failure here never blocks or shows; files older than a day go on the next run.
+ */
+export const askHookDir = ".lepons/asks";
+export const claudeAskHookCommand =
+  `t=$(cat); { umask 077; d="$HOME/${askHookDir}"; mkdir -p "$d" && printf '%s' "$t" > "$d/$(date +%s)-$$.json"; find "$d" -name '*.json' -mtime +0 -delete; } 2>/dev/null; exit 0`;
+const askHooks = { PreToolUse: [{ matcher: "AskUserQuestion", hooks: [{ type: "command", command: claudeAskHookCommand, timeout: 5 }] }] };
+/** The hook alone, for a PC whose own settings keep a status line Lepons leaves alone. */
+export const claudeAskHookSettings = JSON.stringify({ hooks: askHooks });
+export const claudeStatusLineSettings = JSON.stringify({ statusLine: { type: "command", command: claudeStatusLineCommand }, hooks: askHooks });
 
 export type StatusLine = { command: string } & Record<string, unknown>;
 
@@ -65,7 +76,7 @@ export async function ownStatusLine(home = homedir()): Promise<StatusLine | unde
 /** Settings for the sessions Lepons starts: save the input, then run the operator's own status line on it. */
 export function statusLineSettings(own: StatusLine | undefined): string {
   if (!own) return claudeStatusLineSettings;
-  return JSON.stringify({ statusLine: { ...own, command: `${claudeStatusLineCommand}; printf '%s' "$t" | {\n${own.command}\n}` } });
+  return JSON.stringify({ statusLine: { ...own, command: `${claudeStatusLineCommand}; printf '%s' "$t" | {\n${own.command}\n}` }, hooks: askHooks });
 }
 /** Where another PC keeps those settings: they have spaces, so they travel as a file. */
 export const remoteStatusLineFile = "~/.lepons-statusline.json";

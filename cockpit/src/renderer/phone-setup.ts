@@ -14,13 +14,6 @@ export interface SetupFacts {
 
 const order = ["password", "totp", "app", "pair"] as const;
 
-/**
- * The page 폰 앱 받기 sends the phone to. Checked 2026-11-04: it opens and holds the
- * APK. The site's own releases/latest/download/Lepons-Android.apk was 404 that day,
- * the release's file carrying a version in its name.
- */
-export const APP_PAGE = "https://github.com/joyuno/lepons/releases/latest";
-
 function finished(step: (typeof order)[number], facts: SetupFacts): boolean {
   if (step === "password") return facts.hasPassword;
   if (step === "totp") return facts.totpReady;

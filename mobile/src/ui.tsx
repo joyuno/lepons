@@ -248,7 +248,7 @@ export function Segments<K extends string>({ items, value, onChange, role }: { i
 
 /** One session: lamp, folder and PC, what it is doing, its state on the right. `strong` is a waiting card of its own; without it, a row for a group. A worktree's: a branch, its task, then its original folder. */
 export function SessionRow(props: {
-  session: { folder: string; pc: string; mood: Mood; agentGone?: boolean; preview?: string; summary?: { now?: { kind: string; text: string } }; worktreeOf?: string; worktree?: string };
+  session: { folder: string; pc: string; mood: Mood; agentGone?: boolean; preview?: string; ask?: { question?: string }; summary?: { now?: { kind: string; text: string } }; worktreeOf?: string; worktree?: string };
   moodLabel: string;
   onPress: () => void;
   strong?: boolean;
@@ -264,9 +264,10 @@ export function SessionRow(props: {
 }) {
   const { c, s } = useTheme();
   const { session } = props;
-  // What it is doing now, from its record; the terminal's last line when there is none.
-  const now = session.summary?.now;
-  const line = now?.text ?? session.preview;
+  // Waiting: what it asks, as the PC read it. Otherwise what it is doing now, from its record; the terminal's last line when there is none.
+  const asked = session.mood === "waiting" ? session.ask?.question : undefined;
+  const now = asked ? undefined : session.summary?.now;
+  const line = asked ?? now?.text ?? session.preview;
   const moodColor = session.mood === "waiting" ? c.live : session.mood === "working" ? c.go : session.mood === "failed" ? c.stop : c.muted;
   // A card gives under the finger; a row of a group only highlights.
   const Row = props.strong ? Press : Pressable;
@@ -287,7 +288,7 @@ export function SessionRow(props: {
           {session.worktreeOf && !props.tray ? <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.worktreeOf}</Text> : null}
           {props.showPc === false ? null : <Text style={[s.dim, { flexShrink: 2 }]} numberOfLines={1}>{session.pc}</Text>}
         </View>
-        {line ? <Text style={now && now.kind !== "action" ? s.dim : [s.mono, { color: c.muted }]} numberOfLines={1}>{line}</Text> : null}
+        {line ? <Text style={asked || (now && now.kind !== "action") ? s.dim : [s.mono, { color: c.muted }]} numberOfLines={1}>{line}</Text> : null}
       </View>
       <Text numberOfLines={2} style={[s.dim, font.semibold, { flexShrink: 1, maxWidth: "40%", textAlign: "right", color: moodColor }]}>{props.moodLabel}</Text>
       {props.after}

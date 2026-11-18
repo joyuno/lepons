@@ -3,7 +3,7 @@
     "name": "Lepons",
     "slug": "lepons",
     "owner": "joyuno",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "lepons",
@@ -126,7 +126,26 @@
           }
         }
       ],
-      "@bacons/apple-targets"
+      "@bacons/apple-targets",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "Lepons",
+              "label": "Lepons",
+              "description": "AI 세션과 기다리는 질문",
+              "minWidth": "110dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000,
+              "widgetCategory": "home_screen|not_keyguard"
+            }
+          ]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

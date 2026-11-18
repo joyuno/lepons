@@ -82,12 +82,62 @@ const autoOf = (value: unknown): { auto?: { at: number; n: number; option: strin
   isObj(value) && time(value.at) && typeof value.n === "number" && Number.isInteger(value.n) && value.n >= 1 && value.n <= 9 && str(value.option, 500)
     ? { auto: { at: value.at as number, n: value.n, option: value.option } } : {};
 
+/** The keys a menu option may press (cockpit/src/phone/input.ts allows these). */
+const askKeys = ["enter", "esc", "up", "down", "tab", "left", "backtab", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+type Ask = NonNullable<PhoneState["sessions"][number]["ask"]>;
+/**
+ * The menu the PC read for a waiting session, all or nothing: one bad part drops the ask (the phone then reads its own
+ * screen), never the session.
+ */
+const askOf = (a: unknown): { ask?: Ask } => {
+  if (!isObj(a) || !str(a.id, 64) || !/^[0-9a-f]+$/.test(a.id) || !optStr(a.question, 300)) return {};
+  if (!Array.isArray(a.options) || a.options.length === 0 || a.options.length > 9) return {};
+  const options: Ask["options"] = [];
+  for (const o of a.options as unknown[]) {
+    if (!isObj(o) || !Number.isInteger(o.n) || (o.n as number) < 1 || (o.n as number) > 9 || !str(o.label, 120) || !optStr(o.detail, 200)) return {};
+    if ((o.freeText !== undefined && o.freeText !== true) || (o.checked !== undefined && typeof o.checked !== "boolean")) return {};
+    if (o.key !== undefined && o.key !== "enter" && o.key !== "esc") return {};
+    if (o.keys !== undefined && !(Array.isArray(o.keys) && o.keys.length >= 1 && o.keys.length <= 10 && o.keys.every((k) => askKeys.includes(k as string)))) return {};
+    options.push({
+      n: o.n as number, label: o.label,
+      ...(o.detail === undefined ? {} : { detail: o.detail as string }),
+      ...(o.freeText ? { freeText: true as const } : {}),
+      ...(o.checked === undefined ? {} : { checked: o.checked as boolean }),
+      ...(o.key === undefined ? {} : { key: o.key as "enter" | "esc" }),
+      ...(o.keys === undefined ? {} : { keys: [...(o.keys as string[])] }),
+    });
+  }
+  let tabs: Ask["tabs"];
+  if (a.tabs !== undefined) {
+    if (!Array.isArray(a.tabs) || a.tabs.length < 2 || a.tabs.length > 10 || !a.tabs.every((t) => isObj(t) && str(t.label, 120) && typeof t.done === "boolean")) return {};
+    tabs = (a.tabs as Array<{ label: string; done: boolean }>).map(({ label, done }) => ({ label, done }));
+  }
+  if (a.tab !== undefined && !(tabs && Number.isInteger(a.tab) && (a.tab as number) >= 0 && (a.tab as number) < tabs.length)) return {};
+  return { ask: { id: a.id, ...(a.question === undefined ? {} : { question: a.question as string }), options, ...(tabs ? { tabs } : {}), ...(a.tab === undefined ? {} : { tab: a.tab as number }), ...formOf(a.form) } };
+};
+
+/** The whole question set (cockpit/src/phone/ask.ts askForm), one question or several, all or nothing: a bad one drops only the form, and the phone goes question by question. */
+const formOf = (f: unknown): { form?: NonNullable<Ask["form"]> } => {
+  if (!isObj(f) || !str(f.id, 100) || !/^[\w-]+$/.test(f.id) || !Array.isArray(f.questions) || f.questions.length === 0 || f.questions.length > 4) return {};
+  const questions: NonNullable<Ask["form"]>["questions"] = [];
+  for (const q of f.questions as unknown[]) {
+    if (!isObj(q) || !str(q.header, 40) || !str(q.question, 500) || typeof q.multiSelect !== "boolean" || !Array.isArray(q.options) || q.options.length === 0 || q.options.length > 4) return {};
+    const options: NonNullable<Ask["form"]>["questions"][number]["options"] = [];
+    for (const o of q.options as unknown[]) {
+      if (!isObj(o) || !str(o.label, 120) || o.label === "" || !optStr(o.description, 200)) return {};
+      options.push({ label: o.label, ...(o.description === undefined ? {} : { description: o.description as string }) });
+    }
+    questions.push({ header: q.header, question: q.question, multiSelect: q.multiSelect, options });
+  }
+  return { form: { id: f.id, questions } };
+};
+
 export function stateOf(data: unknown): PhoneState | undefined {
   if (!isObj(data)) return undefined;
   const sessions = list(data.sessions, 500, (s) =>
     isObj(s) && str(s.id, 64) && /^[0-9a-f]+$/.test(s.id) && str(s.pc, 200) && str(s.folder, 500) &&
     (moods as readonly unknown[]).includes(s.mood) && optStr(s.preview, 2000) && typeof s.agent === "boolean"
-      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s), ...autoOf(s.auto) }
+      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || (!(s.preview as string).includes("\n") && (modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string))) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s), ...autoOf(s.auto), ...askOf(s.ask) }
       : undefined);
   const pcs = list(data.pcs, 100, (p) =>
     isObj(p) && str(p.label, 200) && (pcStates as readonly unknown[]).includes(p.state)

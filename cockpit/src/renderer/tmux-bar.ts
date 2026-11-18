@@ -6,6 +6,8 @@ export interface TmuxView {
   history: number;
   position: number;
   height: number;
+  /** In copy mode (scrolled up, searching), where what is typed goes to tmux, not the agent. */
+  inMode?: boolean;
 }
 
 /** The thumb on a track `track` px tall; none when there is nothing above the screen to scroll to. */

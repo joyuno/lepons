@@ -33,3 +33,28 @@ export function resolvePath(root: string, home: string, printed: string): string
   }
   return parts.join("/");
 }
+
+/**
+ * Dropped files as a terminal takes them: each quoted when it must be, a space
+ * after each. `paths` have forward slashes. `cmd` is a session in cmd.exe on
+ * this Windows PC: backslashes back (cmd reads /x as a switch) and double
+ * quotes, which no Windows name can hold. Anything else is a POSIX shell (Git
+ * Bash on a Windows PC over SSH included): single quotes.
+ */
+export function typedPaths(paths: string[], cmd: boolean): string {
+  return paths
+    .map((path) => {
+      if (cmd) {
+        const native = path.replace(/\//g, "\\");
+        return /^[\w\\:.-]+$/.test(native) ? native : `"${native}"`;
+      }
+      return /^[\w@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`;
+    })
+    .map((path) => `${path} `)
+    .join("");
+}
+
+/** A new folder for files dropped onto a session on another PC, in its temp: a Windows PC's own, else /tmp. */
+export function dropFolder(home: string, windows: boolean, id: string): string {
+  return `${windows ? `${home.replace(/\/+$/, "")}/AppData/Local/Temp` : "/tmp"}/lepons-drop-${id}`;
+}

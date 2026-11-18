@@ -1,0 +1,40 @@
+
+❯ Make a two-step plan to add a line saying bye to a.txt, then present it for approval right away   
+  without asking questions.                                                                         
+  
+● Updated plan
+  ⎿  /plan to preview
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Ready to code?
+
+ Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Plan: a.txt에 "bye" 줄 추가
+
+ Context
+
+ C:\work\demo\a.txt 끝에 bye 한 줄을 추가한다. 다른 변경은 없다.
+
+ Steps
+
+ 1. 현재 상태 확인 — a.txt를 Read로 읽어 존재 여부와 마지막 줄의 개행 유무를 확인한다. 파일이
+    없으면 새로 생성한다.
+ 2. 줄 추가 및 검증 — 마지막 줄이 개행으로 끝나지 않으면 개행을 먼저 넣고 bye를 덧붙인다. 그 뒤
+    다시 Read로 마지막 줄이 bye인지 확인한다.
+
+ Verification
+
+ - a.txt의 마지막 줄이 정확히 bye이고 기존 내용은 그대로다.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+ ❯ 1. Yes, and use auto mode
+   2. Yes, manually approve edits
+   3. Tell Claude what to change
+      shift+tab to approve with this feedback
+
+ ctrl+g to edit in Notepad · ~\.claude\plans\demo.md
+

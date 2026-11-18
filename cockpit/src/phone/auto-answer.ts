@@ -20,7 +20,8 @@ const recommended = /\((?:recommended|권장|추천)\)/i;
  * this folder", never to be picked by itself. None for an approval either.
  */
 export function autoChoice(menu: readonly MenuOption[]): MenuOption | undefined {
-  if (menuAsks(menu) === "approve" || menu.some((option) => option.checked !== undefined)) return undefined;
+  // An unnumbered picker (keys) takes no digit, and the answer is sent as one.
+  if (menuAsks(menu) === "approve" || menu.some((option) => option.checked !== undefined || option.keys !== undefined)) return undefined;
   const marked = menu.filter((option) => !option.freeText && recommended.test(option.label));
   return marked.length === 1 ? marked[0] : undefined;
 }

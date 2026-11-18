@@ -552,6 +552,8 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
     // Taken off the list: open or closed.
     // The pretend PC answers no question by itself.
     if (at === "POST /api/auto-keep") return ok(at, { ok: true });
+    // The pretend PC shows no question set read from a record, so none is answered whole.
+    if (at === "POST /api/answer") return fail(409, "stale");
     // The pretend PC keeps nothing outside its folders.
     if (at === "GET /api/outside") return fail(404, "file");
     // The pretend PC has no pushes to send: every route but this one is answered above.

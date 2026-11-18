@@ -2,12 +2,15 @@ import { ExtensionStorage } from "@bacons/apple-targets";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
+import { showOnAndroid } from "./android-widget";
 import { t } from "./i18n";
 import type { PhoneSessionView } from "./phone/types";
 import { widgetSnapshot } from "./phone/widget-snapshot";
 
 /** The App Group the widget extension reads (app.json, targets/widget/expo-target.config.js). */
 const storage = Platform.OS === "ios" ? new ExtensionStorage("group.app.lepons.mobile") : undefined;
+/** Android's widget (android-widget.tsx) reads what the app keeps for it in its own storage. */
+const android = Platform.OS === "android";
 
 let written = "";
 /** The last view sent, without its time: the time alone is no change. */
@@ -18,8 +21,10 @@ let next: string | undefined;
 /** Sends what is waiting to the widget: at most every two seconds, and only when it changed. Not the time alone. */
 function flush(): void {
   timer = undefined;
-  if (!storage || next === undefined || next === written) return;
+  if (next === undefined || next === written) return;
   written = next;
+  if (android) return showOnAndroid(next);
+  if (!storage) return;
   storage.set("snapshot", next || undefined);
   ExtensionStorage.reloadWidget();
 }
@@ -34,7 +39,7 @@ const schedule = (json: string) => {
  * ponytail: written while the app has its link; with the app closed the widget keeps the last one (step 1).
  */
 export function updateWidget(pc: string | undefined, sessions: readonly PhoneSessionView[] | undefined): void {
-  if (!storage) return;
+  if (!storage && !android) return;
   if (pc === undefined || sessions === undefined) {
     lastBody = "";
     schedule("");
@@ -53,9 +58,10 @@ export function updateWidget(pc: string | undefined, sessions: readonly PhoneSes
 }
 
 /**
- * What the widget needs to answer by itself (targets/widget/Relay.swift): this phone's key, the PC in use and the
+ * What the iPhone widget needs to answer by itself (targets/widget/Relay.swift): this phone's key, the PC in use and the
  * sign-in. In the Keychain shared with the widget only (the App Group as access group), readable once the phone has
- * been unlocked since it started, as the app's own items. Nothing when no PC is signed in.
+ * been unlocked since it started, as the app's own items. Nothing when no PC is signed in. Android's widget runs in
+ * the app's own process and reads the app's sign-in from its store (android-widget.tsx), so it needs no copy.
  */
 export async function updateWidgetLink(link: { key: string; room: string; pc: string; server: string; token: string } | undefined): Promise<void> {
   if (Platform.OS !== "ios") return;

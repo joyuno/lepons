@@ -1,9 +1,10 @@
 import "@xterm/xterm/css/xterm.css";
 import { Terminal, type IBufferLine, type ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { renderMarkdown, selectionSource } from "./markdown.ts";
 
-import { findPaths, resolvePath } from "../shared/term-paths.ts";
+import { findPaths, resolvePath, typedPaths } from "../shared/term-paths.ts";
 import { localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
 import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
@@ -55,7 +56,7 @@ import { canTypeInto, installLine, installQuestion, terminalShell, tmuxInstallLi
 import { fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, type ThemeChoice } from "./settings-tabs.ts";
 import { initSettings, openSettings, phoneChanged, refreshSettings, remotesChanged } from "./settings.ts";
 import { relayLamp, relayRow } from "./relay-state.ts";
-import { APP_PAGE, cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
+import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
 import { agentLogos, platformLogos } from "./agent-logos.ts";
@@ -67,6 +68,8 @@ import { menuFrom, withoutSidebar } from "../phone/menu.ts";
 import { limitOnScreen, menuAsks } from "../phone/push.ts";
 import { autoAnswerWait, autoChoice } from "../phone/auto-answer.ts";
 import type { MenuOption } from "../phone/menu.ts";
+import { phoneAsk } from "../phone/ask.ts";
+import { askLines, askUserMenu, litTab, screenRows, typeAnswers } from "../phone/answer.ts";
 import { reflow } from "../phone/screen.ts";
 
 declare global {
@@ -154,6 +157,13 @@ interface SessionMeta {
   history: Array<{ text: string; at: number }>;
   /** What the menu on screen asks (menuAsks), for the waiting push. */
   asks?: "approve" | "choose";
+  /**
+   * That menu as the phone draws it (phone/ask.ts); sent whenever it is on screen, not only while waiting: output from
+   * the agent's background work flips the status to working for a moment, and the phone's question card blinked with it.
+   */
+  ask?: PhoneSession["ask"];
+  /** That menu is Claude's AskUserQuestion (askUserMenu): main reads its set from the record. */
+  askUser?: boolean;
   /** The agent's usage-limit line is on screen, for the stop push. */
   limited?: boolean;
 }
@@ -194,6 +204,8 @@ const sessionNotes = new Map<string, { text: string; actions: Array<[string, () 
 const justEnded = new Set<string>();
 const previewTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const PREVIEW_DEBOUNCE_MS = 500;
+/** While a menu is up the phone follows each key, so its screen is read sooner after output stops. */
+const MENU_DEBOUNCE_MS = 150;
 
 /**
  * The screen's lines, read from xterm's rendered grid rather than the raw PTY
@@ -209,9 +221,9 @@ function screenLines(term: Terminal): string[] {
 }
 
 /**
- * Runs 500ms after output for a session goes quiet, not on every chunk --
- * reacting per-chunk would capture mid-repaint noise from a spinner or
- * status line that redraws continuously.
+ * Runs 500ms after output for a session goes quiet (150ms while its last read
+ * found a menu), not on every chunk -- reacting per-chunk would capture
+ * mid-repaint noise from a spinner or status line that redraws continuously.
  */
 function schedulePreviewCapture(key: string): void {
   const existing = previewTimers.get(key);
@@ -221,7 +233,7 @@ function schedulePreviewCapture(key: string): void {
     setTimeout(() => {
       previewTimers.delete(key);
       capturePreview(key);
-    }, PREVIEW_DEBOUNCE_MS),
+    }, sessionMeta.get(key)?.ask ? MENU_DEBOUNCE_MS : PREVIEW_DEBOUNCE_MS),
   );
 }
 
@@ -258,7 +270,7 @@ function fireAutoAnswer(key: string, labels: string): void {
   const armed = autoAnswers.get(key);
   autoAnswers.delete(key);
   if (armed && activityOf(key).menu === labels && states.get(key)?.kind === "ready") {
-    cockpit.writeSession(key, String(armed.n));
+    typeInto(key, String(armed.n));
     showToast(t("auto.answered", { folder: findByKey(key)?.repo.label ?? "", n: armed.n }));
   }
   renderPanes();
@@ -276,21 +288,29 @@ function keepWaiting(key: string): void {
   sendPhoneSnapshot();
 }
 
+/** The menu on screen as the phone gets it, its question and tab line read off askLines (phone/answer.ts). */
+function askOf(term: Terminal, menu: MenuOption[]): NonNullable<PhoneSession["ask"]> {
+  const { lines, from } = askLines(term);
+  return phoneAsk(lines, menu, (tabs) => litTab(term, from, tabs.map((tab) => tab.label)));
+}
+
 function capturePreview(key: string): void {
   const entry = terminals.get(key);
   if (!entry) return;
   const lines = screenLines(entry.term);
-  // A plain terminal's numbered list is nobody asking.
-  // A full-screen app (OpenCode) draws on the alternate screen, row by row to the edge: xterm marks
-  // nearly every row as wrapped there, but its rows are the screen, so nothing is joined.
-  const buffer = entry.term.buffer.active;
-  const menu = sessionExecutors.get(key) === "shell" || findByKey(key)?.terminal ? undefined : menuFrom(reflow(lines.map((text, y) => ({ text, wrapped: buffer.type === "normal" && (buffer.getLine(buffer.length - lines.length + y)?.isWrapped ?? false) }))));
+  // A plain terminal's numbered list is nobody asking. Wrapped rows are joined as screenRows says (phone/answer.ts).
+  const reflowed = reflow(screenRows(entry.term, entry.term.buffer.active.length - lines.length));
+  const menu = sessionExecutors.get(key) === "shell" || findByKey(key)?.terminal ? undefined : menuFrom(reflowed);
   if (onMenu(activityOf(key), menu?.map((option) => option.label).join("|"), Date.now())) turnEnded(key);
   const agentScreen = sessionExecutors.get(key) !== "shell" && !findByKey(key)?.terminal;
   const asks = menu && menuAsks(menu);
   const limited = agentScreen && limitOnScreen(lines);
   const seen = sessionMeta.get(key) ?? { waiting: false, history: [] };
-  if (seen.asks !== asks || (seen.limited ?? false) !== limited) sessionMeta.set(key, { ...seen, asks, limited });
+  const ask = menu && askOf(entry.term, menu);
+  const askUser = ask !== undefined && agentScreen && askUserMenu(reflowed);
+  if (seen.asks !== asks || (seen.limited ?? false) !== limited || seen.ask?.id !== ask?.id || (seen.askUser ?? false) !== askUser) sessionMeta.set(key, { ...seen, asks, limited, ask, askUser });
+  // A new question reaches the phone now, not at the next tick; an unchanged snapshot is not sent again.
+  if (seen.ask?.id !== ask?.id || (seen.askUser ?? false) !== askUser) sendPhoneSnapshot();
   // The limit line came or went: the note over the pane follows it.
   if ((seen.limited ?? false) !== limited) noteLimits();
   // After asks is set: the snapshot this may send rings with this menu's line, not the last one's.
@@ -471,6 +491,7 @@ function fileTree(node: NodeConfig, repo: RepoConfig, path: string, key: string,
       event.preventDefault();
       event.stopPropagation();
       draggedOut = { nodeId: node.id, path: childPath };
+      draggingOut = true;
       let held = true;
       window.addEventListener("mouseup", () => (held = false), { once: true });
       void cockpit.prepareDragOut(node.id, childPath).then((ready) => {
@@ -704,6 +725,8 @@ const lucide = {
   pencil: '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   arrowLeftRight: '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  chevronUp: '<path d="m18 15-6-6-6 6"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
   rotateCw: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
   gitMerge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
@@ -1540,7 +1563,7 @@ function park(element: HTMLElement): void {
  * here from where tmux says its view is (main's tmuxScroll; geometry in tmux-bar.ts). Read every few seconds while the
  * pane shows and just after a wheel over it; dragging the thumb or clicking the track moves tmux's view there.
  */
-const tmuxBars = new Map<string, { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> }>();
+const tmuxBars = new Map<string, { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout>; held?: string[] }>();
 
 function attachTmuxBar(key: string, element: HTMLElement): void {
   const found = findByKey(key);
@@ -1553,9 +1576,11 @@ function attachTmuxBar(key: string, element: HTMLElement): void {
   const thumb = document.createElement("i");
   bar.append(thumb);
   element.append(bar);
-  const entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout> } = { element, bar, thumb, busy: false, dragging: false };
+  const entry: { element: HTMLElement; bar: HTMLElement; thumb: HTMLElement; view?: TmuxView; busy: boolean; dragging: boolean; wheel?: ReturnType<typeof setTimeout>; held?: string[] } = { element, bar, thumb, busy: false, dragging: false };
   tmuxBars.set(key, entry);
-  element.addEventListener("wheel", () => {
+  element.addEventListener("wheel", (event) => {
+    // Up is into copy mode, most likely: typing straight after must not wait for the read below to know it.
+    if (event.deltaY < 0 && entry.view) entry.view.inMode = true;
     clearTimeout(entry.wheel);
     entry.wheel = setTimeout(() => void readTmux(key), 250);
   }, { passive: true });
@@ -1612,13 +1637,13 @@ function drawTmuxBar(entry: { element: HTMLElement; bar: HTMLElement; thumb: HTM
   entry.thumb.style.height = `${place.height}px`;
 }
 
-/** Where tmux's view is (after moving it to `to` lines above the bottom), drawn on the pane's bar. */
-async function readTmux(key: string, to?: number): Promise<void> {
+/** Where tmux's view is (after moving it to `to` lines above the bottom, or to `find`'s next match), drawn on the pane's bar. */
+async function readTmux(key: string, to?: number, find?: { text: string; up: boolean }): Promise<void> {
   const entry = tmuxBars.get(key);
-  if (!entry || (entry.busy && to === undefined)) return;
+  if (!entry || (entry.busy && to === undefined && !find)) return;
   entry.busy = true;
   try {
-    const view = await cockpit.tmuxScroll(key, to);
+    const view = await cockpit.tmuxScroll(key, to, find);
     if (!view) return;
     entry.view = view;
     if (!entry.dragging) drawTmuxBar(entry);
@@ -1633,6 +1658,23 @@ setInterval(() => {
   if (document.hidden || terminalPanel.hidden !== false) return;
   for (const key of workspace.visibleSessions()) if (tmuxBars.has(key)) void readTmux(key);
 }, 3000);
+
+/**
+ * What is typed into a session. A remote tmux pane scrolled up (or searched) is in copy mode, where keys are copy-mode
+ * commands and Ctrl+C only leaves it: the view goes back to the bottom first, and what is typed meanwhile waits behind
+ * that, in order. Anywhere else, and in tmux at the bottom, it goes straight through.
+ */
+function typeInto(key: string, data: string): void {
+  const entry = tmuxBars.get(key);
+  if (!entry || (!entry.held && !entry.view?.inMode)) return cockpit.writeSession(key, data);
+  if (entry.held) return void entry.held.push(data);
+  const held = (entry.held = [data]);
+  // Settled either way: an unreachable tmux must not keep the keys.
+  void readTmux(key, 0).finally(() => {
+    entry.held = undefined;
+    for (const each of held) cockpit.writeSession(key, each);
+  });
+}
 
 function terminalFor(key: string) {
   const existing = terminals.get(key);
@@ -1666,6 +1708,28 @@ function terminalFor(key: string) {
   attachTmuxBar(key, element);
   // Addresses a program printed -- a dev server, a pull request -- open with
   // Ctrl+click, as in an editor's terminal: a plain click is for selecting.
+  const urlTip = (event: MouseEvent, url: string) => {
+    const found = findByKey(key);
+    const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(url);
+    showTipAt(found?.node.kind === "ssh" && local ? t("link.openRemote", { machine: machineLabel(found.node) }) : t("link.open"), event);
+  };
+  const openUrl = (event: MouseEvent, text: string) => {
+    const found = findByKey(key);
+    if (!(event.ctrlKey || event.metaKey) || !found) return;
+    void cockpit.openLink(found.node.id, text).then((problem) => {
+      if (problem) return showTipAt(problem, event);
+      const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:(\d+))?/i.exec(text);
+      if (found.node.kind !== "ssh" || !local) return;
+      const port = Number(local[3] ?? (text.startsWith("https") ? 443 : 80));
+      const ports = sessionForwards.get(key) ?? new Set<number>();
+      sessionForwards.set(key, ports.add(port));
+      renderPanes();
+    });
+  };
+  // A link a program marked up itself (OSC 8: its text need not be the
+  // address) the same way. Without this xterm asked in an English confirm()
+  // and opened nothing.
+  term.options.linkHandler = { activate: openUrl, hover: urlTip, leave: () => hideTip() };
   // A program that breaks a long address over lines -- at the terminal's
   // edge, or at its own box's side -- still opens it whole (wrapped-url.ts).
   term.registerLinkProvider({
@@ -1680,31 +1744,15 @@ function terminalFor(key: string) {
         if (cells > 0 && row.getCell(cells - 1)?.getWidth() === 2) cells++;
         return { text: row.translateToString(true), wrapped: row.isWrapped, cells };
       };
-      const found = findByKey(key);
-      const remote = found?.node.kind === "ssh";
       callback(urlsAt(rowAt, y - 1, term.cols).map((match) => ({
         range: {
           start: cellRange(buffer.getLine(match.parts[0]!.row), match.parts[0]!.row + 1)(match.parts[0]!.index, match.parts[0]!.length).start,
           end: cellRange(buffer.getLine(match.parts.at(-1)!.row), match.parts.at(-1)!.row + 1)(match.parts.at(-1)!.index, match.parts.at(-1)!.length).end,
         },
         text: match.url,
-        hover: (event) => {
-          const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(match.url);
-          showTipAt(remote && local && found ? t("link.openRemote", { machine: machineLabel(found.node) }) : t("link.open"), event);
-        },
+        hover: (event) => urlTip(event, match.url),
         leave: () => hideTip(),
-        activate: (event, text) => {
-          if (!(event.ctrlKey || event.metaKey) || !found) return;
-          void cockpit.openLink(found.node.id, text).then((problem) => {
-            if (problem) return showTipAt(problem, event);
-            const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:(\d+))?/i.exec(text);
-            if (!remote || !local) return;
-            const port = Number(local[3] ?? (text.startsWith("https") ? 443 : 80));
-            const ports = sessionForwards.get(key) ?? new Set<number>();
-            sessionForwards.set(key, ports.add(port));
-            renderPanes();
-          });
-        },
+        activate: openUrl,
       })));
     },
   });
@@ -1749,7 +1797,10 @@ function terminalFor(key: string) {
   // given to the program as if it had been reported from the press: both scroll
   // with the button held and copy the whole selection on release, tmux joining
   // wrapped lines. The drag stays xterm's until then, so one that keeps to the
-  // screen is selected, copied and right-clicked as before.
+  // screen is selected, copied and right-clicked as before -- except in a
+  // remote tmux pane, where every drag is tmux's: the screen xterm holds there
+  // is tmux's drawing, a long line broken at the edge, and xterm's copy kept
+  // those breaks where tmux's joins the line again.
   let handOverDrag: ((x: number, y: number) => void) | undefined;
   let watchedDrag: AbortController | undefined;
   let handedOverAt = -Infinity;
@@ -1762,7 +1813,10 @@ function terminalFor(key: string) {
     // A shell off tmux can be running anything, and vim or htop would take the
     // drag and copy nothing: there the terminal's own selection stays.
     const node = nodes.find((candidate) => candidate.id === key.split("::")[0]);
-    if ((sessionExecutors.get(key) ?? "shell") === "shell" && !(node?.kind === "ssh" && node.useTmux)) return;
+    const remoteTmux = node?.kind === "ssh" && node.useTmux;
+    if ((sessionExecutors.get(key) ?? "shell") === "shell" && !remoteTmux) return;
+    // Lepons' tmux sessions have no status line (tmuxCommand), so their last row is the pane's own.
+    const statusRows = remoteTmux ? 0 : 1;
     const screen = term.element!.querySelector(".xterm-screen")!;
     const drag = (clientX: number, clientY: number) =>
       document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX, clientY, buttons: 1 }));
@@ -1774,10 +1828,10 @@ function terminalFor(key: string) {
       // Reported by xterm itself, in the encoding the program asked for.
       const box = screen.getBoundingClientRect();
       // A press on tmux's status line, or under it, would start no selection.
-      const pressY = reportedY(press.clientY!, box.top, box.bottom, term.rows);
+      const pressY = reportedY(press.clientY!, box.top, box.bottom, term.rows, statusRows);
       term.element!.dispatchEvent(new MouseEvent("mousedown", { ...press, clientY: pressY }));
       drag(firstDragX(press.clientX!, box.left, box.right, term.cols), pressY);
-      drag(x, reportedY(y, box.top, box.bottom, term.rows));
+      drag(x, reportedY(y, box.top, box.bottom, term.rows, statusRows));
     };
     const watch = new AbortController();
     watchedDrag = watch;
@@ -1791,16 +1845,16 @@ function terminalFor(key: string) {
         // taking the keys meant for the agent.
         watch.abort();
         handOverDrag = undefined;
-        if (handed) document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: moved.clientX, clientY: reportedY(moved.clientY, box.top, box.bottom, term.rows) }));
+        if (handed) document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: moved.clientX, clientY: reportedY(moved.clientY, box.top, box.bottom, term.rows, statusRows) }));
         return;
       }
       if (!handed) {
-        if (!dragLeavesScreen(term.modes.mouseTrackingMode, moved.clientY, box.top, box.bottom)) return;
-        // A click's jitter over the edge is not a drag: tmux would copy on its release.
+        if (!remoteTmux && !dragLeavesScreen(term.modes.mouseTrackingMode, moved.clientY, box.top, box.bottom)) return;
+        // A click's jitter is not a drag: tmux would copy on its release.
         if (Math.hypot(moved.clientX - press.clientX!, moved.clientY - press.clientY!) <= 4) return;
         handOverDrag?.(moved.clientX, moved.clientY);
       }
-      const y = reportedY(moved.clientY, box.top, box.bottom, term.rows);
+      const y = reportedY(moved.clientY, box.top, box.bottom, term.rows, statusRows);
       if (y === moved.clientY) return;
       moved.stopImmediatePropagation();
       drag(moved.clientX, y);
@@ -1812,7 +1866,7 @@ function terminalFor(key: string) {
       draggedAt = handedOverAt = performance.now();
       lastRelease = up;
       const box = screen.getBoundingClientRect();
-      const y = reportedY(up.clientY, box.top, box.bottom, term.rows);
+      const y = reportedY(up.clientY, box.top, box.bottom, term.rows, statusRows);
       if (y === up.clientY) return;
       up.stopImmediatePropagation();
       document.dispatchEvent(new MouseEvent("mouseup", { ...pick(up), clientY: y }));
@@ -1832,6 +1886,8 @@ function terminalFor(key: string) {
   }, { capture: true, passive: true });
   element.addEventListener("mousedown", (event) => {
     pressedAt = { x: event.clientX, y: event.clientY };
+    // The find bar's own clicks: not the program's, and its input must take focus.
+    if (findBar?.contains(event.target as Node)) return;
     if (!event.isTrusted || term.modes.mouseTrackingMode === "none") return;
     // A right press is the copy/paste menu below; reported, tmux opened its
     // own menu on top of it.
@@ -1859,6 +1915,7 @@ function terminalFor(key: string) {
     }
   }, { capture: true });
   element.addEventListener("contextmenu", (event) => {
+    if (findBar?.contains(event.target as Node)) return;
     event.preventDefault();
     cockpit.terminalMenu(key, term.hasSelection());
   });
@@ -1890,9 +1947,64 @@ function terminalFor(key: string) {
   term.onData((data) => {
     // The operator answering is what ends a wait.
     activityOf(key).waiting = false;
-    cockpit.writeSession(key, data);
+    typeInto(key, data);
   });
   term.onResize(({ cols, rows }) => cockpit.resizeSession(key, cols, rows));
+  // Finding text in what the pane holds: xterm's own buffer, as you type; in a
+  // remote tmux pane, whose history xterm never sees, tmux's search in copy
+  // mode, on Enter (each is a command over SSH), left again on closing.
+  // Enter looks up (older), Shift+Enter down.
+  const search = new SearchAddon();
+  term.loadAddon(search);
+  let findBar: HTMLElement | undefined;
+  const openFind = () => {
+    if (findBar) return findBar.querySelector("input")?.select();
+    const inTmux = tmuxBars.has(key);
+    const bar = document.createElement("div");
+    bar.className = "termFind";
+    const input = document.createElement("input");
+    input.type = "search";
+    input.spellcheck = false;
+    input.placeholder = t("terminal.find");
+    const go = (up: boolean) => {
+      const text = input.value;
+      if (text === "") return;
+      if (inTmux) return void readTmux(key, undefined, { text, up });
+      input.classList.toggle("miss", !(up ? search.findPrevious(text) : search.findNext(text)));
+    };
+    const close = () => {
+      bar.remove();
+      findBar = undefined;
+      if (inTmux) void readTmux(key, 0);
+      else search.clearDecorations();
+      term.focus();
+    };
+    input.addEventListener("input", () => {
+      input.classList.remove("miss");
+      if (inTmux) return;
+      // From the bottom each time, so the newest match of what is typed so far.
+      term.clearSelection();
+      go(true);
+    });
+    input.addEventListener("keydown", (event) => {
+      // The Enter that ends a Hangul syllable is the IME's.
+      if (event.isComposing) return;
+      if (event.key === "Escape") close();
+      else if (event.key === "Enter") go(!event.shiftKey);
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    bar.append(
+      input,
+      iconButton("chevronUp", t("terminal.findUp"), () => go(true)),
+      iconButton("chevronDown", t("terminal.findDown"), () => go(false)),
+      iconButton("x", t("terminal.findClose"), close),
+    );
+    element.append(bar);
+    findBar = bar;
+    input.focus();
+  };
   // xterm ships no clipboard bindings: Ctrl+C belongs to the PTY as SIGINT,
   // and navigator.clipboard is unavailable on this file:// origin, so both
   // keys did nothing at all. Ctrl+C copies only when something is selected
@@ -1907,12 +2019,19 @@ function terminalFor(key: string) {
         (sessionExecutors.get(key) ?? "shell") !== "shell") {
       if (event.type === "keydown") {
         event.preventDefault();
-        cockpit.writeSession(key, "\x1b\r");
+        typeInto(key, "\x1b\r");
       }
       return false;
     }
     if (event.type !== "keydown" || !(event.ctrlKey || event.metaKey)) return true;
     const pressed = event.key.toLowerCase();
+    // Find: Ctrl+Shift+F, Cmd+F on a Mac. Plain Ctrl+F stays the program's --
+    // the shell's cursor-right, and a binding in Claude Code (2.1.327).
+    if (pressed === "f" && !event.altKey && (isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && event.shiftKey)) {
+      event.preventDefault();
+      openFind();
+      return false;
+    }
     if (pressed === "v") {
       // Returning false only stops xterm's own key handling; the browser's
       // paste still fires and xterm's textarea listener inserts the clipboard
@@ -1926,6 +2045,10 @@ function terminalFor(key: string) {
       // Handled here, so a Mac's Edit-menu Copy does not copy it a second time.
       event.preventDefault();
       cockpit.writeClipboard(term.getSelection());
+      // Copied and let go, as Windows Terminal does: the next Ctrl+C interrupts
+      // rather than copying the same text again. Cmd+C on a Mac never
+      // interrupts, and keeps it the way a Mac's terminal does.
+      if (event.ctrlKey) term.clearSelection();
       return false;
     }
     // A drag that just ended but left nothing selected (the program cleared
@@ -1945,7 +2068,7 @@ function terminalFor(key: string) {
     const found = findByKey(key);
     if (text === "" && found && (sessionExecutors.get(key) ?? "shell") !== "shell" && cockpit.clipboardHasImage()) {
       if (found.node.kind === "local") {
-        cockpit.writeSession(key, "\x1bv");
+        typeInto(key, "\x1bv");
       } else {
         void cockpit.pasteImage(found.node.id).then((result) => {
           if (result.ok) term.paste(`${result.path} `);
@@ -1956,6 +2079,48 @@ function terminalFor(key: string) {
     }
     term.paste(text);
   };
+  // Files from Explorer or Finder: their paths typed, as any terminal does. A
+  // session on another PC cannot reach them, so they are copied there first
+  // and the copies' paths typed. Text or an address dragged from a browser is
+  // typed as it is. The tree's drag-out and a folder dragged off the list are
+  // the app's own, left to the window.
+  const filesIn = (event: DragEvent) => {
+    const types = event.dataTransfer?.types ?? [];
+    return !draggingOut && railDrag === undefined && (types.includes("Files") || types.includes("text/plain") || types.includes("text/uri-list"));
+  };
+  for (const type of ["dragenter", "dragover"] as const) {
+    element.addEventListener(type, (event) => {
+      if (!filesIn(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer!.dropEffect = "copy";
+      element.classList.add("termFilesOver");
+    });
+  }
+  element.addEventListener("dragleave", (event) => {
+    if (!element.contains(event.relatedTarget as Node | null)) element.classList.remove("termFilesOver");
+  });
+  element.addEventListener("drop", (event) => {
+    element.classList.remove("termFilesOver");
+    if (!filesIn(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dropped = event.dataTransfer!;
+    if (!dropped.types.includes("Files")) {
+      // A uri-list's lines starting with # are comments.
+      const text = dropped.getData("text/plain") || dropped.getData("text/uri-list").split(/\r?\n/).filter((line) => line && !line.startsWith("#")).join(" ");
+      if (text) term.paste(text);
+      return term.focus();
+    }
+    const found = findByKey(key);
+    const paths = [...dropped.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== "");
+    if (!found || paths.length === 0) return;
+    if (found.node.kind === "local") return term.paste(typedPaths(paths, navigator.platform.startsWith("Win")));
+    void cockpit.dropFiles(found.node.id, paths).then((result) => {
+      if (result.ok) term.paste(typedPaths(result.paths, false));
+      else paneNotice(undefined, result.error);
+    });
+  });
   const created = { term, fit, element, paste };
   terminals.set(key, created);
   return created;
@@ -2508,8 +2673,8 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
       mcpReconnect.delete(nudgeKey);
       // Typed, then Enter a beat later: in one burst it can read as a paste,
       // and a pasted newline does not submit.
-      cockpit.writeSession(nudgeKey, "/mcp reconnect all");
-      setTimeout(() => cockpit.writeSession(nudgeKey, "\r"), 150);
+      typeInto(nudgeKey, "/mcp reconnect all");
+      setTimeout(() => typeInto(nudgeKey, "\r"), 150);
       // Brought to the front, so the reply is seen.
       showTab(node, node.tabs.indexOf(nudgeTab));
     });
@@ -4361,8 +4526,8 @@ async function installFor(agentKey: string, agent: AgentKind | "tmux"): Promise<
     sessionNotes.set(key, { text: t("install.paste", { command: line }), actions: [copy] });
   } else {
     const type = () => {
-      cockpit.writeSession(key, line);
-      setTimeout(() => cockpit.writeSession(key, "\r"), 150);
+      typeInto(key, line);
+      setTimeout(() => typeInto(key, "\r"), 150);
     };
     // A beat for the new shell's prompt, so the line is not typed into nothing.
     setTimeout(type, 500);
@@ -4392,8 +4557,8 @@ async function runInTerminal(nodeId: string, line: string, note?: string): Promi
   if (states.get(key)?.kind !== "ready" || !canTypeInto(node, alreadyOpen)) return copy();
   // A beat for the new shell's prompt, as installFor waits.
   setTimeout(() => {
-    cockpit.writeSession(key, line);
-    setTimeout(() => cockpit.writeSession(key, "\r"), 150);
+    typeInto(key, line);
+    setTimeout(() => typeInto(key, "\r"), 150);
   }, 500);
   say(t("settings.agents.typed"));
 }
@@ -4921,7 +5086,7 @@ function sendBroadcast(): void {
     if (states.get(key)?.kind !== "ready") continue;
     terminalFor(key).term.paste(text);
     // After the paste has landed, or an agent takes the Enter as part of it.
-    if (enter) setTimeout(() => cockpit.writeSession(key, "\r"), 300);
+    if (enter) setTimeout(() => typeInto(key, "\r"), 300);
   }
   broadcastText.value = "";
   broadcastDialog.close();
@@ -5945,6 +6110,11 @@ const isUnder = (path: string, folder: string): boolean => path === folder || pa
 
 /** The tree entry last dragged out, so a drag that ends back where it began does nothing. */
 let draggedOut: { nodeId: string; path: string } | undefined;
+/** While that drag is on: an OS drag of "Files" too, which a terminal must not type as if from Explorer. */
+let draggingOut = false;
+window.addEventListener("pointermove", (event) => {
+  if (!(event.buttons & 1)) draggingOut = false;
+});
 
 /**
  * Files or folders dragged in from Explorer or Finder land in `dir` as
@@ -6777,7 +6947,7 @@ function snapshotSessions(told = true): PhoneSession[] {
       ...(original ? { worktreeOf: original.label, worktree: found.repo.label } : {}),
       key, nodeId: found.node.id, repoId: found.repo.id, terminal: found.terminal,
       pc: machineLabel(found.node), folder: found.repo.label, ...(status === "shellOnly" ? { mood: "done" as const, agentGone: true } : { mood: status }), ...(turn ? { turn } : {}), ...(preview === undefined ? {} : { preview }), ...(pane ? { pane } : {}),
-      ...(status === "waiting" && meta?.asks ? { asks: meta.asks } : {}), ...(meta?.limited ? { limited: true as const } : {}),
+      ...(status === "waiting" && meta?.asks ? { asks: meta.asks } : {}), ...(meta?.ask && status !== "shellOnly" ? { ask: meta.ask, ...(meta.askUser ? { askUser: true as const } : {}) } : {}), ...(meta?.limited ? { limited: true as const } : {}),
       ...(autoAnswers.has(key) ? { auto: { at: autoAnswers.get(key)!.at, n: autoAnswers.get(key)!.n, option: autoAnswers.get(key)!.option } } : {}),
       ...(steps.length > 0 ? { steps } : {}), ...summary,
     }];
@@ -6875,10 +7045,6 @@ async function setupEnter(step: SetupStep): Promise<void> {
       el<HTMLImageElement>("setupTotpQr").src = totp.qr;
       el<HTMLElement>("setupTotpKey").textContent = keyInGroups(totp.secret);
     } else showKey = false;
-  }
-  if (step === "app") {
-    el<HTMLImageElement>("setupAppQr").src = await cockpit.phoneQr(APP_PAGE);
-    el<HTMLElement>("setupAppUrl").textContent = APP_PAGE;
   }
   if (step === "pair" && !phoneView!.relay.paired && phoneView!.relay.qr === undefined) {
     const answer = await cockpit.relayAction("pair");
@@ -6986,7 +7152,6 @@ for (const id of ["setupPassword", "setupPasswordAgain", "setupCode"]) {
     if (event.key === "Enter") setupNext.click();
   });
 }
-el<HTMLButtonElement>("setupAppOpen").addEventListener("click", () => void cockpit.openLink("", APP_PAGE));
 
 /** The QR while a pairing is open, then the six digits, then what came of it. */
 function paintRelay(view: PhoneSettingsView): void {
@@ -7129,6 +7294,28 @@ cockpit.onPhoneReconnect((nodeId) => {
 
 // The phone's terminal tab, for a folder whose plain terminal is not open: the rail's "터미널 열기".
 cockpit.onPhoneAutoKeep((key) => keepWaiting(key));
+
+// The phone answered a whole question set (POST /api/answer): typed here, beside the terminal that shows it, each
+// key once the screen took the one before (phone/answer.ts). One set at a time per session.
+const answering = new Set<string>();
+cockpit.onPhoneAnswer((requestId, key, form, answers) => {
+  const entry = terminals.get(key);
+  if (!entry || states.get(key)?.kind !== "ready" || answering.has(key)) {
+    cockpit.replyPhoneAnswer(requestId, { ok: false, step: 0, reason: entry && answering.has(key) ? "busy" : "closed" });
+    return;
+  }
+  answering.add(key);
+  const tabs = [...form.questions.map((question) => question.header), "Submit"];
+  void typeAnswers({
+    write: (data) => typeInto(key, data),
+    screen: () => askLines(entry.term).lines,
+    litTab: () => litTab(entry.term, askLines(entry.term).from, tabs),
+    wait: (ms) => new Promise((done) => setTimeout(done, ms)),
+  }, form, answers).catch(() => ({ ok: false as const, step: 0, reason: "stuck" as const })).then((result) => {
+    answering.delete(key);
+    cockpit.replyPhoneAnswer(requestId, result);
+  });
+});
 cockpit.onPhoneTerminal((nodeId, repoId) => {
   if (findByKey(sessionKey(nodeId, repoId, true))) void openQuietly(nodeId, repoId, true);
 });

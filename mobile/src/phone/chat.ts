@@ -52,7 +52,7 @@ export function chatFrom(events: readonly WorkflowItem[]): ChatItem[] {
  */
 export type Block =
   | { type: "p" | "h" | "quote"; text: string }
-  | { type: "list"; ordered: boolean; items: string[] }
+  | { type: "list"; ordered: boolean; items: string[]; start?: number }
   | { type: "code"; text: string };
 
 export function markdownBlocks(text: string): Block[] {
@@ -85,7 +85,8 @@ export function markdownBlocks(text: string): Block[] {
       const ordered = item[2] !== undefined;
       const last = blocks.at(-1);
       if (last?.type === "list" && last.ordered === ordered) last.items.push(item[3]!);
-      else blocks.push({ type: "list", ordered, items: [item[3]!] });
+      // A numbered list keeps its own first number: one broken up by a description or a nested bullet goes on 2., 3.
+      else blocks.push({ type: "list", ordered, items: [item[3]!], ...(ordered ? { start: Number(item[2]) } : {}) });
     } else if (quote) {
       flush();
       const last = blocks.at(-1);

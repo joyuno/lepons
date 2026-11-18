@@ -63,6 +63,27 @@ func screenSig(_ preview: String) -> String {
   hexString(Data(SHA256.hash(data: Data(preview.trimmingCharacters(in: .whitespacesAndNewlines).utf8))))
 }
 
+/// What a fresh session's question is matched by, as the app writes `sig` (widget-snapshot.ts): the PC's ask id, or the
+/// preview's fingerprint from a PC that sends no ask.
+func askSig(_ session: [String: Any]) -> String? {
+  if let id = (session["ask"] as? [String: Any])?["id"] as? String { return id }
+  return (session["preview"] as? String).map(screenSig)
+}
+
+/// The buttons a session's `ask` gives, as widget-snapshot.ts picks them: one-pick options only, without the typing row.
+/// None for a multi-select (ticks, then Tab) or an unnumbered picker (arrows, then Enter), which stay in the app.
+func askChoices(_ session: [String: Any]) -> (question: String?, choices: [Snap.Choice], sig: String)? {
+  guard let ask = session["ask"] as? [String: Any], let sig = ask["id"] as? String,
+        let options = ask["options"] as? [[String: Any]] else { return nil }
+  if options.contains(where: { $0["checked"] != nil || $0["keys"] != nil }) { return nil }
+  let choices: [Snap.Choice] = options.compactMap { option in
+    guard option["freeText"] as? Bool != true, let n = option["n"] as? Int, let label = option["label"] as? String else { return nil }
+    return Snap.Choice(n: n, label: String(label.prefix(60)), key: option["key"] as? String)
+  }
+  guard !choices.isEmpty, choices.count <= 9 else { return nil }
+  return (ask["question"] as? String, choices, sig)
+}
+
 enum WidgetStore {
   static func load() -> Snap? {
     guard let text = UserDefaults(suiteName: appGroup)?.string(forKey: "snapshot"), let data = text.data(using: .utf8) else { return nil }
@@ -105,8 +126,14 @@ enum WidgetStore {
       let id = s["id"] as? String ?? ""
       let preview = (s["preview"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
       let text = preview.map { $0.count > 600 ? "…" + String($0.suffix(600)) : $0 }
+      // A PC that sends its reading of the menu (ask) gives the buttons here, with the app closed; an older PC's
+      // choices come only from the app's last snapshot of that same screen.
+      if let own = askChoices(s) {
+        return Snap.Ask(id: id, folder: name(s), agent: s["agentName"] as? String, text: (text?.isEmpty ?? true) ? nil : text,
+                        question: own.question, choices: own.choices, sig: own.sig, status: nil)
+      }
       let before = old.asks.first { $0.id == id }
-      let same = before?.sig != nil && preview.map(screenSig) == before?.sig
+      let same = before?.sig != nil && askSig(s) == before?.sig
       return Snap.Ask(id: id, folder: name(s), agent: s["agentName"] as? String, text: (text?.isEmpty ?? true) ? nil : text,
                       question: same ? before?.question : nil, choices: same ? before?.choices : nil, sig: same ? before?.sig : nil, status: nil)
     }
@@ -170,7 +197,7 @@ enum WidgetStore {
         let state = try await relay.request("GET", "/api/state")
         let sessions = (state.body as? [String: Any])?["sessions"] as? [[String: Any]] ?? []
         guard let now = sessions.first(where: { $0["id"] as? String == session }), now["mood"] as? String == "waiting",
-              let preview = now["preview"] as? String, screenSig(preview) == sig else { return ("changed", state.body) }
+              askSig(now) == sig else { return ("changed", state.body) }
         let sent = try await relay.request("POST", "/api/input", body: ["s": session, "key": key])
         return (sent.status == 200 ? "sent" : "failed", state.body)
       }

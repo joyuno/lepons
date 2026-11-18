@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { composerAction, menuKeys, menuQuestion } from "./composer.ts";
+import { composerAction, formAnswered, formAnswers, menuKeys } from "./composer.ts";
+import { menuQuestion } from "./menu.ts";
 
 test("a menu's question is the text right above its first option", () => {
   const menu = [" 1. Yes", " 2. No"];
@@ -10,6 +11,8 @@ test("a menu's question is the text right above its first option", () => {
   assert.equal(menuQuestion(["1. old list", "Ask", "────", ...menu]), "Ask");
   assert.equal(menuQuestion(["far away", "", "", "", ...menu]), undefined);
   assert.equal(menuQuestion(menu), undefined);
+  // A question over several lines is whole.
+  assert.equal(menuQuestion(["", "Which fruits should go", "into the smoothie?", "", "❯ 1. Apple", "  2. Pear"]), "Which fruits should go into the smoothie?");
 });
 
 test("show stop only for an empty draft while the agent is working", () => {
@@ -34,4 +37,19 @@ test("with a menu's text field open a row leaves it first: a digit would land in
   assert.deepEqual(menuKeys({ n: 1, key: "enter" }, false), ["enter"]);
   assert.deepEqual(menuKeys({ n: 4, freeText: true }, true), ["up"], "the typing row only leaves");
   assert.deepEqual(menuKeys({ n: 2 }, true), ["up", "2"], "another row leaves, then picks");
+});
+
+test("an unnumbered picker's row sends its arrows and Enter, in turn", () => {
+  assert.deepEqual(menuKeys({ n: 2, keys: ["down", "enter"] }, false), ["down", "enter"]);
+  assert.deepEqual(menuKeys({ n: 1, keys: ["enter"] }, false), ["enter"]);
+});
+
+test("a whole question set goes to the PC as its answers, one per question: picks, or a single-select's words", () => {
+  assert.deepEqual(formAnswers(3, [{ picks: [2, 0] }, { picks: [], text: "  Medium " }, { picks: [1] }]), [{ picks: [2, 0] }, { text: "Medium" }, { picks: [1] }]);
+  assert.deepEqual(formAnswers(2, [{ picks: [0], text: " " }]), [{ picks: [0] }, { picks: [] }], "blank words are no words; a missing answer sends none");
+  assert.equal(formAnswered(undefined), false);
+  assert.equal(formAnswered({ picks: [] }), false);
+  assert.equal(formAnswered({ picks: [], text: " " }), false);
+  assert.equal(formAnswered({ picks: [0] }), true);
+  assert.equal(formAnswered({ picks: [], text: "Medium" }), true);
 });

@@ -15,6 +15,8 @@ test("a question is answered only with the one option the agent marked as its pi
 
 test("a multi-select question is never answered by itself: a digit only ticks a box there", () => {
   assert.equal(autoChoice([{ n: 1, label: "Red (Recommended)", checked: false }, { n: 2, label: "Blue", checked: false }]), undefined);
+  // Nor an unnumbered picker: it takes arrows and Enter, not the digit sent.
+  assert.equal(autoChoice([{ n: 1, label: "Red (Recommended)", keys: ["enter"] }, { n: 2, label: "Blue", keys: ["down", "enter"] }]), undefined);
 });
 
 test("an approval is never answered by itself", () => {

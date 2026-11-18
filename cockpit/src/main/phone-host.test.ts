@@ -74,7 +74,7 @@ function setup(t: TestContext, options: { kind?: "local" | "ssh"; saved?: object
   const snapshot = (list: PhoneSession[]) => on.get(channels.phoneSnapshot)!({}, list);
   const settings = () => JSON.parse(readFileSync(join(dir, "phone.json"), "utf8"));
   const action = (what: string, value?: string) => handlers.get(channels.relayAction)!({}, what, value) as Promise<PhoneSettingsView | string>;
-  return { host, deps: host.deps, dir, root, other, outside, snapshot, handlers, sent, scripts, settings, action };
+  return { host, deps: host.deps, dir, root, other, outside, snapshot, on, handlers, sent, scripts, settings, action };
 }
 
 // ---- what a phone may read ----------------------------------------------
@@ -450,6 +450,70 @@ test("a working session with only background work left says its main AI is free,
   assert.equal(free(), undefined, "the word is for a working session only");
   snapshot([session("working")]);
   assert.equal(free(), undefined, "and is read again when work comes back");
+});
+
+test("a question set is read from the record while Claude's question shows, with no tab line needed, and the window types it", async (t) => {
+  let reads = 0;
+  const jsonl = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_1", name: "AskUserQuestion", input: { questions: [
+    { header: "A", question: "Which apple?", options: [{ label: "x" }, { label: "y" }] }, { header: "B", question: "Which bean?", options: [{ label: "z" }, { label: "w" }] }] } }] } });
+  const { deps, snapshot, on, sent } = setup(t, { overrides: {
+    sessionExecutor: new Map([[KEY, "claude"]]),
+    sessions: new Map([[KEY, { state: { kind: "ready" } }]]) as never,
+    machineOf: () => ({ askHooks: async () => [], record: async () => (reads++, jsonl) }) as never,
+  } });
+  const asking = (question: string, id = "aa", askUser = true): PhoneSession =>
+    ({ ...session("waiting"), ...(askUser ? { askUser: true as const } : {}), ask: { id, question, options: [{ n: 1, label: "x" }] } });
+  const form = () => deps.sessions()[0]?.ask?.form;
+  snapshot([asking("Which apple?", "aa", false)]);
+  await new Promise((done) => setTimeout(done, 20));
+  assert.equal(reads, 0, "another menu (a permission prompt, the plan) is not read for");
+  snapshot([asking("Which apple?")]);
+  await until(() => form() !== undefined);
+  assert.equal(form()?.id, "toolu_1");
+  snapshot([asking("Which bean?", "bb")]);
+  assert.equal(form()?.id, "toolu_1", "the next question of the same set");
+  assert.equal(reads, 1, "read once per set");
+
+  // The window types it and says how it went; a set no longer on screen, or answers that do not fit it, are refused here.
+  const typing = deps.answer(KEY, "toolu_1", [{ picks: [1] }, { text: "beans" }]);
+  const [channel, requestId, key, typed] = sent.at(-1)!;
+  assert.deepEqual([channel, key, (typed as { id: string }).id], [channels.phoneAnswer, KEY, "toolu_1"]);
+  on.get(channels.phoneAnswerReply)!({}, requestId, { ok: true });
+  assert.deepEqual(await typing, { ok: true });
+  assert.equal(await deps.answer(KEY, "toolu_0", [{ picks: [1] }, { picks: [0] }]), "stale");
+  assert.equal(await deps.answer(KEY, "toolu_1", [{ picks: [1] }]), "bad");
+
+  snapshot([asking("Which colour?", "cc")]);
+  await until(() => reads === 2);
+  await new Promise((done) => setTimeout(done, 20));
+  assert.equal(form(), undefined, "a record whose set is not the one on screen drives nothing");
+  snapshot([session("working")]);
+  assert.equal(await deps.answer(KEY, "toolu_1", [{ picks: [1] }, { picks: [0] }]), "stale", "the menu went: so did its form");
+});
+
+test("a question set Claude's hook saved for this folder comes first, and its file goes when the menu does", async (t) => {
+  let records = 0;
+  const dropped: string[] = [];
+  const questions = [{ header: "A", question: "Which apple?", options: [{ label: "x" }, { label: "y" }] }];
+  const { deps, snapshot, root } = setup(t, { overrides: {
+    sessionExecutor: new Map([[KEY, "claude"]]),
+    machineOf: () => ({
+      windows: false,
+      askHooks: async () => [
+        { name: "2-1.json", text: JSON.stringify({ cwd: "/elsewhere", tool_name: "AskUserQuestion", tool_use_id: "toolu_far", tool_input: { questions } }) },
+        { name: "1-1.json", text: JSON.stringify({ cwd: root, tool_name: "AskUserQuestion", tool_use_id: "toolu_hook", tool_input: { questions } }) },
+      ],
+      dropAskHook: async (name: string) => void dropped.push(name),
+      record: async () => (records++, ""),
+    }) as never,
+  } });
+  const form = () => deps.sessions()[0]?.ask?.form;
+  snapshot([{ ...session("waiting"), askUser: true, ask: { id: "aa", question: "Which apple?", options: [{ n: 1, label: "x" }] } }]);
+  await until(() => form() !== undefined);
+  assert.equal(form()?.id, "toolu_hook", "the one asked in this session's folder");
+  assert.equal(records, 0, "the record is not read");
+  snapshot([session("working")]);
+  assert.deepEqual(dropped, ["1-1.json"]);
 });
 
 // ---- pushes -------------------------------------------------------------

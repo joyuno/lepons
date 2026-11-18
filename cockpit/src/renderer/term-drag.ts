@@ -14,17 +14,18 @@ export function dragLeavesScreen(tracking: string, y: number, top: number, botto
 }
 
 /**
- * Where a handed-over drag is reported, held above the last row. That row is
- * tmux's status line: a drag there neither scrolls, nor copies when it ends
- * there. The row above is where tmux keeps scrolling down.
+ * Where a handed-over drag is reported, held above the last `statusRows` rows.
+ * Those are tmux's status line: a drag there neither scrolls, nor copies when
+ * it ends there. The row above is where tmux keeps scrolling down. Lepons' own
+ * tmux sessions turn the status line off (0); a program off tmux keeps the
+ * one-row margin it always had.
  *
- * ponytail: assumes tmux's default one-line status at the bottom. With `status
- * off` the edge stops scrolling down (the wheel still does); with
- * `status-position top`, releasing above the screen would not copy. Ask tmux
- * for its layout if an operator's configuration ever needs it.
+ * ponytail: assumes a status line, when there is one, is one row at the
+ * bottom; with `status-position top`, releasing above the screen would not
+ * copy. Ask tmux for its layout if an operator's configuration ever needs it.
  */
-export function reportedY(y: number, top: number, bottom: number, rows: number): number {
-  return Math.min(y, bottom - (bottom - top) / rows - 1);
+export function reportedY(y: number, top: number, bottom: number, rows: number, statusRows = 1): number {
+  return Math.min(y, bottom - (statusRows * (bottom - top)) / rows - 1);
 }
 
 /**

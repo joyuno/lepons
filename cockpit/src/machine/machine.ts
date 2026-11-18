@@ -1,11 +1,12 @@
 import { exec } from "node:child_process";
-import { copyFile, cp, lstat, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
 import { listLocalDirectory } from "../browse/local.ts";
 import { checkExecutor, localProbe, runDelegatedTask } from "../agent/delegate.ts";
 import type { AgentKind } from "../agent/agents.ts";
+import { askHookDir } from "../agent/usage.ts";
 import { removeScript, transferScript } from "../browse/entry-ops.ts";
 import type { BrowseResult } from "../browse/types.ts";
 import { localStore, withRemoteStore, type FileStore } from "../main/edit-file.ts";
@@ -16,6 +17,7 @@ import { latestTranscript, latestTranscriptTail, projectSlug, remoteTranscriptTa
 import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
 import { pickOpencodeSession } from "../workflow/opencode.ts";
 import { findScript, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, safePath, stepsInside, viewable, viewableFiles, viewableFindScript, type PhoneFileEntry } from "../phone/docs.ts";
+import { askHookListing, askHookName, askHookScript, type AskHookFile } from "../phone/ask.ts";
 import { commandFrom, commandScript, parseCommandOutput, type CommandSuggestion } from "../phone/suggest.ts";
 import type { ReadResponse } from "../read/envelope.ts";
 import { grepRemote, type GrepResult } from "../read/grep.ts";
@@ -113,6 +115,10 @@ export interface Machine {
    * by reading it, so it has none.
    */
   recordStamp(format: RecordFormat, folder: string): Promise<string | undefined>;
+  /** The newest few question sets Claude's hook saved here (phone/ask.ts hookForm), newest first. Empty when none or unreachable. */
+  askHooks(): Promise<AskHookFile[]>;
+  /** Removes one of those, by its name. */
+  dropAskHook(name: string): Promise<void>;
   /** The folder's past conversations of either agent, newest first; null when the machine cannot be asked. */
   past(folder: string, label: string): Promise<PastConversation[] | null>;
   /** Which of these sessions are sure to have no AI left. Empty when the machine cannot be asked. */
@@ -250,6 +256,16 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
         return session && `${session.id}:${session.updated}`;
       }
       return format === "claude" ? transcriptStamp(folder) : undefined;
+    },
+    askHooks: async () => {
+      const dir = join(homedir(), ...askHookDir.split("/"));
+      const names = (await readdir(dir).catch(() => [])).filter((name) => askHookName.test(name));
+      const dated = await Promise.all(names.map(async (name) => ({ name, at: (await stat(join(dir, name)).catch(() => undefined))?.mtimeMs ?? 0 })));
+      const newest = dated.sort((a, b) => b.at - a.at).slice(0, 5);
+      return Promise.all(newest.map(async ({ name }) => ({ name, text: await readFile(join(dir, name), "utf8").catch(() => "") })));
+    },
+    dropAskHook: async (name) => {
+      if (askHookName.test(name)) await rm(join(homedir(), ...askHookDir.split("/"), name), { force: true });
     },
     past: localPast,
     agentsGone: (probes) => shellsAlone(probes),
@@ -439,6 +455,10 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       if (format !== "claude" || node.home === "") return undefined;
       const script = probeCommand(`${node.home}/.claude/projects/${projectSlug(folder)}`);
       return ((await pooled(script)) ?? (await reach.runRemote(options(), script)))?.trim() || undefined;
+    },
+    askHooks: async () => askHookListing((await pooled(askHookScript)) ?? (await reach.runRemote(options(), askHookScript)) ?? ""),
+    dropAskHook: async (name) => {
+      if (askHookName.test(name)) await reach.runRemote(options(), `rm -f ~/${askHookDir}/${name}`);
     },
     past: async (folder, label) => {
       const [claude, codex] = await Promise.all([

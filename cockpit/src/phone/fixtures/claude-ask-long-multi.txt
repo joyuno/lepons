@@ -1,0 +1,40 @@
+ ▐▛███▛█   Claude Code v2.1.327
+▝▜██████▀  Haiku 5.5 · Claude Max
+ ▝▝   ▝▝   C:\work\demo
+
+
+❯ Call the AskUserQuestion tool exactly once with two questions. Question 1: header Fruits,         
+  multiSelect true, question text: Which fruits should go into the smoothie this morning? Pick      
+  every fruit you would actually enjoy drinking, keeping in mind that some of them are sour and     
+  some are quite sweet, and that the blender is small. Options Apple, Banana, Mango, each with a    
+  one-sentence description. Question 2: header Size, single select, question: Which size? Options   
+  Small and Large with short descriptions.                                                          
+────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Fruits  ☐ Size  ✔ Submit  →
+
+│ Which fruits should go into the smoothie this morning? Pick every fruit you would actually enjoy  
+│ drinking, keeping in mind that some of them are sour and some are quite sweet, and that the 
+│ blender is small.
+
+❯ 1. [ ] Apple
+         Crisp and mildly tart, a clean base that blends smoothly.
+  2. [ ] Banana
+         Very sweet and creamy, it thickens the smoothie and softens the tartness of other fruit.
+  3. [ ] Mango
+         Sweet and tropical, with a thick texture that works well in a small blender.
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+

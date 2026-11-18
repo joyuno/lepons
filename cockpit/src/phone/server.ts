@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
+import type { PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
 import type { PcState } from "../shared/status.ts";
+import { answersOf } from "./answer.ts";
 import { passwordMatches, type PhoneAuth } from "./auth.ts";
 import type { CommandSuggestion } from "./suggest.ts";
 import type { AccountState, PhoneEvent, PhoneEvents, PhoneFailure, PhoneRoute, PhoneScreen, PhoneSessionView, PhonePc, PhoneState, PhoneUsage, PhoneUsageWindow, QueryName, ReplyOf, Unproven } from "./contract.ts";
@@ -94,6 +95,8 @@ export interface PhoneDeps {
    * session is not open to take it.
    */
   write(key: string, pieces: string[]): boolean;
+  /** Has the PC type a whole question set's answers (phone/answer.ts): "stale" when `form` is not the set on screen, "bad" when the answers do not fit it. */
+  answer(key: string, form: string, answers: PhoneAnswer[]): Promise<PhoneAnswerResult | "stale" | "bad">;
   /** The session's workflow, as the desktop's workflow view reads it. */
   workflow(key: string): Promise<SessionWorkflowResult>;
   /** The .md files in the session's folder, relative to it. */
@@ -238,6 +241,7 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         mood: session.mood,
         ...(session.agentGone ? { agentGone: true } : {}),
         ...(session.preview === undefined ? {} : { preview: session.preview }),
+        ...(session.ask ? { ask: session.ask } : {}),
         agent: deps.isAgent(session.key),
         ...(session.pane ? { pane: session.pane } : {}),
         ...(session.steps?.length ? { steps: session.steps } : {}),
@@ -556,6 +560,23 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       const written = deps.write(key, pieces);
       if (written) liveInput(key);
       return written ? ok(at, { ok: true }) : fail(409, "closed");
+    }
+
+    // A whole question set at once: only to an agent, as input is, and only its answers' shape; the PC holds them to the form.
+    if (at === "POST /api/answer") {
+      if (body === "bad") return fail(400, "body");
+      const fields = (body ?? {}) as Unproven<typeof at>;
+      const key = keyFor(fields.s);
+      if (key === undefined) return fail(404, "session");
+      const session = deps.sessions().find((one) => one.key === key);
+      if (!deps.isAgent(key) || session?.terminal || session?.agentGone) return fail(403, "not agent");
+      const answers = answersOf(fields.answers);
+      if (typeof fields.form !== "string" || !/^[\w-]{1,100}$/.test(fields.form) || !answers) return fail(400, "answers");
+      const result = await deps.answer(key, fields.form, answers);
+      if (result === "stale") return fail(409, "stale");
+      if (result === "bad") return fail(400, "answers");
+      liveInput(key);
+      return ok(at, result);
     }
 
     // Every route is served above but the stream, which is the bridge's.

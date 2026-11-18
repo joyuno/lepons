@@ -78,7 +78,7 @@ test("Markdown into blocks the page draws with textContent", () => {
     { type: "h", text: "원인" },
     { type: "p", text: "The check compared **seconds** to `ms`." },
     { type: "list", ordered: false, items: ["fixed `auth.ts`", "added a test that covers expiry"] },
-    { type: "list", ordered: true, items: ["run tests", "ship"] },
+    { type: "list", ordered: true, items: ["run tests", "ship"], start: 1 },
     { type: "code", text: "if (now - created > TTL) {" },
     { type: "quote", text: "quoted <script>alert(1)</script>" },
   ]);
@@ -87,4 +87,11 @@ test("Markdown into blocks the page draws with textContent", () => {
   ]);
   // An unclosed fence keeps the rest as code rather than losing it.
   assert.deepEqual(markdownBlocks("```\nline"), [{ type: "code", text: "line" }]);
+});
+
+test("a numbered list broken up by a nested bullet or a description keeps its own numbers, not 1. each time", () => {
+  const blocks = markdownBlocks(["1. Fast", "   - ships Thursday", "2. Safe", "Rollback ready.", "", "3. Later"].join("\n"));
+  assert.deepEqual(blocks.filter((block) => block.type === "list" && block.ordered).map((block) => block.type === "list" && [block.start, block.items]), [
+    [1, ["Fast"]], [2, ["Safe"]], [3, ["Later"]],
+  ]);
 });

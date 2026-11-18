@@ -154,7 +154,7 @@ function Markdown({ text }: { text: string }) {
               {part.type === "list" ? part.items.map((item, n) => (
                 <Fragment key={n}>
                   {n > 0 ? "\n" : null}
-                  <Text style={{ color: p.muted }}>{part.ordered ? `${n + 1}. ` : "•  "}</Text>
+                  <Text style={{ color: p.muted }}>{part.ordered ? `${(part.start ?? 1) + n}. ` : "•  "}</Text>
                   {inline(item)}
                 </Fragment>
               ))

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { PhoneSessionView } from "./types.ts";
-import { screenSig, widgetSnapshot } from "./widget-snapshot.ts";
+import { answered, marked, screenSig, stillAsking, widgetSnapshot } from "./widget-snapshot.ts";
 
 const words = { waiting: "대기", working: "작업", done: "완료", open: "열기", more: "외 {n}개", asks: "답을 기다려요", empty: "없음", failed: "실패", changed: "바뀜", moods: {} };
 const session = (id: string, mood: PhoneSessionView["mood"], extra: Partial<PhoneSessionView> = {}): PhoneSessionView =>
@@ -57,4 +57,42 @@ test("a one-pick menu becomes buttons with the screen's fingerprint, its typing 
   assert.match(plain.sig!, /^[0-9a-f]{64}$/);
   assert.deepEqual(snap.asks.find((ask) => ask.id === "t")!.choices?.map((choice) => choice.n), [1, 2, 4], "Claude's question, without its typing row");
   assert.equal(snap.asks.find((ask) => ask.id === "x")!.choices, undefined, "a multi-select stays in the app");
+});
+
+test("the PC's ask, when it sends one, gives the choices, the question and the fingerprint; the preview is only its line", () => {
+  const ask = {
+    id: "0a1b2c3d", question: "Which size? Pick the one that fits the blender.",
+    options: [{ n: 1, label: "Small" }, { n: 2, label: "Large" }, { n: 3, label: "Type something.", freeText: true as const }, { n: 4, label: "Chat about this" }],
+  };
+  const snap = widgetSnapshot("PC", [session("a", "waiting", { preview: "✻ Waiting", ask })], words, String, 0);
+  assert.deepEqual(snap.asks[0]!.choices?.map((choice) => choice.n), [1, 2, 4]);
+  assert.equal(snap.asks[0]!.question, ask.question);
+  assert.equal(snap.asks[0]!.sig, "0a1b2c3d");
+  const picker = { id: "ff", options: [{ n: 1, label: "No, exit", keys: ["enter"] }, { n: 2, label: "Yes, I trust this folder", keys: ["down", "enter"] }] };
+  const ticks = { id: "ee", options: [{ n: 1, label: "Apple", checked: false }, { n: 2, label: "Pear", checked: true }] };
+  const more = widgetSnapshot("PC", [session("p", "waiting", { ask: picker }), session("t", "waiting", { ask: ticks })], words, String, 0);
+  assert.ok(more.asks.every((one) => one.choices === undefined && one.sig === undefined), "arrows and ticks stay in the app");
+});
+
+const GO = ["Go?", "1. Yes", "2. No"].join("\n");
+
+test("a widget tap answers only while the PC still waits on the same question", () => {
+  const ask = { id: "ask-1", question: "Go?", options: [{ n: 1, label: "Yes" }, { n: 2, label: "No" }] } as PhoneSessionView["ask"];
+  const sessions = [session("a", "waiting", { ask }), session("b", "waiting", { preview: GO }), session("c", "working", { ask })];
+  assert.equal(stillAsking(sessions, "a", "ask-1"), true);
+  assert.equal(stillAsking(sessions, "a", "ask-0"), false, "another question came up");
+  assert.equal(stillAsking(sessions, "b", screenSig(GO)), true, "an older PC: the same screen");
+  assert.equal(stillAsking(sessions, "b", screenSig("Go?")), false);
+  assert.equal(stillAsking(sessions, "c", "ask-1"), false, "no longer waiting");
+  assert.equal(stillAsking(sessions, "gone", "ask-1"), false);
+});
+
+test("an answered question leaves the widget and its session counts as working; a failed one is marked", () => {
+  const snap = widgetSnapshot("PC", [session("a", "waiting", { preview: GO }), session("b", "waiting")], { ...words, moods: { working: "일하는 중" } }, String, 0);
+  const next = answered(snap, "a");
+  assert.deepEqual(next.asks.map((a) => a.id), ["b"]);
+  assert.deepEqual([next.waiting, next.working], [1, 1]);
+  assert.deepEqual(next.rows.find((row) => row.id === "a"), { ...snap.rows.find((row) => row.id === "a")!, mood: "working", label: "일하는 중" });
+  assert.equal(answered(next, "a"), next, "twice is once");
+  assert.equal(marked(snap, "b", "changed").asks.find((a) => a.id === "b")!.status, "changed");
 });

@@ -18,7 +18,7 @@ import { firstDrawn, sameRow, stillAtBottom, type Flow } from "@/phone/chat-rows
 import { LinkNotice } from "@/link-notice";
 import { fetchFile, openInViewer, openPrinted } from "@/open-file";
 import { findPaths } from "../../../../cockpit/src/shared/term-paths.ts";
-import { composerAction, menuKeys, menuQuestion } from "@/phone/composer";
+import { composerAction, formAnswered, formAnswers, menuKeys, type FormAnswer } from "@/phone/composer";
 import { documentKind } from "@/phone/document-kind";
 import { inputFor, MAX_INPUT, reflow } from "@/phone/copied";
 import { navigate } from "@/phone/file-history";
@@ -29,7 +29,7 @@ import { isFresh } from "@/phone/motion";
 import { CHAT_PAGE, chatKeys, flowPoller, PC_WINDOW, recentChat } from "@/phone/recent-chat";
 import { toolDoing, toolLabels } from "@/phone/tool-labels";
 import { replyBlocks, replyRuns, typedEvents } from "@/phone/reply";
-import { menuFrom, menuTabs, type MenuOption, type MenuTab } from "@/phone/menu";
+import { menuFrom, menuQuestion, menuTabs, type MenuOption, type MenuTab } from "@/phone/menu";
 import { statusFrom } from "@/phone/status";
 import { termLines, type TermRun } from "@/phone/term-lines";
 import { playSend, prepareSend } from "@/sound";
@@ -289,7 +289,12 @@ export default function SessionScreen() {
         {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} /></PathOpen.Provider> : null}
         {sub === "term" ? <TerminalView key={id} id={id} /> : null}
         {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} list={list} request={c.request} /> : null}
-        {sub === "chat" && session ? <Composer key={`composer-${id}`} id={id} session={session} menu={menu} tabs={tabs} question={question} list={list} after={flow?.events.at(-1)?.at ?? 0} onSent={askSoon} /> : null}
+        {/* The menu as the PC read it, when it sends one (cockpit/src/phone/ask.ts); this phone's own reading of the screen otherwise. */}
+        {sub === "chat" && session ? (
+          <Composer key={`composer-${id}`} id={id} session={session}
+            menu={session.ask ? session.ask.options : menu} tabs={session.ask ? session.ask.tabs : tabs} question={session.ask ? session.ask.question : question} tab={session.ask?.tab}
+            list={list} after={flow?.events.at(-1)?.at ?? 0} onSent={askSoon} />
+        ) : null}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -527,7 +532,7 @@ function FlowText({ blocks, body }: { blocks: Block[]; body: object[] }) {
           {block.type === "list" ? block.items.map((text, j) => (
             <Fragment key={j}>
               {j > 0 ? "\n" : null}
-              <Text style={{ color: p.muted }}>{block.ordered ? `${j + 1}. ` : "•  "}</Text>
+              <Text style={{ color: p.muted }}>{block.ordered ? `${(block.start ?? 1) + j}. ` : "•  "}</Text>
               <Runs text={text} />
             </Fragment>
           ))
@@ -599,7 +604,7 @@ function ReplyBlock({ block, body }: { block: Block; body: object[] }) {
       <View style={{ gap: space.xs }}>
         {block.items.map((text, j) => (
           <View key={j} style={{ flexDirection: "row", gap: space.sm }}>
-            <Text style={[body, { color: p.muted }]}>{block.ordered ? `${j + 1}.` : "•"}</Text>
+            <Text style={[body, { color: p.muted }]}>{block.ordered ? `${(block.start ?? 1) + j}.` : "•"}</Text>
             <Inline text={text} style={[body, { flex: 1 }]} />
           </View>
         ))}
@@ -988,7 +993,200 @@ function refusedHere(body: { key: string } | { text: string }): string | undefin
  * 보내기 -- or 멈추기 (Esc) while the agent works and nothing is typed. Only
  * the keys and text inputFor allows: no Ctrl+C, no /exit, no "!".
  */
-function Composer({ id, session, menu, tabs, question, list, after, onSent }: { id: string; session: PhoneSessionView; menu: MenuOption[]; tabs: MenuTab[] | undefined; question: string | undefined; list: ReturnType<typeof folderLister>; after: number; onSent(): void }) {
+/** A swiped strip's edge with more past it: three slices of the card's colour, fainter inwards, over the last tab there. No gradient library. */
+function StripEdge({ side, color }: { side: "left" | "right"; color: string }) {
+  const slices = [0.85, 0.55, 0.25];
+  return (
+    <View pointerEvents="none" style={{ position: "absolute", top: 0, bottom: 0, [side]: 0, flexDirection: side === "left" ? "row" : "row-reverse" }}>
+      {slices.map((opacity) => <View key={opacity} style={{ width: 6, backgroundColor: color, opacity }} />)}
+    </View>
+  );
+}
+
+/**
+ * Several questions' titles ("←  ☒ Color  ☐ Size  ✔ Submit  →"), swiped sideways between the card's arrows: the one
+ * shown is scrolled into view, the answered ones are marked, and an edge dims while more titles are past it.
+ */
+function TabStrip({ tabs, here, go }: { tabs: ReadonlyArray<{ label: string; done: boolean }>; here: number; go(i: number): void }) {
+  const { c: p, s } = useSessionTheme();
+  const tabsKey = tabs.map((tab) => tab.label).join("\u0000");
+  // Each tab's place in the strip, its own width and how far the strip is scrolled.
+  const strip = useRef<ScrollViewInstance>(null);
+  const tabBoxes = useRef<Array<{ x: number; width: number }>>([]);
+  const [stripBox, setStripBox] = useState({ width: 0, content: 0, x: 0 });
+  useEffect(() => {
+    const box = tabBoxes.current[here];
+    if (!box || stripBox.width === 0) return;
+    const most = Math.max(0, stripBox.content - stripBox.width);
+    strip.current?.scrollTo({ x: Math.min(most, Math.max(0, box.x - (stripBox.width - box.width) / 2)), animated: true });
+  }, [here, tabsKey, stripBox.width, stripBox.content]);
+  return (
+    <View style={{ flex: 1 }}>
+      <ScrollView ref={strip} horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ gap: space.xs, alignItems: "center" }}
+        scrollEventThrottle={32}
+        onLayout={(event) => setStripBox((box) => ({ ...box, width: event.nativeEvent.layout.width }))}
+        onContentSizeChange={(width) => setStripBox((box) => ({ ...box, content: width }))}
+        onScroll={(event) => {
+          const x = event.nativeEvent.contentOffset.x;
+          setStripBox((box) => (Math.abs(box.x - x) < 1 ? box : { ...box, x }));
+        }}>
+        {tabs.map((one, i) => {
+          const shown = i === here;
+          return (
+            <Pressable
+              key={i}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: shown }}
+              disabled={shown}
+              onLayout={(event) => {
+                const { x, width } = event.nativeEvent.layout;
+                tabBoxes.current[i] = { x, width };
+              }}
+              onPress={() => go(i)}
+              style={({ pressed }) => ({
+                height: 26, justifyContent: "center", paddingHorizontal: space.sm, borderRadius: radius.sm, borderCurve: "continuous",
+                borderWidth: 1, borderColor: shown ? p.link : "transparent", backgroundColor: shown ? p.raise : "transparent", opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <Text numberOfLines={1} style={[s.text, shown && font.semibold, { maxWidth: 140, fontSize: size.caption, color: shown ? p.text : one.done ? p.go : p.muted }]}>
+                {`${one.done ? "✓ " : ""}${i === tabs.length - 1 && /^submit$/i.test(one.label) ? t.menuSubmitTab : one.label}`}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+      {/* More titles past an edge: that edge dims, in the card's own colour, only while the strip has more there. */}
+      {stripBox.x > 1 ? <StripEdge side="left" color={p.card} /> : null}
+      {stripBox.x + stripBox.width < stripBox.content - 1 ? <StripEdge side="right" color={p.card} /> : null}
+    </View>
+  );
+}
+
+type AskFormData = NonNullable<NonNullable<PhoneSessionView["ask"]>["form"]>;
+
+/**
+ * A whole AskUserQuestion set (cockpit/src/phone/ask.ts askForm), answered here: the titles and ‹ › move between
+ * questions on the phone alone, nothing is sent; 보내기 sends every answer at once (POST /api/answer), and the PC
+ * types them into its terminal, each key once its screen took the one before, then presses Submit.
+ * `onBusy`: the set while it is on its way, so the card stays while the PC's screen changes under it.
+ */
+function AskForm({ form, session, onBusy, onSent, onOldPc }: {
+  form: AskFormData;
+  session: string;
+  onBusy(form: AskFormData | undefined): void;
+  onSent(): void;
+  /** The PC answered 404: one older than the route, typed into question by question instead. */
+  onOldPc(): void;
+}) {
+  const c = useConnection();
+  const { c: p, s } = useSessionTheme();
+  const { height: windowHeight } = useWindowDimensions();
+  const [answers, setAnswers] = useState<Array<FormAnswer | undefined>>([]);
+  const [at, setAt] = useState(0);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const here = Math.min(at, form.questions.length - 1);
+  const question = form.questions[here]!;
+  const answer = answers[here];
+  const setAnswer = (next: FormAnswer) => setAnswers((all) => {
+    const copy = [...all];
+    copy[here] = next;
+    return copy;
+  });
+  const left = form.questions.filter((_, i) => !formAnswered(answers[i])).length;
+  const go = (to: number) => setAt(Math.max(0, Math.min(to, form.questions.length - 1)));
+  const choose = (i: number) => {
+    const picks = answer?.picks ?? [];
+    if (question.multiSelect) return setAnswer({ picks: picks.includes(i) ? picks.filter((one) => one !== i) : [...picks, i].sort((a, b) => a - b) });
+    setAnswer({ picks: [i] });
+    // As Claude does: one pick, and on to the next question.
+    go(here + 1);
+  };
+  const submit = async () => {
+    if (busy || left > 0) return;
+    setBusy(true);
+    onBusy(form);
+    setNote("");
+    try {
+      // The PC waits for its screen at every key: a few seconds for four questions, longer over a slow SSH link.
+      const reply = await c.request("POST", "/api/answer", { body: { s: session, form: form.id, answers: formAnswers(form.questions.length, answers) }, timeoutMs: 60_000 });
+      const result = typeof reply.body === "object" && reply.body !== null ? (reply.body as { ok?: unknown; step?: unknown }) : {};
+      if (reply.status === 200 && result.ok === true) return onSent();
+      if (reply.status === 404 && (reply.body as { error?: unknown } | undefined)?.error === "not found") return onOldPc();
+      setNote(reply.status === 409 ? t.formStale
+        : reply.status === 200 && typeof result.step === "number" ? (result.step >= form.questions.length ? t.formStoppedSubmit : t.formStopped.replace("{n}", String(result.step + 1)))
+        : t.errorInput);
+    } catch {
+      setNote(t.errorInput);
+    } finally {
+      setBusy(false);
+      onBusy(undefined);
+    }
+  };
+  const sep = { borderTopWidth: 1, borderTopColor: p.line } as const;
+  const arrow = (by: number) => (
+    <Pressable accessibilityRole="button" accessibilityLabel={by < 0 ? t.menuPrev : t.menuNext} onPress={() => go(here + by)} hitSlop={6}
+      style={({ pressed }) => ({ width: 36, height: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, opacity: pressed ? 0.5 : 1 })}>
+      <SymbolView name={by < 0 ? { ios: "chevron.left", android: "chevron_left" } : { ios: "chevron.right", android: "chevron_right" }} tintColor={p.link} size={16} />
+    </Pressable>
+  );
+  const typing = !question.multiSelect && answer?.text !== undefined;
+  // A single-select's picks look round, a multi-select's ticks square; the "직접 입력" row is a single-select's only.
+  const row = (key: string, on: boolean, mark: string, label: string, detail: string | undefined, onPress: () => void) => (
+    <Pressable key={key} accessibilityRole={question.multiSelect ? "checkbox" : "radio"} accessibilityState={question.multiSelect ? { checked: on } : { selected: on }}
+      disabled={busy} onPress={onPress}
+      style={({ pressed }) => [{ flexDirection: "row", gap: space.md, alignItems: "center", minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.md }, pressed && { backgroundColor: p.raise }]}>
+      <View style={{ width: 24, height: 24, borderRadius: question.multiSelect ? radius.xs + space.xxs : 12, borderCurve: "continuous", backgroundColor: on ? p.link : p.raise, alignItems: "center", justifyContent: "center" }}>
+        <Text style={{ ...font.semibold, fontFamily: mono, color: on ? p.bg : p.text, fontSize: size.caption, fontVariant: ["tabular-nums"] }}>{on ? "✓" : mark}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[s.text, { fontSize: size.callout, lineHeight: 22 }]}>{label}</Text>
+        {detail && detail !== label ? <Text style={[s.dim, { fontSize: size.caption }]} numberOfLines={2}>{detail}</Text> : null}
+      </View>
+    </Pressable>
+  );
+  return (
+    <View style={{ flexShrink: 1, minHeight: 0, paddingHorizontal: space.xl, paddingBottom: space.md }}>
+      <View style={[s.card, { flexShrink: 1, minHeight: 0, padding: 0, gap: 0, overflow: "hidden" }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: space.xs, paddingVertical: space.xs }}>
+          {arrow(-1)}
+          <TabStrip tabs={form.questions.map((one, i) => ({ label: one.header, done: formAnswered(answers[i]) }))} here={here} go={go} />
+          {arrow(1)}
+        </View>
+        <ScrollView style={[sep, { maxHeight: Math.round(windowHeight * 0.45), flexShrink: 1 }]} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+          <Text style={[s.text, font.semibold, { paddingHorizontal: space.lg, paddingTop: space.md, paddingBottom: space.sm }]}>{question.question}</Text>
+          {question.options.map((option, i) => row(String(i), answer?.picks.includes(i) ?? false, String(i + 1), option.label, option.description, () => choose(i)))}
+          {question.multiSelect ? null : row("text", typing, String(question.options.length + 1), `✎ ${t.freeText}`, undefined, () => setAnswer({ picks: [], text: answer?.text ?? "" }))}
+          {typing ? (
+            <TextInput
+              style={[s.input, { minHeight: 44, marginHorizontal: space.lg, marginBottom: space.md, borderRadius: radius.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, fontSize: size.callout }]}
+              value={answer?.text ?? ""}
+              onChangeText={(text) => setAnswer({ picks: [], text })}
+              placeholder={t.freeTextHint}
+              placeholderTextColor={p.muted}
+              maxLength={MAX_INPUT}
+              autoFocus
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!busy}
+            />
+          ) : null}
+        </ScrollView>
+        <View style={[sep, { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 52, paddingHorizontal: space.lg, paddingVertical: space.sm }]}>
+          <Text style={[s.dim, { flex: 1, fontSize: size.caption, color: note ? p.stop : p.muted }]} accessibilityLiveRegion="polite">
+            {note || (busy ? t.formSending : left > 0 ? t.formLeft.replace("{n}", String(left)) : "")}
+          </Text>
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: left > 0 || busy, busy }} disabled={left > 0 || busy} onPress={() => void submit()}
+            style={({ pressed }) => ({ minHeight: 36, minWidth: 72, paddingHorizontal: space.lg, borderRadius: radius.lg, borderCurve: "continuous", backgroundColor: p.ink, alignItems: "center", justifyContent: "center", opacity: left > 0 ? 0.4 : pressed || busy ? 0.7 : 1 })}>
+            {busy ? <ActivityIndicator size="small" color={p.onInk} accessibilityLabel={t.loading} /> : <Text style={[font.semibold, { color: p.onInk, fontSize: size.callout }]}>{t.send}</Text>}
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function Composer({ id, session, menu, tabs, question, tab, list, after, onSent }: { id: string; session: PhoneSessionView; menu: MenuOption[]; tabs: MenuTab[] | undefined; question: string | undefined; tab?: number; list: ReturnType<typeof folderLister>; after: number; onSent(): void }) {
   const c = useConnection();
   const { c: p, s } = useSessionTheme();
   const [text, setText] = useState(() => sends.box(id));
@@ -1007,8 +1205,8 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
   const menuKey = menu.map((option) => option.label).join("|");
   useEffect(() => setFolded(false), [menuKey, question]);
   const multi = menu.some((option) => option.checked !== undefined);
-  // Which of several questions is on screen. The screen's text does not mark it (Claude only colours its tab), so it is
-  // followed here: the first unanswered when they come up, the review once its "Submit answers" shows, and moved by
+  // Which of several questions is on screen: `tab`, when the PC could read it off its terminal's colours. Otherwise it
+  // is followed here: the first unanswered when they come up, the review once its "Submit answers" shows, and moved by
   // every step taken from the phone. A miss only lands on a neighbouring question, whose text then shows.
   const tabsKey = tabs?.map((tab) => tab.label).join("\u0000") ?? "";
   const [tabAt, setTabAtState] = useState(0);
@@ -1020,6 +1218,15 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
   useEffect(() => {
     if (reviewing && tabs) setTabAtState(tabs.length - 1);
   }, [reviewing, tabsKey]);
+  const here = tab ?? tabAt;
+  // A whole question set the PC read from Claude's record: answered here and sent once (AskForm), the only card
+  // while it is on screen. Kept while on its way (the screen under it changes as the PC types); once typed, neither
+  // card shows that set again, so its review never lingers on the phone after the PC submitted it.
+  const [sendingForm, setSendingForm] = useState<NonNullable<PhoneSessionView["ask"]>["form"]>();
+  const [sentForm, setSentForm] = useState<string>();
+  const [oldPcForm, setOldPcForm] = useState<string>();
+  const form = sendingForm ?? (session.ask?.form?.id === oldPcForm ? undefined : session.ask?.form);
+  const formDone = form !== undefined && form.id === sentForm;
   /** Moves `by` questions: Tab forward; back, Left in Claude's ("Tab/Arrow keys to navigate"), Shift+Tab in OpenCode's. */
   const step = async (by: number) => {
     const back = session.agentName === "OpenCode" ? "backtab" : "left";
@@ -1241,7 +1448,7 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
   const face = { flex: 1, borderRadius: 22, alignItems: "center", justifyContent: "center" } as const;
   const sep = { borderTopWidth: 1, borderTopColor: p.line } as const;
   // Back to the question before, to change its answer; or on (Tab: also what takes a multi-select's ticks on). Never
-  // greyed out: where the PC is, is the phone's guess (tabAt), and Left on the first question does nothing anyway.
+  // greyed out: where the PC is may be the phone's guess (tabAt), and Left on the first question does nothing anyway.
   const arrow = (back: boolean) => (
     <Pressable accessibilityRole="button" accessibilityLabel={back ? t.menuPrev : t.menuNext}
       onPress={() => void step(back ? -1 : 1)} hitSlop={6}
@@ -1253,7 +1460,9 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
     // The menu gives way first when the keyboard leaves little room: its choices scroll in what is left, and the
     // question, the way between questions and the text field stay in view.
     <View style={{ flexShrink: 1 }}>
-      {answerable && options.length > 0 ? (
+      {formDone ? null : answerable && form ? (
+        <AskForm key={form.id} form={form} session={id} onBusy={setSendingForm} onSent={() => setSentForm(form.id)} onOldPc={() => setOldPcForm(form.id)} />
+      ) : answerable && options.length > 0 ? (
         <View style={{ flexShrink: 1, minHeight: 0, paddingHorizontal: space.xl, paddingBottom: space.md }}>
           <View style={[s.card, { flexShrink: 1, minHeight: 0, padding: 0, gap: 0, overflow: "hidden" }]}>
             {/* The question is the fold: folded, one line stays and the chat above can be read and scrolled. */}
@@ -1264,37 +1473,18 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
               onPress={() => setFolded((was) => !was)}
               style={({ pressed }) => [{ flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.md }, pressed && { backgroundColor: p.raise }]}
             >
-              <Text style={[s.text, font.semibold, { flex: 1 }]} numberOfLines={folded ? 1 : 3}>{question ?? t.menuAsks}</Text>
+              <Text style={[s.text, font.semibold, { flex: 1 }]} numberOfLines={folded ? 1 : 4}>{question ?? t.menuAsks}</Text>
               <Text style={[s.dim, { fontSize: size.caption }]}>{folded ? t.menuShow.replace("{n}", String(options.length)) : t.menuHide}</Text>
               <SymbolView name={folded ? { ios: "chevron.up", android: "expand_less" } : { ios: "chevron.down", android: "expand_more" }} tintColor={p.muted} size={16} />
             </Pressable>
-            {!folded && tabs && !typingAnswer ? (
+            {!folded && (tabs || multi) && !typingAnswer ? (
               // One of several questions, as Claude draws them ("←  ☒ Color  ☐ Size  ✔ Submit  →"): the arrows go to the one
-              // before or after, a tab goes to that one, and the one on screen and the answered ones are marked.
+              // before or after, a tab goes to that one, and the one on screen and the answered ones are marked. The tabs
+              // swipe sideways between the arrows. A multi-select whose tab line was not read gets the arrows alone, here
+              // too: ticking does not move on, › (Tab) takes the ticks on, ‹ goes back if there is a before.
               <View style={[sep, { flexDirection: "row", alignItems: "center", paddingHorizontal: space.xs, paddingVertical: space.xs }]}>
                 {arrow(true)}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" style={{ flex: 1 }} contentContainerStyle={{ gap: space.xs, alignItems: "center" }}>
-                  {tabs.map((tab, i) => {
-                    const here = i === tabAt;
-                    return (
-                      <Pressable
-                        key={i}
-                        accessibilityRole="tab"
-                        accessibilityState={{ selected: here }}
-                        disabled={here}
-                        onPress={() => void step(i - tabAt)}
-                        style={({ pressed }) => ({
-                          height: 26, justifyContent: "center", paddingHorizontal: space.sm, borderRadius: radius.sm, borderCurve: "continuous",
-                          borderWidth: 1, borderColor: here ? p.link : "transparent", backgroundColor: here ? p.raise : "transparent", opacity: pressed ? 0.6 : 1,
-                        })}
-                      >
-                        <Text numberOfLines={1} style={[s.text, here && font.semibold, { fontSize: size.caption, color: here ? p.text : tab.done ? p.go : p.muted }]}>
-                          {`${tab.done ? "✓ " : ""}${i === tabs.length - 1 && /^submit$/i.test(tab.label) ? t.menuSubmitTab : tab.label}`}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </ScrollView>
+                {tabs ? <TabStrip tabs={tabs} here={here} go={(i) => void step(i - here)} /> : <View style={{ flex: 1 }} />}
                 {arrow(false)}
               </View>
             ) : null}
@@ -1335,14 +1525,6 @@ function Composer({ id, session, menu, tabs, question, list, after, onSent }: { 
             ))}
             </ScrollView>
             )}
-            {!folded && multi && !tabs && !typingAnswer ? (
-              // A lone multi-select: ticking does not move on, Tab takes the ticks on.
-              <Pressable accessibilityRole="button" onPress={() => void step(1)}
-                style={({ pressed }) => [sep, { flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: space.xs, minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.sm }, pressed && { backgroundColor: p.raise }]}>
-                <Text style={[s.text, font.semibold, { color: p.link }]}>{t.menuNext}</Text>
-                <SymbolView name={{ ios: "chevron.right", android: "chevron_right" }} tintColor={p.link} size={14} />
-              </Pressable>
-            ) : null}
             {!folded && session.auto ? (
               // 자리 비움 기본 답: the PC picks this one by itself at that time, unless told to wait.
               <View style={[sep, { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.sm }]}>
