@@ -68,6 +68,17 @@ test("a script stays runnable, and a link is listed as left behind", { skip: pro
   assert.deepEqual(skipped, [join(here, "app", "current")]);
 }));
 
+test("from Windows no mode is sent, so a folder never arrives without x", () => scratch(async (here, there) => {
+  await mkdir(join(here, "skill"));
+  await writeFile(join(here, "skill", "SKILL.md"), "s");
+  const sftp = fakeSftp(there);
+  const modes: number[] = [];
+  sftp.chmod = (_path, mode, cb) => (modes.push(mode), cb());
+  await putWith(sftp, join(here, "skill"), "/skill", [], false);
+  assert.deepEqual(modes, []);
+  assert.equal(await readFile(join(there, "skill", "SKILL.md"), "utf8"), "s");
+}));
+
 test("a Mac's decomposed Korean name arrives composed, so Windows does not show loose jamo", () => scratch(async (here, there) => {
   const decomposed = "한글.txt".normalize("NFD");
   await mkdir(join(here, "src"));

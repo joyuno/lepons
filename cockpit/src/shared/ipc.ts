@@ -706,6 +706,8 @@ export interface CockpitApi {
   readClipboard(): string;
   writeClipboard(text: string): void;
   clipboardHasImage(): boolean;
+  /** The path of a file copied in Explorer or Finder, or "". */
+  clipboardFile(): string;
   /** The clipboard image as a PNG on that PC, for an agent there to read; its path, or an error. */
   setMcpAgents(nodeId: string, agents: AgentKind[]): Promise<ShareStatus>;
   /**

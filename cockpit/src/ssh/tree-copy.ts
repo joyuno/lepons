@@ -25,14 +25,16 @@ const call = <T = void>(start: (done: (error?: Error | null, value?: T) => void)
  * A file or folder of this PC to `remote`, which must not be there yet: a
  * folder is made new (mkdir refuses one already there), so nothing inside it
  * can be written over. Modes go along (a script stays runnable); links do not,
- * and are listed in `skipped`.
+ * and are listed in `skipped`. From Windows they do not: it reports 0666 for
+ * every file and folder, and a folder without x on a Mac or Linux PC cannot be
+ * entered or written into. The other PC's own defaults (umask) apply instead.
  */
-export async function putWith(sftp: TreeSftp, local: string, remote: string, skipped: Skipped = []): Promise<Skipped> {
+export async function putWith(sftp: TreeSftp, local: string, remote: string, skipped: Skipped = [], carryModes = process.platform !== "win32"): Promise<Skipped> {
   const info = await lstat(local);
   if (info.isDirectory()) {
     await call((done) => sftp.mkdir(remote, done));
     // NFC: a Mac's decomposed Korean names would show as loose jamo on Windows.
-    for (const name of await readdir(local)) await putWith(sftp, join(local, name), `${remote}/${name.normalize("NFC")}`, skipped);
+    for (const name of await readdir(local)) await putWith(sftp, join(local, name), `${remote}/${name.normalize("NFC")}`, skipped, carryModes);
   } else if (info.isFile()) {
     // fastPut replaces: the top name was picked free, and below it every folder is new.
     await call((done) => sftp.fastPut(local, remote, done));
@@ -40,7 +42,7 @@ export async function putWith(sftp: TreeSftp, local: string, remote: string, ski
     skipped.push(local);
     return skipped;
   }
-  await call((done) => sftp.chmod(remote, info.mode & 0o7777, done));
+  if (carryModes) await call((done) => sftp.chmod(remote, info.mode & 0o7777, done));
   return skipped;
 }
 

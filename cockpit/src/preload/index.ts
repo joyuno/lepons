@@ -174,6 +174,13 @@ const api: CockpitApi = {
   readClipboard: () => clipboard.readText(),
   writeClipboard: (text: string) => clipboard.writeText(text),
   clipboardHasImage: () => !clipboard.readImage().isEmpty(),
+  // A file copied in Explorer or Finder: no image or text on the clipboard, only its path.
+  // ponytail: the first file only (what FileNameW and public.file-url hold); several copied at once want CF_HDROP.
+  clipboardFile: () => {
+    if (process.platform === "win32") return clipboard.readBuffer("FileNameW").toString("utf16le").replace(/\0[\s\S]*$/, "");
+    const url = process.platform === "darwin" ? clipboard.read("public.file-url") : "";
+    return url.startsWith("file://") ? decodeURIComponent(new URL(url).pathname) : "";
+  },
   pasteImage: (nodeId: string) => ipcRenderer.invoke(channels.pasteImage, nodeId),
   dropFiles: (nodeId: string, paths: string[]) => ipcRenderer.invoke(channels.dropFiles, nodeId, paths),
   usage: (only?: string) => ipcRenderer.invoke(channels.usage, only),

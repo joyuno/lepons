@@ -680,7 +680,9 @@ function launchLine(
     line === undefined || keyFile === undefined ? line : `( export ${LLM_KEY_ENV}="$(cat ${posixQuote(keyFile)} 2>/dev/null; rm -f ${posixQuote(keyFile)})"; ${line} )`;
   // The update goes before tmux, not inside it: a reattach ignores the
   // command it is handed, and a run's first session is often one.
-  if (node.useTmux) return launch(tmuxCommand(tmuxSessionName(tmuxScope(scope, plain ? "shell" : node.agent)), cwd, keyed(agentLine(withEnv, "posix"))), "posix");
+  // tmux's selection in the terminal's selection colour (renderer terminalTheme), as of this attach.
+  const selection = nativeTheme.shouldUseDarkColors ? "#264f78" : "#add6ff";
+  if (node.useTmux) return launch(tmuxCommand(tmuxSessionName(tmuxScope(scope, plain ? "shell" : node.agent)), cwd, keyed(agentLine(withEnv, "posix")), selection), "posix");
   return launch(keyed(agentLine(withEnv, "posix")), "posix");
 }
 

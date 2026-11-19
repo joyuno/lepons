@@ -1695,6 +1695,10 @@ function terminalFor(key: string) {
     // agent set for a light terminal paints its question black, which the
     // dark theme showed as nothing. 4.5 is WCAG AA; colours that read already stay.
     minimumContrastRatio: 4.5,
+    // Scrolled up to read, the view stays: typing, and the mouse reports an
+    // agent asks for (each counts as input), pulled it to the bottom. Ctrl+End
+    // goes there (the key handler below).
+    scrollOnUserInput: false,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -1797,6 +1801,28 @@ function terminalFor(key: string) {
   let handedOverAt = -Infinity;
   let lastRelease: MouseEvent | undefined;
   let copiedAt = -Infinity;
+  // A remote pane's drag that tmux took keeps its selection after the release
+  // (tmuxCommand): copied then, and let go on Ctrl+C, a left press or typing.
+  let kept = false;
+  // Stale once tmux says the pane left copy mode (its view is read every few
+  // seconds): a tmux before 3.2 cancels on the release, and a reconnect starts over.
+  const isKept = () => {
+    if (kept && tmuxBars.get(key)?.view?.inMode === false) kept = false;
+    return kept;
+  };
+  // What is typed while a let-go is on its way to tmux waits for it, in order:
+  // landing before it, keys went to copy mode rather than the agent.
+  let held: string[] | undefined;
+  const send = (data: string) => (held ? void held.push(data) : typeInto(key, data));
+  const letGo = () => {
+    kept = false;
+    if (held) return;
+    const queue: string[] = (held = []);
+    void readTmux(key, 0).finally(() => {
+      held = undefined;
+      for (const each of queue) typeInto(key, each);
+    });
+  };
   const watchDrag = (press: MouseEventInit) => {
     watchedDrag?.abort();
     handOverDrag = undefined;
@@ -1858,6 +1884,11 @@ function terminalFor(key: string) {
       if (!handed) return;
       draggedAt = handedOverAt = performance.now();
       lastRelease = up;
+      kept = tmuxBars.has(key);
+      // In copy mode now, as far as anything here knows, until tmux says (isKept).
+      const bar = tmuxBars.get(key);
+      if (kept && bar?.view) bar.view.inMode = true;
+      if (kept) void readTmux(key);
       const box = screen.getBoundingClientRect();
       const y = reportedY(up.clientY, box.top, box.bottom, term.rows, statusRows);
       if (y === up.clientY) return;
@@ -1879,6 +1910,7 @@ function terminalFor(key: string) {
   }, { capture: true, passive: true });
   element.addEventListener("mousedown", (event) => {
     pressedAt = { x: event.clientX, y: event.clientY };
+    if (event.isTrusted && event.button === 0 && isKept()) letGo();
     // The find bar's own clicks: not the program's, and its input must take focus.
     if (findBar?.contains(event.target as Node)) return;
     if (!event.isTrusted || term.modes.mouseTrackingMode === "none") return;
@@ -1927,7 +1959,8 @@ function terminalFor(key: string) {
       // A handed-over drag copies on release and tmux clears its highlight, so
       // say it happened: nothing is left to see, and the Ctrl+C that habit
       // brings next must not reach the agent as an interrupt.
-      if (performance.now() - handedOverAt < 2000 && lastRelease) {
+      // A kept selection says so on Ctrl+C instead, when it is let go.
+      if (performance.now() - handedOverAt < 2000 && lastRelease && !kept) {
         copiedAt = performance.now();
         showTipAt(t("terminal.dragCopied"), lastRelease);
         setTimeout(hideTip, 2500);
@@ -1940,7 +1973,10 @@ function terminalFor(key: string) {
   term.onData((data) => {
     // The operator answering is what ends a wait.
     activityOf(key).waiting = false;
-    typeInto(key, data);
+    // A kept tmux selection is let go first, or the keys went to tmux's copy
+    // mode rather than the agent. Mouse and focus reports are not typing.
+    if (!/^\x1b\[(<|I$|O$)/.test(data) && isKept()) letGo();
+    send(data);
   });
   term.onResize(({ cols, rows }) => cockpit.resizeSession(key, cols, rows));
   // Finding text in what the pane holds: xterm's own buffer, as you type; in a
@@ -2012,7 +2048,8 @@ function terminalFor(key: string) {
         (sessionExecutors.get(key) ?? "shell") !== "shell") {
       if (event.type === "keydown") {
         event.preventDefault();
-        typeInto(key, "\x1b\r");
+        if (isKept()) letGo();
+        send("\x1b\r");
       }
       return false;
     }
@@ -2032,6 +2069,25 @@ function terminalFor(key: string) {
       // paste -- xterm used to suppress it as part of handling Ctrl+V itself.
       event.preventDefault();
       paste();
+      return false;
+    }
+    // To the bottom, and out of a remote pane's tmux scroll: nothing else goes there (scrollOnUserInput).
+    if (pressed === "end" && event.ctrlKey && !event.shiftKey && !event.altKey) {
+      event.preventDefault();
+      if (tmuxBars.has(key)) letGo();
+      else term.scrollToBottom();
+      return false;
+    }
+    // tmux copied the kept selection on the release; Ctrl+C says so and lets
+    // it go, never reaching the agent as an interrupt.
+    if (pressed === "c" && isKept()) {
+      event.preventDefault();
+      letGo();
+      copiedAt = performance.now();
+      if (lastRelease) {
+        showTipAt(t("terminal.dragCopied"), lastRelease);
+        setTimeout(hideTip, 2500);
+      }
       return false;
     }
     if (pressed === "c" && term.hasSelection()) {
@@ -2056,9 +2112,22 @@ function terminalFor(key: string) {
   // on this PC is sent that key. One on another PC cannot see this
   // clipboard: the image goes there as a file and its path is pasted,
   // which the agent reads with its own file tools.
+  // Files' paths typed: a session on another PC cannot reach them, so they are copied there first and the copies' paths typed.
+  const typeFiles = (paths: string[]) => {
+    const found = findByKey(key);
+    if (!found || paths.length === 0) return;
+    if (found.node.kind === "local") return term.paste(typedPaths(paths, navigator.platform.startsWith("Win")));
+    void cockpit.dropFiles(found.node.id, paths).then((result) => {
+      if (result.ok) term.paste(typedPaths(result.paths, false));
+      else paneNotice(undefined, result.error);
+    });
+  };
   const paste = () => {
     const text = cockpit.readClipboard();
     const found = findByKey(key);
+    // A file copied in Explorer or Finder (no image, no text): pasted as a dropped one is.
+    const file = text === "" ? cockpit.clipboardFile() : "";
+    if (file) return typeFiles([file]);
     if (text === "" && found && (sessionExecutors.get(key) ?? "shell") !== "shell" && cockpit.clipboardHasImage()) {
       if (found.node.kind === "local") {
         typeInto(key, "\x1bv");
@@ -2105,14 +2174,7 @@ function terminalFor(key: string) {
       if (text) term.paste(text);
       return term.focus();
     }
-    const found = findByKey(key);
-    const paths = [...dropped.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== "");
-    if (!found || paths.length === 0) return;
-    if (found.node.kind === "local") return term.paste(typedPaths(paths, navigator.platform.startsWith("Win")));
-    void cockpit.dropFiles(found.node.id, paths).then((result) => {
-      if (result.ok) term.paste(typedPaths(result.paths, false));
-      else paneNotice(undefined, result.error);
-    });
+    typeFiles([...dropped.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== ""));
   });
   const created = { term, fit, element, paste };
   terminals.set(key, created);

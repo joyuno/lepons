@@ -59,10 +59,13 @@ test("a scope with no usable segment still produces a valid name", () => {
 // Server options and the history limit, then the session, then the options
 // that are the session's own. Kept as constants so the three cases below stay
 // about what they are each testing.
-const SETUP = "COLORTERM=truecolor tmux -u start-server \\; set -sq set-clipboard on \\; set -sq escape-time 10 \\; set -sq focus-events on \\; set -g history-limit 20000 \\;";
+const SETUP = "COLORTERM=truecolor tmux -u start-server \\; set -sq set-clipboard on \\; set -sq escape-time 10 \\; set -sq focus-events on \\; set -sq 'terminal-features[89]' 'xterm-256color:hyperlinks' \\; set -g history-limit 20000 \\;";
 const OWN = (name: string) =>
   ` \\; set -q -t '=${name}' mouse on \\; set -q -t '=${name}' prefix None \\; set -q -t '=${name}' prefix2 None` +
-  ` \\; set -q -t '=${name}' status on \\; set -wq -t '=${name}:' window-size latest`;
+  ` \\; set -q -t '=${name}' status on \\; set -wq -t '=${name}:' window-size latest` +
+  ` \\; set -wq -t '=${name}:' mode-style 'bg=#264f78'` +
+  ["copy-mode", "copy-mode-vi"].map((table) =>
+    ` \\; bind -T ${table} MouseDragEnd1Pane if -F '#{&&:#{m:lepons-*,#{session_name}},#{m/r:^(3[.][2-9]|[4-9]|[1-9][0-9]),#{version}}}' 'send -X copy-pipe-no-clear' 'send -X copy-pipe-and-cancel'`).join("");
 
 const SWEEP = (name: string) => sessionSweep(name, RESUME_WINDOW_SECONDS);
 
@@ -94,7 +97,7 @@ test("omits the directory and command when they are not set", () => {
 test("options reach only this session where tmux allows it", () => {
   const line = tmuxCommand("s", "/srv/api", "claude");
   const globals = [...line.matchAll(/set -(s|g)q? (\S+)/g)].map((match) => match[2]).sort();
-  assert.deepEqual(globals, ["escape-time", "focus-events", "history-limit", "set-clipboard"]);
+  assert.deepEqual(globals, ["'terminal-features[89]'", "escape-time", "focus-events", "history-limit", "set-clipboard"]);
   const create = line.indexOf("new-session");
   for (const option of ["mouse on", "prefix None", "prefix2 None", "status on", "window-size latest"]) {
     assert.ok(line.indexOf(option) > create, `${option} is set on the session, once it exists`);

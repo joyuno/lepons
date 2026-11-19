@@ -84,6 +84,7 @@ export function tmuxCommand(
   sessionName: string,
   cwd: string | undefined,
   command: string | undefined,
+  selection = "#264f78",
 ): string {
   // Everything set here is Lepons' alone where tmux lets it be: a shared
   // server's other sessions keep their own mouse, prefix and status line.
@@ -101,6 +102,11 @@ export function tmuxCommand(
   // - escape-time 10: tmux holds a bare Esc 500ms by default to see if a key
   //   follows, so Esc in an agent lagged; 10ms still joins an Alt key over SSH.
   // - focus-events on: the agent hears the pane gaining and losing focus.
+  // - hyperlinks for this client's TERM: tmux keeps an agent's OSC 8 link but
+  //   passes it out only to a terminal it knows takes one, and its defaults do
+  //   not say so of xterm. Without it Claude Code's link arrives as bare text,
+  //   broken over indented lines Ctrl+click cannot join. A fixed index rather
+  //   than -a: the line runs every attach and would append it every time.
   //
   // history-limit is a session option, but a pane takes the limit in force
   // when it is created and new-session creates this pane: set after it, the
@@ -111,15 +117,16 @@ export function tmuxCommand(
   // `-u`: the client is UTF-8 whatever the remote locale says, so Korean is
   // drawn rather than replaced by underscores. COLORTERM: tmux 3.6+ reads it
   // off this client alone and draws 24-bit colour to it rather than rounding
-  // to 256. default-terminal and terminal-features are server options, and a
-  // tmux-256color TERM breaks programs on a host without its terminfo (macOS's
-  // system ncurses): left as the operator has them.
+  // to 256. default-terminal is a server option, and a tmux-256color TERM
+  // breaks programs on a host without its terminfo (macOS's system ncurses):
+  // left as the operator has it, as are their own terminal-features.
   const session = posixQuote(`=${sessionName}`);
   const parts = [
     "COLORTERM=truecolor tmux -u start-server",
     "set -sq set-clipboard on",
     "set -sq escape-time 10",
     "set -sq focus-events on",
+    "set -sq 'terminal-features[89]' 'xterm-256color:hyperlinks'",
     "set -g history-limit 20000",
     ["new-session -A -s", posixQuote(sessionName), ...(cwd ? ["-c", posixQuote(cwd)] : []), ...(command ? [posixQuote(command)] : [])].join(" "),
     // Mouse mode is what makes the wheel scroll at all: tmux owns the
@@ -138,6 +145,15 @@ export function tmuxCommand(
     // its right keep old output that a drag selection copies along with a
     // URL. A window option: the session's current window, the agent's.
     `set -wq -t ${posixQuote(`=${sessionName}:`)} window-size latest`,
+    // A drag past the screen is tmux's (renderer watchDrag): its selection is
+    // drawn in the terminal's own selection colour, and stays after the
+    // release (copied then, through OSC 52) for Ctrl+C to let go, as the
+    // terminal's own does. Key bindings are server-wide, so the release keeps
+    // tmux's default for every session not Lepons', and on a tmux before 3.2
+    // (no copy-pipe-no-clear; a version like "3.6a" is no number to compare, hence the match).
+    `set -wq -t ${posixQuote(`=${sessionName}:`)} mode-style ${posixQuote(`bg=${selection}`)}`,
+    ...["copy-mode", "copy-mode-vi"].map((table) =>
+      `bind -T ${table} MouseDragEnd1Pane if -F ${posixQuote("#{&&:#{m:lepons-*,#{session_name}},#{m/r:^(3[.][2-9]|[4-9]|[1-9][0-9]),#{version}}}")} ${posixQuote("send -X copy-pipe-no-clear")} ${posixQuote("send -X copy-pipe-and-cancel")}`),
   ];
   return `${sessionSweep(sessionName, RESUME_WINDOW_SECONDS)}; ${parts.join(" \\; ")}`;
 }
