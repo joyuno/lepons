@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Wed, 18 Nov 2026 23:30:00 +0900</lastBuildDate>
+    <lastBuildDate>Thu, 19 Nov 2026 23:30:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.10.17: 다른 PC 칸의 끌어서 선택·여러 줄 링크, 파일 붙여넣기</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.10.17</guid>
+      <pubDate>Thu, 19 Nov 2026 23:30:00 +0900</pubDate>
+      <description>다른 PC 칸에서 끌어서 선택한 채로 화면 끝까지 밀거나 휠을 굴려도 선택이 이어지고, 위로 올려 읽는 중에는 맨 아래로 내려가지 않아요. 여러 줄에 걸친 링크도 Ctrl+클릭으로 전체 주소가 열려요. 탐색기에서 파일째로 복사한 이미지도 Ctrl+V로 붙여넣을 수 있고, Windows에서 Mac으로 보낸 폴더에도 들어갈 수 있어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.13: 터미널 스크롤·복사 되돌림, 숨김 폴더 보기</title>
       <link>https://lepons.app/#download</link>
