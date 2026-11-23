@@ -1,4 +1,5 @@
 import type { WorkflowItem } from "./types.ts";
+import type { Older } from "./validate.ts";
 
 /** Same row, nothing to draw: a new answer from the PC builds new objects for every row. `fresh` only counts as a row mounts. */
 export function sameRow(a: { item: object; labels: readonly string[] }, b: { item: object; labels: readonly string[] }): boolean {
@@ -32,7 +33,7 @@ export function stillAtBottom(was: boolean, lastY: number, now: { y: number; vie
 }
 
 /** `v` is the PC's name for this very list: absent from a PC older than it. */
-export type Flow = { title?: string; events: WorkflowItem[]; v?: string } | null;
+export type Flow = { title?: string; events: WorkflowItem[]; v?: string; keep?: number; older?: Older } | null;
 
 /** Chats kept in memory; the app only ever holds these until it is closed. */
 const KEPT = 8;

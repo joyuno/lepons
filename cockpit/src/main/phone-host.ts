@@ -13,6 +13,7 @@ import type { Machine } from "../machine/machine.ts";
 import { maskForEgress } from "../mask/mask.ts";
 import { answersFit } from "../phone/answer.ts";
 import { askForm, formFits, hookForm } from "../phone/ask.ts";
+import { PHONE_EVENTS } from "../phone/contract.ts";
 import { phoneMayOpen, viewable } from "../phone/docs.ts";
 import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/outside.ts";
 import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
@@ -43,7 +44,7 @@ export interface PhoneHostDeps {
   shareOutages: ReadonlyMap<string, unknown>;
   /** When this PC was last typed on. */
   readTokenStats: PhoneDeps["tokenStats"];
-  workflowOf(nodeId: string, repoId: string, full?: boolean): Promise<SessionWorkflowResult>;
+  workflowOf(nodeId: string, repoId: string, full?: boolean, before?: number): Promise<SessionWorkflowResult>;
   accountsOf(node: NodeConfig): ReturnType<typeof agentAccounts>;
   machineOf(node: NodeConfig): Machine;
   /** Ends a session here and on its PC; throws when the PC cannot be told. */
@@ -364,9 +365,11 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
         window.webContents.send(channels.phoneAnswer, requestId, key, form, answers);
       });
     },
-    workflow: async (key) => {
+    phoneEvents: (key) => (phoneSessionPlace(key)?.node.kind === "local" ? PHONE_EVENTS.local : PHONE_EVENTS.remote),
+    workflow: async (key, before) => {
       const session = phoneSessions.find((candidate) => candidate.key === key);
       if (!session || session.terminal) return { ok: false, reason: "no_transcript" };
+      if (before !== undefined) return workflowOf(session.nodeId, session.repoId, true, before).catch(() => ({ ok: false as const, reason: "no_transcript" as const }));
       const place = phoneSessionPlace(key);
       const format = place && recordFormat(key, place.node);
       const stamp = place && format ? await machineOf(place.node).recordStamp(format, place.repo.path).catch(() => undefined) : undefined;

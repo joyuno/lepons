@@ -5,6 +5,7 @@ import { relayBridge } from "../relay/bridge.ts";
 import { encodeMessage, type Message } from "../relay/protocol.ts";
 import type { PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
 import { PhoneAuth } from "./auth.ts";
+import { PHONE_EVENTS } from "./contract.ts";
 import { OutputRing } from "./screen.ts";
 import { createPhoneApi, MAX_SCREEN_JSON, sessionId, type PhoneDeps } from "./server.ts";
 
@@ -202,6 +203,28 @@ test("/api/workflow without &v= answers as it always did", async (t) => {
   const workflow = { title: "제목", events: [{ kind: "prompt", at: 1, text: "p" }] as WorkflowItem[] };
   const { get } = setup(t, { workflow: async () => ({ ok: true, workflow }) });
   assert.deepEqual((await get(`/api/workflow?s=${ID}`)).body, { ok: true, ...workflow });
+});
+
+test("/api/workflow sends the session's newest PHONE_EVENTS, says how many the phone keeps, and with &before= the ones before that time", async (t) => {
+  let events = Array.from({ length: 120 }, (_, at): WorkflowItem => ({ kind: "note", at, text: "n" }));
+  const keep = PHONE_EVENTS.remote;
+  const asked: Array<number | undefined> = [];
+  const { get } = setup(t, {
+    phoneEvents: () => keep,
+    workflow: async (_key: string, before?: number) => {
+      asked.push(before);
+      const earlier = before === undefined ? events : events.filter((event) => event.at < before);
+      return { ok: true, workflow: before === undefined ? { events } : { events: earlier.slice(-keep), more: earlier.length > keep } };
+    },
+  });
+  const newest = (await get(`/api/workflow?s=${ID}&v=`)).body as { events: WorkflowItem[]; v: string };
+  assert.deepEqual(newest.events.map((event) => event.at), Array.from({ length: keep }, (_, i) => 120 - keep + i));
+  events = [...events, { kind: "note", at: 120, text: "n" }];
+  const grown = (await get(`/api/workflow?s=${ID}&v=${newest.v}&after=119`)).body;
+  assert.deepEqual(JSON.parse(JSON.stringify(grown)), { events: events.slice(-2), v: (grown as { v: string }).v, after: 119, keep });
+  const older = (await get(`/api/workflow?s=${ID}&before=${newest.events[0]!.at}`)).body as { ok: true; events: WorkflowItem[]; more: boolean };
+  assert.deepEqual([older.events[0]!.at, older.events.at(-1)!.at, older.more], [120 - 2 * keep, 120 - keep - 1, true]);
+  assert.deepEqual(asked, [undefined, undefined, 120 - keep]);
 });
 
 test("/api/workflow with &v=: unchanged is a few bytes; new events alone; anything else the whole list", async (t) => {

@@ -152,7 +152,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const request: Connection["request"] = async (method: string, path: string, opts?: { body?: unknown; bin?: Uint8Array; timeoutMs?: number }) => {
     if (demoRef.current) return demoRef.current.request(method, path, opts);
     // A send in the seconds a link takes to come back goes out when it does, not "couldn't send". Nothing waits on a link that won't return by itself.
-    if (path === "/api/input") {
+    // An upload too: on Android the photo and file pickers are another app's screen, so the link was closed while one was open.
+    if (path === "/api/input" || path.startsWith("/api/upload?")) {
       await waitUntil(() => {
         const now = client.current?.status;
         return now !== undefined && (now.kind === "connected" || halted(now));

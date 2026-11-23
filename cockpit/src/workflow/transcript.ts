@@ -177,7 +177,7 @@ function resultText(content: unknown): string {
  * `full`: prompts and replies whole, for the phone's conversation view --
  * the board clips them to a line or two.
  */
-export function parseTranscript(jsonl: string, full = false): SessionWorkflow {
+export function parseTranscript(jsonl: string, full = false, keep = 80): SessionWorkflow {
   const limit = (max: number) => (full ? 20_000 : max);
   const events: WorkflowItem[] = [];
   const pending = new Map<string, WorkflowItem & { kind: "subagent" }>();
@@ -335,5 +335,5 @@ export function parseTranscript(jsonl: string, full = false): SessionWorkflow {
   }
   flushActions();
 
-  return { ...(title === undefined ? {} : { title }), events: recentEvents(events) };
+  return { ...(title === undefined ? {} : { title }), events: recentEvents(events, keep) };
 }

@@ -205,16 +205,36 @@ function itemOf(e: unknown): WorkflowItem | undefined {
 }
 
 /** /api/workflow: the events, or null when the session has no transcript to read. */
-export function workflowOf(body: unknown): { title?: string; events: WorkflowItem[] } | null | undefined {
+export function workflowOf(body: unknown): { title?: string; events: WorkflowItem[]; more?: boolean } | null | undefined {
   if (!isObj(body)) return undefined;
   if (body.ok === false) return null;
   const events = body.ok === true ? list(body.events, 500, itemOf) : undefined;
   if (!events) return undefined;
-  return { events, ...(str(body.title, 500) ? { title: body.title } : {}) };
+  return { events, ...(str(body.title, 500) ? { title: body.title } : {}), ...(typeof body.more === "boolean" ? { more: body.more } : {}) };
+}
+
+/**
+ * Asked for with &before= (the time of the oldest event held): the events before it, and whether the PC holds more.
+ * A PC older than that sends its newest instead, which hold nothing before it: none, and no more.
+ */
+export function olderOf(body: unknown, before: number): { events: WorkflowItem[]; more: boolean } | undefined {
+  const read = workflowOf(body);
+  if (read === undefined) return undefined;
+  const events = read?.events.filter((event) => event.at < before) ?? [];
+  return { events, more: read?.more === true && events.length > 0 };
+}
+
+/** Older events the reader asked for: "loaded" while the PC holds still more, "done" once it holds none. */
+export type Older = "loaded" | "done";
+
+/** What a phone holds once those older events are in. */
+export function withOlder<T extends { events: WorkflowItem[] }>(held: T, older: { events: WorkflowItem[]; more: boolean }): T & { older: Older } {
+  return { ...held, events: [...older.events, ...held.events], older: older.more ? "loaded" : "done" };
 }
 
 /** What /api/workflow answers when asked with &v=, as the phone keeps it. */
-export type WorkflowChange = { same: true } | { title?: string; events: WorkflowItem[]; v?: string; after?: number };
+/** `more` only as the contract has it: a change never carries one. */
+export type WorkflowChange = { same: true } | { title?: string; events: WorkflowItem[]; v?: string; after?: number; keep?: number; more?: boolean };
 
 /** /api/workflow asked with &v=: nothing new, or a list with its "v" (and with `after`, only its newest part). A PC older than this answers as workflowOf reads. */
 export function workflowChangeOf(body: unknown): WorkflowChange | null | undefined {
@@ -223,14 +243,19 @@ export function workflowChangeOf(body: unknown): WorkflowChange | null | undefin
   if (!str(body.v, 64)) return workflowOf(body);
   const events = list(body.events, 500, itemOf);
   if (!events) return undefined;
-  return { events, v: body.v, ...(str(body.title, 500) ? { title: body.title } : {}), ...(time(body.after) ? { after: body.after } : {}) };
+  return { events, v: body.v, ...(str(body.title, 500) ? { title: body.title } : {}), ...(time(body.after) ? { after: body.after } : {}), ...(typeof body.keep === "number" && Number.isSafeInteger(body.keep) && body.keep > 0 ? { keep: body.keep } : {}) };
 }
 
-/** What a phone holds once that answer is in. */
-export function withChange<T extends { events: WorkflowItem[] }>(held: T, change: WorkflowChange): T | Omit<Exclude<WorkflowChange, { same: true }>, "after"> {
+/** What a phone holds once that answer is in: the newest the PC sent, after any older ones the reader asked for. */
+export function withChange<T extends { events: WorkflowItem[]; older?: Older }>(held: T, change: WorkflowChange): T | (Omit<Exclude<WorkflowChange, { same: true }>, "after"> & { older?: Older }) {
   if ("same" in change) return held;
   const { after, ...whole } = change;
-  return after === undefined ? whole : { ...whole, events: [...held.events.filter((event) => event.at < after), ...whole.events].slice(-80) };
+  const events = after === undefined ? whole.events : [...held.events.filter((event) => event.at < after), ...whole.events];
+  // A newest list that does not reach back to what is held (a new conversation, or more came than it holds): from it alone.
+  const apart = (held.events.at(-1)?.at ?? -Infinity) < (events[0]?.at ?? Infinity);
+  if (held.older === undefined || apart) return { ...whole, events: events.slice(-(whole.keep ?? 80)) };
+  const first = events[0]?.at ?? Infinity;
+  return { ...whole, events: [...held.events.filter((event) => event.at < first), ...events], older: held.older };
 }
 
 /** /api/docs and /api/files: relative paths, no climbing out. */

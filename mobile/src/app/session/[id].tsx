@@ -7,7 +7,7 @@ import { createContext, Fragment, memo, useCallback, useContext, useEffect, useM
 import { ActivityIndicator, Alert, AppState, FlatList, Image, Keyboard, KeyboardAvoidingView, LayoutAnimation, Linking, Modal, Platform, Pressable, RefreshControl, ScrollView, Share, StyleSheet, Text, TextInput, View, type ScrollViewInstance, type TextInputInstance, type ViewInstance, useWindowDimensions } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { pick, upload, type Picked } from "@/attach";
+import { pick, previewPicked, upload, type Picked } from "@/attach";
 import { shownUploads, splitUploads, uploadedName, withUploads } from "@/phone/attachments";
 import type { Connection } from "@/connection";
 import { useConnection, useTermSize } from "@/connection";
@@ -26,7 +26,7 @@ import { folderLister, type FolderEntry } from "@/phone/folder-list";
 import { limitFrom } from "@/phone/limit";
 import { stillWaiting } from "@/phone/outbox";
 import { isFresh } from "@/phone/motion";
-import { CHAT_PAGE, chatKeys, flowPoller, PC_WINDOW, recentChat } from "@/phone/recent-chat";
+import { CHAT_PAGE, chatKeys, flowPoller, recentChat } from "@/phone/recent-chat";
 import { toolDoing, toolLabels } from "@/phone/tool-labels";
 import { replyBlocks, replyRuns, typedEvents } from "@/phone/reply";
 import { menuFrom, menuQuestion, menuTabs, type MenuOption, type MenuTab } from "@/phone/menu";
@@ -35,7 +35,7 @@ import { termLines, type TermRun } from "@/phone/term-lines";
 import { playSend, prepareSend } from "@/sound";
 import { chats, drafts, sends } from "@/store";
 import { folderName, lampState, type CommandSuggestion, type PhoneSessionView } from "@/phone/types";
-import { commandsOf, screenOf, withChange, workflowChangeOf } from "@/phone/validate";
+import { commandsOf, olderOf, screenOf, withChange, withOlder, workflowChangeOf } from "@/phone/validate";
 import { DemoBadge, font, groupRow, Lamp, mono, monoSizes, radius, Segments, SelectableText, size, Skeleton, space, useTheme } from "@/ui";
 
 type Sub = "chat" | "term" | "docs";
@@ -251,6 +251,29 @@ export default function SessionScreen() {
   };
   const refreshControl = <RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} tintColor={p.muted} />;
 
+  // "Show older" past what the PC sent: the events before the oldest held. Until then none are asked for. False when the ask failed.
+  const loadOlder = useCallback(async () => {
+    const asked = chats.get(id)?.value;
+    const before = asked?.events[0]?.at;
+    if (!asked || before === undefined) return false;
+    // Marked before asking: a poll answered meanwhile keeps the oldest held, where these will join.
+    if (asked.older === undefined) chats.set(id, chats.get(id)!.json, { ...asked, older: "loaded" });
+    try {
+      const reply = await c.request("GET", `/api/workflow?s=${q(id)}&before=${before}`);
+      const older = reply.status === 200 ? olderOf(reply.body, before) : undefined;
+      const held = chats.get(id)?.value;
+      if (!older || !held || held.events[0]?.at !== before) return false;
+      const next = withOlder(held, older);
+      const json = JSON.stringify(next);
+      shown.current = json;
+      chats.set(id, json, next);
+      setFlowState({ id, value: next });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [id]);
+
   return (
     // With the answer bar shown, it fills the home-indicator strip itself (Composer):
     // a bottom edge here left an empty band under it.
@@ -286,7 +309,7 @@ export default function SessionScreen() {
       <View style={{ paddingHorizontal: space.lg }}><LinkNotice /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         {c.phone && !session ? <Text style={s.empty}>{params.opening && !openGaveUp ? t.sessionOpening : params.opening ? t.openFolderFailed : t.sessionGone}</Text> : null}
-        {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} /></PathOpen.Provider> : null}
+        {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} loadOlder={loadOlder} /></PathOpen.Provider> : null}
         {sub === "term" ? <TerminalView key={id} id={id} /> : null}
         {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} list={list} request={c.request} /> : null}
         {/* The menu as the PC read it, when it sends one (cockpit/src/phone/ask.ts); this phone's own reading of the screen otherwise. */}
@@ -302,7 +325,7 @@ export default function SessionScreen() {
 
 // --- the conversation ------------------------------------------------------------
 
-function ChatView(props: { id: string; flow: Flow | undefined; working: boolean; statusLine: string; limit: string | undefined; refresh: ReactElement }) {
+function ChatView(props: { id: string; flow: Flow | undefined; working: boolean; statusLine: string; limit: string | undefined; refresh: ReactElement; loadOlder: () => Promise<boolean> }) {
   const { c: p, s } = useSessionTheme();
   const scroll = useRef<ScrollViewInstance>(null);
   const atBottom = useRef(true);
@@ -319,7 +342,13 @@ function ChatView(props: { id: string; flow: Flow | undefined; working: boolean;
   }, [props.flow]);
   const keys = useMemo(() => chatKeys(items), [items]);
   const start = firstDrawn(keys, anchor, CHAT_PAGE);
-  if (keys[start] !== anchor) setAnchor(keys[start]);
+  // Older rows just came from the PC: the next page of them shows at once, as the press asked.
+  const [asking, setAsking] = useState(false);
+  const reveal = useRef(false);
+  if (reveal.current && start > 0) {
+    reveal.current = false;
+    setAnchor(keys[Math.max(0, start - CHAT_PAGE)]);
+  } else if (keys[start] !== anchor) setAnchor(keys[start]);
   const recent = useMemo(() => recentChat(items, runs, keys.length - start), [items, runs, keys, start]);
   const sent = useSyncExternalStore(sends.subscribe, () => sends.waiting(props.id));
   // In the draw itself: an effect would show a frame with the message twice.
@@ -395,8 +424,21 @@ function ChatView(props: { id: string; flow: Flow | undefined; working: boolean;
         <Pressable accessibilityRole="button" onPress={() => setAnchor(keys[Math.max(0, start - CHAT_PAGE)])} style={({ pressed }) => ({ minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.6 : 1 })}>
           <Text style={[s.dim, font.semibold]}>{fmt(t.chatOlder, { count: recent.hidden })}</Text>
         </Pressable>
-      ) : props.flow && props.flow.events.length >= PC_WINDOW ? (
-        <Text style={[s.dim, { textAlign: "center", fontSize: size.footnote }]}>{t.chatOnlyRecent}</Text>
+      ) : props.flow && props.flow.events.length >= (props.flow.keep ?? 80) && props.flow.older !== "done" ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={asking}
+          onPress={() => {
+            setAsking(true);
+            void props.loadOlder().then((loaded) => {
+              reveal.current = loaded;
+              setAsking(false);
+            });
+          }}
+          style={({ pressed }) => ({ minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.6 : 1 })}
+        >
+          {asking ? <ActivityIndicator color={p.muted} /> : <Text style={[s.dim, font.semibold]}>{t.chatOlderPc}</Text>}
+        </Pressable>
       ) : null}
       {recent.rows.map(({ item, labels }, i) => <ChatRow key={keys[recent.hidden + i]!} item={item} labels={labels} fresh={isFresh(item.at, seen.current)} />)}
       {/* Starts as the send sound does, from the same press; going back into a chat puts it in place without the rise. */}
@@ -1425,6 +1467,24 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
     const got = await upload(c.request, id, chosen).catch(() => "failed" as const);
     setFiles((now) => now.map((file) => (file.key !== key ? file : got === "big" || got === "failed" ? { ...file, failed: got === "big" ? t.attachBig : t.attachFailed } : { ...file, path: got })));
   };
+  // On an iPhone a picker asked for while the menu is still fading out is not shown, and nothing comes back:
+  // it opens once the menu has gone (the Modal's onDismiss, iOS only), or after the fade if that never comes.
+  const chosenPick = useRef<"camera" | "photo" | "file" | undefined>(undefined);
+  const pickTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pickChosen = () => {
+    clearTimeout(pickTimer.current);
+    const kind = chosenPick.current;
+    chosenPick.current = undefined;
+    if (kind) void attachOne(kind);
+  };
+  const choosePick = (kind: "camera" | "photo" | "file") => {
+    if (Platform.OS !== "ios") return void attachOne(kind);
+    chosenPick.current = kind;
+    setPicker(undefined);
+    clearTimeout(pickTimer.current);
+    pickTimer.current = setTimeout(pickChosen, 1000);
+  };
+  useEffect(() => () => clearTimeout(pickTimer.current), []);
   // Measured with the keyboard down: the menu's sheet takes the focus and the keyboard goes, which would leave it floating where the clip was.
   const openPicker = () => {
     const measure = () => clipBox.current?.measureInWindow((x, y) => setPicker({ x, y }));
@@ -1559,24 +1619,6 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
           ))}
         </ScrollView>
       ) : null}
-      {files.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ gap: space.sm }}>
-          {files.map((file) => (
-            <View key={file.key} style={{ flexDirection: "row", alignItems: "center", gap: space.xs, height: 40, paddingLeft: space.xs, borderRadius: radius.md, borderCurve: "continuous", backgroundColor: p.raise }}>
-              {file.image && file.uri
-                ? <Image source={{ uri: file.uri }} style={{ width: 32, height: 32, borderRadius: radius.sm, opacity: file.path ? 1 : 0.5 }} />
-                : <SymbolView name={{ ios: "doc", android: "description" }} tintColor={p.muted} size={18} />}
-              <Text style={[s.text, { fontSize: size.footnote, maxWidth: 150, color: file.failed ? p.stop : p.text }]} numberOfLines={1} ellipsizeMode="middle">{file.failed ?? `@${file.name}`}</Text>
-              {!file.path && !file.failed ? <ActivityIndicator size="small" color={p.muted} accessibilityLabel={t.loading} /> : null}
-              <Pressable accessibilityRole="button" accessibilityLabel={fmt(t.attachRemove, { name: file.name })} hitSlop={6}
-                onPress={() => setFiles((now) => now.filter((one) => one.key !== file.key))}
-                style={{ width: 32, height: 40, alignItems: "center", justifyContent: "center" }}>
-                <SymbolView name={{ ios: "xmark", android: "close" }} tintColor={p.muted} size={12} />
-              </Pressable>
-            </View>
-          ))}
-        </ScrollView>
-      ) : null}
       <View style={[s.row, { gap: space.sm, alignItems: "flex-end" }]}>
         {/* Narrow, so the text gets the room; the slop keeps a 44-point target. Pulled into the bar's own margin. */}
         <View ref={clipBox} collapsable={false}>
@@ -1593,12 +1635,12 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
           </Press>
         </View>
         {/* The clip's menu, over the bar like a popover: a tap anywhere else puts it away. */}
-        <Modal visible={picker !== undefined} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={() => setPicker(undefined)}>
+        <Modal visible={picker !== undefined} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={() => setPicker(undefined)} onDismiss={pickChosen}>
           <Pressable style={{ flex: 1 }} onPress={() => setPicker(undefined)} onLayout={(event) => setSheetHeight(event.nativeEvent.layout.height)} accessibilityLabel={t.cancel}>
             {picker && sheetHeight > 0 ? (
               <Pressable onPress={() => {}} style={{ position: "absolute", left: Math.max(space.md, picker.x - space.sm), bottom: sheetHeight - picker.y + space.sm, minWidth: 210, padding: space.sm, gap: space.xxs, borderRadius: 24, borderCurve: "continuous", backgroundColor: p.card, borderWidth: StyleSheet.hairlineWidth, borderColor: p.line, boxShadow: "0 12px 32px rgba(0,0,0,0.18)" }}>
                 {([["camera", t.attachCamera, "camera", "photo_camera"], ["photo", t.attachPhoto, "photo", "image"], ["file", t.attachFile, "paperclip", "attach_file"]] as const).map(([kind, label, ios, android]) => (
-                  <Pressable key={kind} accessibilityRole="button" onPress={() => void attachOne(kind)}
+                  <Pressable key={kind} accessibilityRole="button" onPress={() => choosePick(kind)}
                     style={({ pressed }) => [{ flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 52, paddingHorizontal: space.sm, borderRadius: radius.lg, borderCurve: "continuous" }, pressed && { backgroundColor: p.raise }]}>
                     <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: p.raise, alignItems: "center", justifyContent: "center" }}>
                       <SymbolView name={{ ios, android }} tintColor={p.text} size={20} />
@@ -1610,10 +1652,43 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
             ) : null}
           </Pressable>
         </Modal>
+        {/* The box holds what is attached above the text, as a chat app's does: a photo as itself, a file by its name; a tap previews it. */}
+        <View style={{ flex: 1, backgroundColor: p.card, borderWidth: 1, borderColor: p.line, borderRadius: radius.lg, borderCurve: "continuous", overflow: "hidden" }}>
+          {files.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="always" contentContainerStyle={{ gap: space.sm, paddingHorizontal: space.sm, paddingTop: space.sm }}>
+              {files.map((file) => (
+                <View key={file.key}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={fmt(t.attachPreview, { name: file.name })} disabled={!file.uri}
+                    onPress={() => void previewPicked(file.uri)}
+                    style={({ pressed }) => ({ height: 56, minWidth: 56, maxWidth: file.image && file.uri ? 56 : 168, borderRadius: radius.md, borderCurve: "continuous", overflow: "hidden", backgroundColor: p.raise, borderWidth: file.failed ? 1.5 : 0, borderColor: p.stop, opacity: pressed ? 0.7 : 1 })}>
+                    {file.image && file.uri ? (
+                      <Image source={{ uri: file.uri }} style={{ width: 56, height: 56 }} />
+                    ) : (
+                      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: space.xs, paddingLeft: space.sm, paddingRight: space.lg }}>
+                        <SymbolView name={{ ios: "doc", android: "description" }} tintColor={p.muted} size={20} />
+                        <Text style={[s.text, { flexShrink: 1, fontSize: size.footnote }]} numberOfLines={2} ellipsizeMode="middle">{file.name}</Text>
+                      </View>
+                    )}
+                    {!file.path && !file.failed ? (
+                      <View style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.35)" }]}>
+                        <ActivityIndicator size="small" color="#fff" accessibilityLabel={t.loading} />
+                      </View>
+                    ) : null}
+                  </Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel={fmt(t.attachRemove, { name: file.name })} hitSlop={8}
+                    onPress={() => setFiles((now) => now.filter((one) => one.key !== file.key))}
+                    style={{ position: "absolute", top: 3, right: 3, width: 20, height: 20, borderRadius: 10, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" }}>
+                    <SymbolView name={{ ios: "xmark", android: "close" }} tintColor="#fff" size={10} weight="bold" />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+          {files.find((file) => file.failed) ? <Text style={[s.dim, { fontSize: size.caption, color: p.stop, paddingHorizontal: space.md, paddingTop: space.xs }]} accessibilityLiveRegion="polite">{files.find((file) => file.failed)!.failed}</Text> : null}
         <TextInput
           ref={input}
           // No fixed height: a multiline input grows with its lines up to maxHeight, then scrolls.
-          style={[s.input, { flex: 1, minHeight: 44, maxHeight: 240, borderRadius: radius.lg, paddingHorizontal: space.lg, paddingVertical: space.sm, fontSize: size.callout, lineHeight: 22, textAlignVertical: "top" }]}
+          style={[s.input, { minHeight: 44, maxHeight: 240, borderWidth: 0, backgroundColor: "transparent", borderRadius: 0, paddingHorizontal: space.lg, paddingVertical: space.sm, fontSize: size.callout, lineHeight: 22, textAlignVertical: "top" }]}
           value={text}
           // Return is a line break here; the PC sends the lines as one (inputFor).
           onChangeText={setText}
@@ -1625,6 +1700,7 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
           autoCapitalize="none"
           autoCorrect={false}
         />
+        </View>
         <Press
           accessibilityRole="button"
           accessibilityLabel={action === "stop" ? t.stop : t.send}

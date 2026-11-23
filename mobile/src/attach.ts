@@ -1,8 +1,10 @@
 import { getDocumentAsync } from "expo-document-picker";
 import { File } from "expo-file-system";
 import { launchCameraAsync, launchImageLibraryAsync, requestCameraPermissionsAsync } from "expo-image-picker";
+import { isAvailableAsync, shareAsync } from "expo-sharing";
 
 import type { Connection } from "@/connection";
+import { previewOrShare } from "@/phone/native-preview";
 
 /** The PC's cap (cockpit/src/phone/server.ts MAX_UPLOAD). */
 export const MAX_UPLOAD = 20 * 1024 * 1024;
@@ -41,4 +43,18 @@ export async function upload(request: Connection["request"], session: string, pi
   if (reply.status === 413) return "big";
   const path = typeof reply.body === "object" && reply.body !== null ? (reply.body as { path?: unknown }).path : undefined;
   return reply.status === 200 && typeof path === "string" && path !== "" && !/[\x00-\x1f\x7f]/.test(path) ? path : "failed";
+}
+
+/** A picked file, still on the phone, in the phone's own viewer (Quick Look, an Android viewer app), else the share sheet. */
+export function previewPicked(uri: string): Promise<boolean> {
+  const file = new File(uri);
+  return previewOrShare(async () => {
+    if (!(await file.canPreview())) return false;
+    await file.preview();
+    return true;
+  }, async () => {
+    if (!(await isAvailableAsync())) return false;
+    await shareAsync(file.uri);
+    return true;
+  });
 }

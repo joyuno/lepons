@@ -171,6 +171,8 @@ export interface SessionWorkflow {
   /** Claude Code's own generated session title, when present. */
   title?: string;
   events: WorkflowItem[];
+  /** Read for the phone's "show older": whether the record holds events before these. */
+  more?: boolean;
 }
 
 export type SessionWorkflowResult =

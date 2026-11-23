@@ -112,8 +112,9 @@ export function cancelTurn(events: WorkflowItem[], at: number, unlisted: string[
 }
 
 /** The recent story, with the prompt it answers even when the turn has run past it: the goal is read off that prompt. */
-export function recentEvents(events: WorkflowItem[]): WorkflowItem[] {
-  const kept = events.slice(-80);
+/** The newest `keep` events, and the last prompt before them when none of them is one. */
+export function recentEvents(events: WorkflowItem[], keep = 80): WorkflowItem[] {
+  const kept = events.slice(-keep);
   const asked = kept.some((event) => event.kind === "prompt") ? undefined : events.findLast((event) => event.kind === "prompt");
   return asked ? [asked, ...kept] : kept;
 }

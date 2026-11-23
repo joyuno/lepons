@@ -98,7 +98,10 @@ export interface PhoneDeps {
   /** Has the PC type a whole question set's answers (phone/answer.ts): "stale" when `form` is not the set on screen, "bad" when the answers do not fit it. */
   answer(key: string, form: string, answers: PhoneAnswer[]): Promise<PhoneAnswerResult | "stale" | "bad">;
   /** The session's workflow, as the desktop's workflow view reads it. */
-  workflow(key: string): Promise<SessionWorkflowResult>;
+  /** With `before`, the events before that time instead of the newest. */
+  workflow(key: string, before?: number): Promise<SessionWorkflowResult>;
+  /** How many newest events the session's phone view holds (contract.ts PHONE_EVENTS); absent: 80. */
+  phoneEvents?(key: string): number;
   /** The .md files in the session's folder, relative to it. */
   docs(key: string): Promise<string[]>;
   /** One of those files' text; undefined for anything the last docs() did not list. */
@@ -427,11 +430,17 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       const key = keyFor(param(at, "s"));
       if (key === undefined) return fail(404, "session");
       if (at === "GET /api/workflow") {
+        const before = Number(param(at, "before") ?? NaN);
+        if (Number.isSafeInteger(before)) {
+          const result = await deps.workflow(key, before);
+          return ok(at, result.ok ? { ok: true, ...result.workflow } : result);
+        }
+        const keep = deps.phoneEvents?.(key) ?? 80;
         const result = await deps.workflow(key);
         if (!result.ok) return ok(at, result);
         // The newest part: a phone scrolls one column, not a day's transcript.
         const { title } = result.workflow;
-        const events = result.workflow.events.slice(-80);
+        const events = result.workflow.events.slice(-keep);
         const asked = param(at, "v");
         if (asked === null) return ok(at, { ok: true, title, events });
         const v = createHash("sha256").update(JSON.stringify({ title, events })).digest("hex").slice(0, 16);
@@ -442,10 +451,10 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         // only what the phone would end up holding says these few are enough.
         const after = Number(param(at, "after") ?? NaN);
         const tail = events.filter((event) => event.at >= after);
-        const merged = [...(sent?.events ?? []).filter((event) => event.at < after), ...tail].slice(-80);
+        const merged = [...(sent?.events ?? []).filter((event) => event.at < after), ...tail].slice(-keep);
         return sent?.v === asked && !Number.isNaN(after) && JSON.stringify(merged) === JSON.stringify(events)
-          ? ok(at, { title, events: tail, v, after })
-          : ok(at, { title, events, v });
+          ? ok(at, { title, events: tail, v, after, keep })
+          : ok(at, { title, events, v, keep });
       }
       if (at === "GET /api/docs") return ok(at, { files: await deps.docs(key) });
       const text = await deps.doc(key, param(at, "p") ?? "");

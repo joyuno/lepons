@@ -13,6 +13,7 @@ import { localStore, withRemoteStore, type FileStore } from "../main/edit-file.t
 import { latestCodexRollout, remoteRolloutScript } from "../workflow/codex.ts";
 import { localPast, parsePastListing, remoteClaudePastScript, remoteCodexPastScript } from "../workflow/past.ts";
 import { probeCommand, readWithProbe, type ProbedRead } from "../workflow/probe.ts";
+import { heldRecord, type HeldText } from "../workflow/held-record.ts";
 import { latestTranscript, latestTranscriptTail, projectSlug, remoteTranscriptTailScript, transcriptStamp } from "../workflow/transcript.ts";
 import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
 import { pickOpencodeSession } from "../workflow/opencode.ts";
@@ -110,6 +111,11 @@ export interface Machine {
    */
   record(format: RecordFormat, folder: string): Promise<string | undefined>;
   /**
+   * Claude's newest record for a folder, at least its last `bytes` (whole lines): all of it here, and over SSH
+   * kept between reads, so a read fetches only what was written since (held-record.ts). `whole` when it is all there.
+   */
+  claudeRecord(folder: string, bytes: number): Promise<HeldText | undefined>;
+  /**
    * A string that stays the same while that record does, so it need not be read
    * and parsed again. Undefined when it cannot tell: Codex's rollout is found only
    * by reading it, so it has none.
@@ -172,6 +178,12 @@ export interface MachineReach {
 }
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/**
+ * Each remote folder's Claude record as far as it has been read, by node and folder: kept here, as a machine is made anew for each use.
+ * ponytail: never let go of while Lepons runs; drop a folder's when its sessions close if memory shows it.
+ */
+const heldRecords = new Map<string, ReturnType<typeof heldRecord>>();
 
 /** The JSON in what a command printed, its stderr chatter ("Exporting session: …") left out. */
 function jsonIn(output: string): string {
@@ -249,6 +261,10 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
       tail: format === "claude" ? await latestTranscriptTail(folder) : format === "opencode" ? (await opencodeRecord(machine.run, folder, machine.windows)) ?? "" : (await latestCodexRollout(folder)) ?? "",
       now: Date.now(),
     }),
+    claudeRecord: async (folder) => {
+      const text = await latestTranscript(folder);
+      return text === undefined ? undefined : { text, whole: true };
+    },
     record: async (format, folder) => (format === "claude" ? latestTranscript(folder) : format === "opencode" ? opencodeRecord(machine.run, folder, machine.windows) : latestCodexRollout(folder)),
     recordStamp: async (format, folder) => {
       if (format === "opencode") {
@@ -446,6 +462,14 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
         () => pooled(probeCommand(dir)),
         async () => (await pooled(script)) ?? (await reach.runRemote(options(), script)),
       );
+    },
+    claudeRecord: async (folder, bytes) => {
+      if (node.home === "") return undefined;
+      const dir = `${node.home}/.claude/projects/${projectSlug(folder)}`;
+      const key = `${node.id}::${dir}`;
+      let held = heldRecords.get(key);
+      if (!held) heldRecords.set(key, (held = heldRecord(dir)));
+      return held(bytes, async (script) => (await pooled(script)) ?? (await reach.runRemote(options(), script)));
     },
     recordStamp: async (format, folder) => {
       if (format === "opencode") {

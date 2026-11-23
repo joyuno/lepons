@@ -1,12 +1,5 @@
 import type { ChatItem } from "./chat.ts";
 
-/**
- * How much of a conversation the phone asks for and draws. A PC older than
- * "flow" has no paging or "not modified" for /api/workflow: each ask sends the
- * newest 80 events through the relay (measured: 26-67 KB; in theory up to
- * 4.8 MB, 80 replies of 20,000 characters).
- */
-export const PC_WINDOW = 80;
 /** Chat rows drawn at first and per "show older": the view is a plain ScrollView, not virtualized. */
 export const CHAT_PAGE = 30;
 

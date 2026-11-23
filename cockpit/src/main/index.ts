@@ -100,7 +100,8 @@ import { parseTranscript, projectSlug, transcriptDir } from "../workflow/transcr
 import { startLlmHost, type LlmHost, type LlmLaunch } from "./llm-host.ts";
 import { LLM_KEY_ENV } from "../agent/local-llm.ts";
 import { addWorktree, goneWorktrees, localHost, mergeWorktree, movedTranscript, pendingWork, remoteHost, removeWorktree, startRepo, type WorktreeHost } from "./worktree.ts";
-import { parseCodexRollout } from "../workflow/codex.ts";
+import { parseCodexRollout, recentEvents } from "../workflow/codex.ts";
+import { PHONE_EVENTS } from "../phone/contract.ts";
 import { parseOpencodeExport } from "../workflow/opencode.ts";
 import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
@@ -1661,7 +1662,10 @@ app.whenReady().then(() => {
   // The session's internal workflow, read from Claude Code's own transcript
   // on disk -- local via fs, remote over SSH via its machine. The phone
   // asks for the same thing (workflowOf).
-  const workflowOf = async (nodeId: string, repoId: string, full = false): Promise<SessionWorkflowResult> => {
+  // `before`: the phone's "show older", the PHONE_EVENTS events before that time and whether there are more.
+  /** How far back each folder's newest events took last time: a poll starts there instead of growing to it again. */
+  const newestBytes = new Map<string, number>();
+  const workflowOf = async (nodeId: string, repoId: string, full = false, before?: number): Promise<SessionWorkflowResult> => {
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     const repo = node?.repos.find((candidate) => candidate.id === repoId);
     if (!node || !repo) return { ok: false, reason: "no_transcript" };
@@ -1682,9 +1686,26 @@ app.whenReady().then(() => {
       if (!rollout) return { ok: false, reason: "no_transcript" };
       return { ok: true, workflow: parseCodexRollout(rollout, full) };
     }
-    const jsonl = await machineOf(node).record("claude", repo.path);
-    if (jsonl === undefined) return { ok: false, reason: "no_transcript" };
-    return { ok: true, workflow: parseTranscript(jsonl, full) };
+    // Over SSH the record is read from its end only as far back as these events need: often MBs of tool output each.
+    const machine = machineOf(node);
+    // On this PC the whole record is read at once. Over SSH: doubling to the newest 50 (measured: 7-8 MB on a 28 MB record), then 4 MB more per "show older" step.
+    const keep = node.kind === "local" ? PHONE_EVENTS.local : PHONE_EVENTS.remote;
+    const place = `${nodeId}::${repo.path}`;
+    for (let bytes = before === undefined ? newestBytes.get(place) ?? 2_000_000 : 2_000_000; ; ) {
+      const held = await machine.claudeRecord(repo.path, bytes);
+      if (held === undefined) return { ok: false, reason: "no_transcript" };
+      const workflow = parseTranscript(held.text, full, Infinity);
+      const earlier = before === undefined ? workflow.events : workflow.events.filter((event) => event.at < before);
+      if (earlier.length > keep || held.whole || bytes >= (before === undefined ? 8_000_000 : 128_000_000)) {
+        if (before === undefined) {
+          newestBytes.set(place, bytes);
+          return { ok: true, workflow: { ...workflow, events: recentEvents(workflow.events) } };
+        }
+        return { ok: true, workflow: { ...workflow, events: earlier.slice(-keep), more: earlier.length > keep || !held.whole } };
+      }
+      const length = Buffer.byteLength(held.text);
+      bytes = Math.max(bytes, length) + (before === undefined ? Math.max(length, 1_000_000) : 4_000_000);
+    }
   };
   ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string) => workflowOf(nodeId, repoId));
   // What another AI is told to carry on this folder's conversation; read before the old one is replaced.

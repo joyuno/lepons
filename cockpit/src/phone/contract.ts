@@ -89,7 +89,14 @@ export type PcAccounts = Array<{ pc: string; agents: Array<{ name: string; state
  * are only the events from that time on: the phone drops what it holds from then
  * and adds these. It is sent only when that gives exactly the whole list.
  */
-export type WorkflowChange = { same: true } | (SessionWorkflow & { v: string; after?: number });
+/**
+ * How many of a conversation's events the phone is sent at a time, newest first and then per "show older" (&before=):
+ * from this PC's own disk, or over SSH, where each comes with MBs of tool output to fetch.
+ */
+export const PHONE_EVENTS = { local: 80, remote: 50 };
+
+/** `keep`: how many newest events the phone holds, cutting the oldest off after `after` (a PC before it: 80). */
+export type WorkflowChange = { same: true } | (SessionWorkflow & { v: string; after?: number; keep?: number });
 
 export type WorkflowReply = ({ ok: true } & SessionWorkflow) | Extract<SessionWorkflowResult, { ok: false }> | WorkflowChange;
 
@@ -115,7 +122,8 @@ export interface PhoneRoutes {
   "GET /api/directory": { query: "s&p"; reply: { entries: PhoneFileEntry[] } };
   "GET /api/commands": { query: "s"; reply: { commands: CommandSuggestion[] } };
   "GET /api/files": { query: "s"; reply: { files: string[] } };
-  "GET /api/workflow": { query: "s" | "s&v" | "s&v&after"; reply: WorkflowReply };
+  /** &before= asks for the events before that time instead, with `more` (a PC older than that answers as without it). */
+  "GET /api/workflow": { query: "s" | "s&v" | "s&v&after" | "s&before"; reply: WorkflowReply };
   "GET /api/docs": { query: "s"; reply: { files: string[] } };
   "GET /api/doc": { query: "s&p"; reply: { text: string } };
   "GET /api/file": { query: "s&p"; reply: Uint8Array };
@@ -171,9 +179,9 @@ export type ReplyOf<R extends PhoneRoute> = PhoneRoutes[R]["reply"];
 export type Unproven<R extends PhoneRoute> = PhoneRoutes[R] extends { body: infer B } ? { [K in keyof B]?: unknown } : never;
 
 type QueryOf<R extends PhoneRoute> = PhoneRoutes[R] extends { query: infer Q } ? Q : "";
-type Names<Q> = Q extends "s&p" ? "s" | "p" : Q extends "s" ? "s" : Q extends "s&v" ? "s" | "v" : Q extends "s&v&after" ? "s" | "v" | "after" : Q extends "s&live" ? "s" | "live" : Q extends "s&n" ? "s" | "n" : never;
+type Names<Q> = Q extends "s&p" ? "s" | "p" : Q extends "s" ? "s" : Q extends "s&v" ? "s" | "v" : Q extends "s&v&after" ? "s" | "v" | "after" : Q extends "s&live" ? "s" | "live" : Q extends "s&n" ? "s" | "n" : Q extends "s&before" ? "s" | "before" : never;
 export type QueryName<R extends PhoneRoute> = Names<QueryOf<R>>;
-type Search<Q> = Q extends "s&p" ? `?s=${string}&p=${string}` : Q extends "s" ? `?s=${string}` : Q extends "s&v" ? `?s=${string}&v=${string}` : Q extends "s&v&after" ? `?s=${string}&v=${string}&after=${string}` : Q extends "s&live" ? `?s=${string}&live=1` : Q extends "s&n" ? `?s=${string}&n=${string}` : "";
+type Search<Q> = Q extends "s&p" ? `?s=${string}&p=${string}` : Q extends "s" ? `?s=${string}` : Q extends "s&v" ? `?s=${string}&v=${string}` : Q extends "s&v&after" ? `?s=${string}&v=${string}&after=${string}` : Q extends "s&live" ? `?s=${string}&live=1` : Q extends "s&n" ? `?s=${string}&n=${string}` : Q extends "s&before" ? `?s=${string}&before=${string}` : "";
 /** Every path and query the phone may ask with this method. */
 export type UrlFor<M extends "GET" | "POST"> = { [R in PhoneRoute]: R extends `${M} ${infer P}` ? `${P}${Search<QueryOf<R>>}` : never }[PhoneRoute];
 

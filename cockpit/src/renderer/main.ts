@@ -2203,7 +2203,9 @@ function renderPanes(): void {
     ? null
     : paneChange(was.leaves, workspace.leaves().map((leaf) => leaf.id)) ?? (carried ? {} : null);
   if (carried && (!change || "added" in change || "gone" in change)) carried.line?.remove();
-  if (!change) for (const key of workspace.visibleSessions()) terminals.get(key)?.fit.fit();
+  // Not while another view covers the panel: fit() measures ~11x5 there (see refitVisiblePanes), and that size went
+  // on to the session -- a remote tmux window shrunk to 11 columns, Claude redrawing its whole history at that width.
+  if (!change && terminalPanel.hidden === false) for (const key of workspace.visibleSessions()) terminals.get(key)?.fit.fit();
   // Rebuilt strips start scrolled to the left: bring each shown tab back into view.
   for (const shown of terminalPanel.querySelectorAll<HTMLElement>(".paneTab.shown")) {
     const strip = shown.parentElement!;
@@ -4379,7 +4381,7 @@ async function showPlaced(nodeId: string, repoId: string | null, terminal: boole
 
   const view = terminalFor(key);
   renderPanes();
-  view.fit.fit();
+  if (terminalPanel.hidden === false) view.fit.fit();
 
   renderRail();
 
