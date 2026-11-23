@@ -126,6 +126,7 @@
           }
         }
       ],
+      "./plugins/optional-portrait",
       "@bacons/apple-targets",
       [
         "react-native-android-widget",

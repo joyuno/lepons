@@ -14,3 +14,12 @@ export function relativeToFolder(printed: string, folder: string | undefined): s
   const parts = path.split("/");
   return path === "" || parts.includes("..") || parts.includes("") ? undefined : path;
 }
+
+/**
+ * A printed folder as one inside the session's folder, "" for the folder
+ * itself, or undefined. Read as a name in it ("-"), which relativeToFolder
+ * places as it places a file; the folder is what holds that name.
+ */
+export function folderInFolder(printed: string, folder: string | undefined): string | undefined {
+  return relativeToFolder(`${printed.replace(/[\\/]+$/, "")}/-`, folder)?.slice(0, -2);
+}

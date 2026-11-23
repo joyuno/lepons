@@ -152,8 +152,9 @@ const api: CockpitApi = {
   prepareDragOut: (nodeId: string, path: string): Promise<boolean> => ipcRenderer.invoke(channels.prepareDragOut, nodeId, path),
   startDragOut: (): void => ipcRenderer.send(channels.startDragOut),
   clipboardFiles: (): Promise<string[]> => ipcRenderer.invoke(channels.clipboardFiles),
-  locateFile: (nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
-    ipcRenderer.invoke(channels.locateFile, nodeId, path, root),
+  locateFile: (nodeId: string, path: string, root: string, folder?: boolean): Promise<{ ok: true; path: string; folder?: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke(channels.locateFile, nodeId, path, root, folder),
+  openFolder: (nodeId: string, path: string): Promise<string | undefined> => ipcRenderer.invoke(channels.openFolder, nodeId, path),
   /** Where a file dropped from Explorer or Finder is on this PC, slashes forward. */
   pathForFile: (file: File): string => webUtils.getPathForFile(file).replace(/\\/g, "/"),
   openForEdit: (nodeId: string, path: string) => ipcRenderer.invoke(channels.openForEdit, nodeId, path),

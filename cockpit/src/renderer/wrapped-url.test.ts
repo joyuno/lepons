@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { urlsAt, type UrlRow } from "./wrapped-url.ts";
+import { pathsAt, urlsAt, type UrlRow } from "./wrapped-url.ts";
 
 const rows = (...lines: Array<string | [string, true]>): ((row: number) => UrlRow | undefined) =>
   (row) => {
@@ -62,4 +62,40 @@ test("a line that just ends early, or a short address in a wide box, is not join
   assert.deepEqual(urlsAt(rows("visit https://a.com", "next line"), 1, 80), []);
   const box = rows("┃ https://a.com                ┃", "┃ Next sentence                ┃");
   assert.deepEqual(urlsAt(box, 0, 120).map((one) => one.url), ["https://a.com"]);
+});
+
+test("a path a program broke at the terminal's edge is joined past the next line's indent, from either row", () => {
+  const first = String.raw`  C:\Users\admin\projects\lepons\.local-assets\store-header\play-fe`;
+  const at = rows(first, "    ature-1024x500.png", "", "Next");
+  for (const row of [0, 1]) {
+    const found = pathsAt(at, row, first.length);
+    assert.deepEqual(found.map((one) => [one.path, one.folder]), [[String.raw`C:\Users\admin\projects\lepons\.local-assets\store-header\play-feature-1024x500.png`, undefined]]);
+    assert.deepEqual(found[0]!.parts, [{ row: 0, index: 2, length: first.length - 2 }, { row: 1, index: 4, length: 18 }]);
+  }
+});
+
+test("a folder broken over rows is found whole, as a folder", () => {
+  const first = "Saved under /home/me/projects/lepons/mob";
+  const found = pathsAt(rows(first, "  ile/src/app/ and done."), 1, first.length);
+  assert.deepEqual(found.map((one) => [one.path, one.folder]), [["/home/me/projects/lepons/mobile/src/app", true]]);
+  assert.deepEqual(found[0]!.parts, [{ row: 0, index: 12, length: 28 }, { row: 1, index: 2, length: 12 }]);
+});
+
+test("a short path on a line that ends early, or a word at the edge, is not joined to the next line", () => {
+  const at = rows("see src/a.ts", "  b/c.md here");
+  assert.deepEqual(pathsAt(at, 0, 80).map((one) => one.path), ["src/a.ts"]);
+  assert.deepEqual(pathsAt(at, 1, 80).map((one) => one.path), ["b/c.md"]);
+  // At the edge, but a word: the path on the next row stays its own.
+  const edge = "this line ends right at the edge";
+  assert.deepEqual(pathsAt(rows(edge, "  src/a.ts:12 next"), 1, edge.length).map((one) => one.path), ["src/a.ts"]);
+  // A whole file name the program broke the line after is not glued to the next line's word.
+  const file = "changed in cockpit/src/main.ts";
+  for (const cols of [file.length, file.length + 2]) {
+    const found = pathsAt(rows(file, "  and then it built"), 0, cols);
+    assert.deepEqual(found.map((one) => [one.path, one.parts]), [["cockpit/src/main.ts", [{ row: 0, index: 11, length: 19 }]]]);
+  }
+  // The terminal's own wrap is one line, so there it joins.
+  assert.deepEqual(pathsAt(rows("see src/a.p", ["ng ok", true]), 1, 11).map((one) => one.path), ["src/a.png"]);
+  // A bare name with a line number, and a folder, on one row as before.
+  assert.deepEqual(pathsAt(rows("at main.ts:12 in /srv/app/"), 0, 80).map((one) => [one.path, one.folder]), [["main.ts", undefined], ["/srv/app", true]]);
 });

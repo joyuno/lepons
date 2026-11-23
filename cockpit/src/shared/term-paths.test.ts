@@ -18,6 +18,35 @@ test("printed file paths are found, words and addresses are not", () => {
   assert.deepEqual(found, { index: 3, text: "src/a.ts:3:9", path: "src/a.ts" });
 });
 
+test("printed folders are found: absolute ones two deep, or any with a slash at the end", () => {
+  const folders = (line: string) => findPaths(line).filter((found) => found.folder).map((found) => found.path);
+  assert.deepEqual(folders("in C:\\Users\\me\\work and /etc/nginx, ~/work/app 또는 C:/x/y"), ["C:\\Users\\me\\work", "/etc/nginx", "~/work/app", "C:/x/y"]);
+  assert.deepEqual(folders("src/ 와 docs\\ 그리고 ./out/ ../up/"), ["src", "docs", "./out", "../up"]);
+  assert.deepEqual(findPaths("see /home/me/app/."), [{ index: 4, text: "/home/me/app/", path: "/home/me/app", folder: true }]);
+  // Words with a slash, one folder deep, addresses, a host first: none.
+  assert.deepEqual(paths("and/or PC/서버 TCP/IP 1/2 /usr C:\\Users // x"), []);
+  assert.deepEqual(paths("https://x.dev/a/b/ http://x.dev/a/b github.com/a/b/ file:///C:/x/y"), []);
+  // A file is still a file, not a folder around it.
+  assert.ok(findPaths("/etc/app.conf ~/x/y.json src/a.ts /a/b.ts-old/x").every((found) => !found.folder));
+  assert.deepEqual(paths("open /srv/app/ then src/a.ts:3"), ["/srv/app", "src/a.ts"]);
+});
+
+test("a Korean particle after a folder is the sentence's, a Korean folder name is the folder's", () => {
+  const folders = (line: string) => findPaths(line).filter((found) => found.folder).map((found) => found.text);
+  assert.deepEqual(folders("/home/me/lepons에서 실행, ~/work/app를 열면 C:\\x\\web으로"), ["/home/me/lepons", "~/work/app", "C:\\x\\web"]);
+  assert.deepEqual(folders("src/app/에서 보고 ~/work/app/를 열고 docs\\web\\는"), ["src/app/", "~/work/app/", "docs\\web\\"]);
+  // One folder, then a particle, reads as "이/가": left alone.
+  assert.deepEqual(folders("docs\\는 docs/ 는"), ["docs/"]);
+  assert.deepEqual(folders("문서/보고서/ 와 /home/me/보고서 그리고 /home/me/문서에서"), ["문서/보고서/", "/home/me/보고서", "/home/me/문서"]);
+  // One letter after a Korean name may be the name's own: kept.
+  assert.deepEqual(folders("/home/me/나이 /home/me/보고서는"), ["/home/me/나이", "/home/me/보고서는"]);
+  // Not a particle after the slash: a relative path with no slash at its end, so none.
+  assert.deepEqual(folders("src/app/에서울"), []);
+  // A choice of particles is not a folder; one from a root is.
+  assert.deepEqual(paths("이름이/가 맞는지, 을/를 은/는 와/과 에서/에게 그리고 '사과(이/가) 있다' 이/가"), []);
+  assert.deepEqual(folders("./src/에서 ~/app/를"), ["./src/", "~/app/"]);
+});
+
 test("a printed path resolves from the session's folder", () => {
   assert.equal(resolvePath("C:/work/web", "C:/Users/me", "src/a.ts"), "C:/work/web/src/a.ts");
   assert.equal(resolvePath("C:/work/web/", "C:/Users/me", "./x/../b.md"), "C:/work/web/b.md");

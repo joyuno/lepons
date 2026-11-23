@@ -670,8 +670,10 @@ export interface CockpitApi {
   prepareDragOut(nodeId: string, path: string): Promise<boolean>;
   /** The OS drag of what `prepareDragOut` made ready; only while the mouse button is still down. */
   startDragOut(): void;
-  /** A printed path checked before a tab opens it: the file to open, or why not (missing, a folder, too big). */
-  locateFile(nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  /** A printed path checked before it opens: the file or folder there, or why not (missing, too big). `folder`: it looked like one, for the message. */
+  locateFile(nodeId: string, path: string, root: string, folder?: boolean): Promise<{ ok: true; path: string; folder?: true } | { ok: false; error: string }>;
+  /** A folder on this PC in Explorer or Finder; why not, when it could not be. Never another PC's. */
+  openFolder(nodeId: string, path: string): Promise<string | undefined>;
   /** Files copied in Explorer, this PC's paths; none on a Mac. */
   clipboardFiles(): Promise<string[]>;
   pathForFile(file: File): string;
@@ -968,6 +970,7 @@ export const channels = {
   prepareDragOut: "files:prepareDragOut",
   startDragOut: "files:startDragOut",
   locateFile: "files:locate",
+  openFolder: "files:open-folder",
   clipboardFiles: "files:clipboard",
   openForEdit: "files:open-for-edit",
   scanImports: "import:scan",

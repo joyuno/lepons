@@ -6,7 +6,7 @@ import { router } from "expo-router";
 import type { Connection } from "@/connection";
 import { documentKind } from "@/phone/document-kind";
 import { previewOrShare } from "@/phone/native-preview";
-import { relativeToFolder } from "@/phone/printed-path";
+import { folderInFolder, relativeToFolder } from "@/phone/printed-path";
 import { utf8 } from "@/relay/protocol";
 
 /** A 20 MiB file over the relay is ~40 frames; give it time. */
@@ -94,4 +94,17 @@ export async function openPrinted(request: Connection["request"], session: strin
   }
   const file = await fetchFile(request, session, path);
   return file ? openInViewer(file, path) : false;
+}
+
+/**
+ * A folder path tapped in the chat: where the files tab opens it ("" for the
+ * session's folder itself), once the PC lists it there. Undefined when it does
+ * not, or when it is outside the folder: the PC lists no folder there for a phone.
+ */
+export async function printedFolder(request: Connection["request"], session: string, folder: string | undefined, printed: string): Promise<string | undefined> {
+  const path = folderInFolder(printed, folder);
+  if (path === undefined) return undefined;
+  const q = encodeURIComponent;
+  const listed = await request("GET", `/api/directory?s=${q(session)}&p=${q(path)}`);
+  return listed.status === 200 ? path : undefined;
 }

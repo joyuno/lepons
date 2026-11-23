@@ -16,7 +16,7 @@ import { Appear, Crossfade, ms, Press, TypingDots, useReducedMotion } from "@/mo
 import { chatFrom, type ChatItem } from "@/phone/chat";
 import { firstDrawn, sameRow, stillAtBottom, type Flow } from "@/phone/chat-rows";
 import { LinkNotice } from "@/link-notice";
-import { fetchFile, openInViewer, openPrinted } from "@/open-file";
+import { fetchFile, openInViewer, openPrinted, printedFolder } from "@/open-file";
 import { findPaths } from "../../../../cockpit/src/shared/term-paths.ts";
 import { composerAction, formAnswered, formAnswers, menuKeys, type FormAnswer } from "@/phone/composer";
 import { documentKind } from "@/phone/document-kind";
@@ -47,8 +47,8 @@ type Attached = Picked & { key: number; path?: string; failed?: string };
  */
 const attachedBySession = new Map<string, Attached[]>();
 let attachedKey = 0;
-/** Opens a file path the agent printed (open-file.ts openPrinted); the chat's, so a tap on one goes there. */
-const PathOpen = createContext<((path: string) => void) | undefined>(undefined);
+/** Opens a file path the agent printed (open-file.ts openPrinted), or a folder in the files tab; the chat's, so a tap on one goes there. */
+const PathOpen = createContext<((path: string, folder?: boolean) => void) | undefined>(undefined);
 const q = encodeURIComponent;
 const noLabels: string[] = [];
 /** How strong a message is until the transcript shows it. */
@@ -98,7 +98,17 @@ export default function SessionScreen() {
     return () => clearTimeout(timer);
   }, [params.opening, !session]);
   const folder = session?.folder;
-  const openPath = useCallback((path: string) => {
+  /** Where the files tab opens next: a folder tapped in the chat; the folder's top when the tab is picked. */
+  const [docsAt, setDocsAt] = useState<string>();
+  const openPath = useCallback((path: string, isFolder?: boolean) => {
+    if (isFolder) {
+      void printedFolder(c.request, id, folder, path).catch(() => undefined).then((at) => {
+        if (at === undefined) return Alert.alert(t.pathMissing);
+        setDocsAt(at);
+        setSub("docs");
+      });
+      return;
+    }
     void openPrinted(c.request, id, folder, path).catch(() => false).then((opened) => {
       if (!opened) Alert.alert(t.pathMissing);
     });
@@ -303,7 +313,7 @@ export default function SessionScreen() {
           </View>
         </View>
         <View style={{ marginHorizontal: space.md }}>
-          <Segments role="tab" items={[["chat", session?.agentName || t.chat], ["term", t.terminal], ["docs", t.docs]]} value={sub} onChange={setSub} />
+          <Segments role="tab" items={[["chat", session?.agentName || t.chat], ["term", t.terminal], ["docs", t.docs]]} value={sub} onChange={(next) => { setDocsAt(undefined); setSub(next); }} />
         </View>
       </View>
       <View style={{ paddingHorizontal: space.lg }}><LinkNotice /></View>
@@ -311,7 +321,7 @@ export default function SessionScreen() {
         {c.phone && !session ? <Text style={s.empty}>{params.opening && !openGaveUp ? t.sessionOpening : params.opening ? t.openFolderFailed : t.sessionGone}</Text> : null}
         {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} loadOlder={loadOlder} /></PathOpen.Provider> : null}
         {sub === "term" ? <TerminalView key={id} id={id} /> : null}
-        {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} list={list} request={c.request} /> : null}
+        {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} start={docsAt} list={list} request={c.request} /> : null}
         {/* The menu as the PC read it, when it sends one (cockpit/src/phone/ask.ts); this phone's own reading of the screen otherwise. */}
         {sub === "chat" && session ? (
           <Composer key={`composer-${id}`} id={id} session={session}
@@ -587,11 +597,11 @@ function FlowText({ blocks, body }: { blocks: Block[]; body: object[] }) {
   );
 }
 
-/** Under an answer, at its left: copy all of it, or share it; on iOS, the files it names to open. */
+/** Under an answer, at its left: copy all of it, or share it; on iOS, the files and folders it names to open. */
 function AnswerActions({ text }: { text: string }) {
   const { c: p, s } = useSessionTheme();
   const open = useContext(PathOpen);
-  const paths = useMemo(() => (Platform.OS === "ios" && open ? [...new Set(findPaths(text).map((match) => match.path))].slice(0, 4) : []), [text, open]);
+  const paths = useMemo(() => (Platform.OS === "ios" && open ? [...new Map(findPaths(text).map((match) => [match.path, match.folder === true])).entries()].slice(0, 4) : []), [text, open]);
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -617,10 +627,10 @@ function AnswerActions({ text }: { text: string }) {
       <Press accessibilityRole="button" accessibilityLabel={t.share} hitSlop={6} onPress={() => void Share.share({ message: text }).catch(() => undefined)} style={button}>
         <SymbolView name={{ ios: "square.and.arrow.up", android: "share" }} tintColor={p.muted} size={16} />
       </Press>
-      {paths.map((path) => (
-        <Press key={path} accessibilityRole="button" accessibilityLabel={fmt(t.openPath, { name: path })} hitSlop={6} onPress={() => open!(path)}
+      {paths.map(([path, folder]) => (
+        <Press key={path} accessibilityRole="button" accessibilityLabel={fmt(t.openPath, { name: path })} hitSlop={6} onPress={() => open!(path, folder)}
           style={({ pressed }) => [{ height: 32, maxWidth: 160, flexDirection: "row", alignItems: "center", gap: space.xxs, paddingHorizontal: space.sm, borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: p.line }, pressed && { backgroundColor: p.raise }]}>
-          <SymbolView name={{ ios: "doc", android: "description" }} tintColor={p.muted} size={13} />
+          <SymbolView name={folder ? { ios: "folder", android: "folder" } : { ios: "doc", android: "description" }} tintColor={p.muted} size={13} />
           <Text style={[s.dim, { fontSize: size.caption, flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="head">{path.slice(path.lastIndexOf("/") + 1)}</Text>
         </Press>
       ))}
@@ -681,7 +691,7 @@ const ChatRow = memo(function ChatRow({ item, labels, fresh }: { item: ChatItem;
 /** `code` and **bold** as styled runs, everything else as text: never markup. */
 function Runs({ text }: { text: string }) {
   const { c: p } = useSessionTheme();
-  // A file path opens on a tap, on Android: iOS's selectable text takes no nested press, so there the paths are buttons under the answer (AnswerActions).
+  // A file or folder path opens on a tap, on Android: iOS's selectable text takes no nested press, so there the paths are buttons under the answer (AnswerActions).
   const tap = useContext(PathOpen);
   const open = Platform.OS === "android" ? tap : undefined;
   const pathStyle = { textDecorationLine: "underline", textDecorationStyle: "dotted", color: p.link } as const;
@@ -691,7 +701,7 @@ function Runs({ text }: { text: string }) {
     let at = 0;
     const pieces: ReactNode[] = [];
     for (const match of found) {
-      pieces.push(words.slice(at, match.index), <Text key={`${key}-${match.index}`} style={pathStyle} onPress={() => open!(match.path)}>{match.text}</Text>);
+      pieces.push(words.slice(at, match.index), <Text key={`${key}-${match.index}`} style={pathStyle} onPress={() => open!(match.path, match.folder)}>{match.text}</Text>);
       at = match.index + match.text.length;
     }
     pieces.push(words.slice(at));
@@ -706,12 +716,12 @@ function Runs({ text }: { text: string }) {
     : <Text key={i} style={font.bold}>{run.text}</Text>);
 }
 
-/** `code`: a tap opens it when the whole of it is a file path (`src/a.ts:12`). */
-function CodeRun({ text, open, style }: { text: string; open: ((path: string) => void) | undefined; style: object }) {
+/** `code`: a tap opens it when the whole of it is a file or folder path (`src/a.ts:12`, `src/app/`). */
+function CodeRun({ text, open, style }: { text: string; open: ((path: string, folder?: boolean) => void) | undefined; style: object }) {
   const { c: p } = useSessionTheme();
   const [found] = open ? findPaths(text) : [];
   const path = found?.text === text ? found.path : undefined;
-  return <Text style={[{ fontFamily: mono, fontSize: size.footnote, backgroundColor: p.raise }, path !== undefined && style]} onPress={path !== undefined ? () => open!(path) : undefined}>{text}</Text>;
+  return <Text style={[{ fontFamily: mono, fontSize: size.footnote, backgroundColor: p.raise }, path !== undefined && style]} onPress={path !== undefined ? () => open!(path, found!.folder) : undefined}>{text}</Text>;
 }
 
 function Inline({ text, style }: { text: string; style: object }) {
@@ -922,9 +932,10 @@ function TerminalView({ id }: { id: string }) {
 // --- files ---------------------------------------------------------------------
 
 /** File browser requests only the directory currently open. */
-function DocsView({ id, root, list, request }: { id: string; root: string | undefined; list: ReturnType<typeof folderLister>; request: Connection["request"] }) {
+function DocsView({ id, root, start, list, request }: { id: string; root: string | undefined; start: string | undefined; list: ReturnType<typeof folderLister>; request: Connection["request"] }) {
   const { c: p, s } = useSessionTheme();
-  const [history, setHistory] = useState({ paths: [""], index: 0 });
+  // Opened at a folder from the chat: back from it is the folder's top.
+  const [history, setHistory] = useState(() => navigate({ paths: [""], index: 0 }, { open: start ?? "" }));
   const path = history.paths[history.index]!;
   const [entries, setEntries] = useState<FolderEntry[] | undefined>();
   const [failed, setFailed] = useState(false);

@@ -2243,7 +2243,7 @@ app.whenReady().then(() => {
    * not, the one file in its folder whose path ends the same (an agent that
    * cd'ed into a subfolder prints paths from there). Else why not, plainly.
    */
-  ipcMain.handle(channels.locateFile, async (_event, nodeId: string, path: string, root: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => {
+  ipcMain.handle(channels.locateFile, async (_event, nodeId: string, path: string, root: string, folder?: boolean): Promise<{ ok: true; path: string; folder?: true } | { ok: false; error: string }> => {
     const node = requireNode(nodeId);
     if (typeof path !== "string" || path === "") return { ok: false, error: t("files.missing", { path: String(path) }) };
     let at = path;
@@ -2257,8 +2257,20 @@ app.whenReady().then(() => {
         size = await sizeOn(node, at);
       }
     }
-    if (size === "missing" || size === "dir" || size > previewLimit) return { ok: false, error: await unreadable(node, at) };
+    if (size === "dir") return { ok: true, path: at, folder: true };
+    // One that looked like a folder is said to be a missing folder, not a missing file.
+    if (size === "missing" && folder === true) return { ok: false, error: t("files.folderMissing", { path: machineOf(node).nativePath(at) }) };
+    if (size === "missing" || size > previewLimit) return { ok: false, error: await unreadable(node, at) };
     return { ok: true, path: at };
+  });
+  // A printed folder on this PC opens in its own file manager. Another PC's
+  // never does: there is none of its own here (the rail's tree shows it).
+  ipcMain.handle(channels.openFolder, async (_event, nodeId: string, path: string): Promise<string | undefined> => {
+    const node = requireNode(nodeId);
+    if (node.kind !== "local" || typeof path !== "string" || path === "") return t("files.folderMissing", { path: String(path) });
+    if ((await sizeOn(node, path)) !== "dir") return t("files.folderMissing", { path: normalize(path) });
+    const failure = await shell.openPath(normalize(path));
+    return failure === "" ? undefined : failure;
   });
 
   const openNodeFile = async (nodeId: string, path: string): Promise<string | undefined> => {

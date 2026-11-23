@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { renderMarkdown, selectionSource } from "./markdown.ts";
 
-import { findPaths, resolvePath, typedPaths } from "../shared/term-paths.ts";
+import { resolvePath, typedPaths } from "../shared/term-paths.ts";
 import { localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
 import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
@@ -60,7 +60,7 @@ import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, p
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
 import { agentLogos, platformLogos } from "./agent-logos.ts";
-import { urlsAt } from "./wrapped-url.ts";
+import { pathsAt, urlsAt } from "./wrapped-url.ts";
 import type { MapInput } from "./workflowmap/model.ts";
 import type { Question } from "./workflowmap/panel.ts";
 import { forPhone, stepsOf } from "./workflowmap/summary.ts";
@@ -579,6 +579,32 @@ function closeSearch(treeKey: string): void {
   treeFileLists.delete(treeKey);
   searchTyping = undefined;
   renderRail();
+}
+
+/**
+ * A folder in `repo` shown in the rail's tree: the rail, its PC and the
+ * folder's files opened down to it, as a search hit's folder is. False when
+ * it is not in `repo`.
+ */
+function revealFolder(node: NodeConfig, repo: RepoConfig, path: string): boolean {
+  const base = repo.path.replace(/\/+$/, "");
+  if (path !== base && !path.startsWith(`${base}/`)) return false;
+  if (document.body.classList.contains("railCollapsed")) {
+    setRailCollapsed(false);
+    afterRailResize();
+  }
+  if (foldedNodes.delete(node.id)) localStorage.setItem("foldedNodes", JSON.stringify([...foldedNodes]));
+  if (repo.worktree && foldedWorktrees.delete(`${node.id}\0${repo.worktree.of}`)) localStorage.setItem("foldedWorktrees", JSON.stringify([...foldedWorktrees]));
+  // A project and its worktrees hold the same files: one of their views open at a time, as the row's chevron keeps it.
+  const family = repo.worktree?.of ?? repo.id;
+  for (const each of node.repos) if (each.id !== repo.id && (each.id === family || each.worktree?.of === family)) openTrees.delete(`${node.id}\0${each.id}`);
+  const treeKey = `${node.id}\0${repo.id}`;
+  openTrees.add(treeKey);
+  const parts = path.slice(base.length + 1).split("/").filter(Boolean);
+  for (let i = 1; i <= parts.length; i++) openTrees.add(`${node.id}\0${base}/${parts.slice(0, i).join("/")}`);
+  revealKey = parts.length > 0 ? `${node.id}\0${path}` : undefined;
+  closeSearch(treeKey);
+  return true;
 }
 
 /**
@@ -1570,6 +1596,7 @@ function attachTmuxBar(key: string, element: HTMLElement): void {
   if (!found || found.node.kind !== "ssh" || !found.node.useTmux) return;
   // No position set here: park() keeps a hidden terminal absolute and off-screen, and renderPanes() makes a shown one
   // relative (the bar's anchor). Setting it here put a parked terminal back into the body's flex row, squeezing the app.
+  element.classList.add("tmuxPane");
   const bar = document.createElement("div");
   bar.className = "tmuxBar";
   bar.hidden = true;
@@ -1728,25 +1755,29 @@ function terminalFor(key: string) {
   // address) the same way. Without this xterm asked in an English confirm()
   // and opened nothing.
   term.options.linkHandler = { activate: openUrl, hover: urlTip, leave: () => hideTip() };
-  // A program that breaks a long address over lines -- at the terminal's
-  // edge, or at its own box's side -- still opens it whole (wrapped-url.ts).
+  // A program that breaks a long address or path over lines -- at the
+  // terminal's edge, or at its own box's side -- still opens it whole (wrapped-url.ts).
+  const rowAt = (index: number) => {
+    const row = term.buffer.active.getLine(index);
+    if (!row) return undefined;
+    // Up to the last cell with something in it: a wide letter fills two.
+    let cells = row.length;
+    while (cells > 0 && !row.getCell(cells - 1)?.getChars().trim()) cells--;
+    if (cells > 0 && row.getCell(cells - 1)?.getWidth() === 2) cells++;
+    return { text: row.translateToString(true), wrapped: row.isWrapped, cells };
+  };
+  const rangeOf = (parts: Array<{ row: number; index: number; length: number }>) => {
+    const [first, last] = [parts[0]!, parts.at(-1)!];
+    const buffer = term.buffer.active;
+    return {
+      start: cellRange(buffer.getLine(first.row), first.row + 1)(first.index, first.length).start,
+      end: cellRange(buffer.getLine(last.row), last.row + 1)(last.index, last.length).end,
+    };
+  };
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const buffer = term.buffer.active;
-      const rowAt = (index: number) => {
-        const row = buffer.getLine(index);
-        if (!row) return undefined;
-        // Up to the last cell with something in it: a wide letter fills two.
-        let cells = row.length;
-        while (cells > 0 && !row.getCell(cells - 1)?.getChars().trim()) cells--;
-        if (cells > 0 && row.getCell(cells - 1)?.getWidth() === 2) cells++;
-        return { text: row.translateToString(true), wrapped: row.isWrapped, cells };
-      };
       callback(urlsAt(rowAt, y - 1, term.cols).map((match) => ({
-        range: {
-          start: cellRange(buffer.getLine(match.parts[0]!.row), match.parts[0]!.row + 1)(match.parts[0]!.index, match.parts[0]!.length).start,
-          end: cellRange(buffer.getLine(match.parts.at(-1)!.row), match.parts.at(-1)!.row + 1)(match.parts.at(-1)!.index, match.parts.at(-1)!.length).end,
-        },
+        range: rangeOf(match.parts),
         text: match.url,
         hover: (event) => urlTip(event, match.url),
         leave: () => hideTip(),
@@ -1756,24 +1787,26 @@ function terminalFor(key: string) {
   });
   // A file path the agent printed opens in a tab of this pane's column, on
   // the session's PC, also with Ctrl+click. Relative to the session's folder.
+  // A folder opens in Explorer or Finder on this PC; another PC's is shown in
+  // the rail's tree, as no file manager here can show it.
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const row = term.buffer.active.getLine(y - 1);
-      const range = cellRange(row, y);
       const found = findByKey(key);
       if (!found) return callback(undefined);
-      callback(findPaths(row?.translateToString(true) ?? "").map((match) => ({
-        range: range(match.index, match.text.length),
+      callback(pathsAt(rowAt, y - 1, term.cols).map((match) => ({
+        range: rangeOf(match.parts),
         text: match.path,
-        hover: (event) => showTipAt(t("link.openFile"), event),
+        hover: (event) => showTipAt(t(match.folder ? "link.openPath" : "link.openFile"), event),
         leave: () => hideTip(),
         activate: (event, printed) => {
           if (!(event.ctrlKey || event.metaKey)) return;
           const path = resolvePath(found.repo.path, found.node.home, printed);
           // Checked first, so a path that is not there says so, with the full path it looked at.
-          void cockpit.locateFile(found.node.id, path, found.repo.path).then((located) => {
+          void cockpit.locateFile(found.node.id, path, found.repo.path, match.folder).then((located) => {
             if (!located.ok) return showTipAt(located.error, event);
-            openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
+            if (!located.folder) return openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
+            if (found.node.kind === "local") return void cockpit.openFolder(found.node.id, located.path).then((problem) => problem && showTipAt(problem, event));
+            if (!revealFolder(found.node, found.repo, located.path)) showTipAt(t("files.folderOutside", { path: located.path }), event);
           });
         },
       })));
