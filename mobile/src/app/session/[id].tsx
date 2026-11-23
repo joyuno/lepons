@@ -1470,13 +1470,15 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
       Alert.alert(t.cameraDenied, undefined, [{ text: t.cancel, style: "cancel" }, { text: t.openSettings, onPress: () => void Linking.openSettings() }]);
       return;
     }
-    if (!picked) return;
-    const key = ++attachedKey;
-    const chosen = picked;
-    setFiles((now) => [...now, { ...chosen, key }]);
+    if (picked.length === 0) return;
+    // All shown at once, then sent one after another: each is its own upload over the relay.
+    const chosen = picked.map((one) => ({ ...one, key: ++attachedKey }));
+    setFiles((now) => [...now, ...chosen]);
     setNote({ text: "", bad: false });
-    const got = await upload(c.request, id, chosen).catch(() => "failed" as const);
-    setFiles((now) => now.map((file) => (file.key !== key ? file : got === "big" || got === "failed" ? { ...file, failed: got === "big" ? t.attachBig : t.attachFailed } : { ...file, path: got })));
+    for (const one of chosen) {
+      const got = await upload(c.request, id, one).catch(() => "failed" as const);
+      setFiles((now) => now.map((file) => (file.key !== one.key ? file : got === "big" || got === "failed" ? { ...file, failed: got === "big" ? t.attachBig : t.attachFailed } : { ...file, path: got })));
+    }
   };
   // On an iPhone a picker asked for while the menu is still fading out is not shown, and nothing comes back:
   // it opens once the menu has gone (the Modal's onDismiss, iOS only), or after the fade if that never comes.
