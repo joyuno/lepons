@@ -14,7 +14,7 @@ import type { PhonePc as PcPhonePc, PhoneState as PcPhoneState, PhoneUsage, Phon
  *   MAX_INPUT, matchFiles, reflow), run against the originals.
  */
 export type { PhoneSubagent, PhoneSummary, SessionWorkflow, WorkflowItem } from "../../../cockpit/src/shared/ipc.ts";
-export type { CommandSuggestion, PcAccounts, PhoneSessionView } from "../../../cockpit/src/phone/contract.ts";
+export type { CommandSuggestion, PcAccounts, PhoneBot, PhoneSessionView, When } from "../../../cockpit/src/phone/contract.ts";
 
 export const moods = ["waiting", "failed", "working", "done", "idle"] as const;
 export type Mood = (typeof moods)[number];
@@ -26,11 +26,11 @@ const listRank: Record<Mood, number> = { waiting: 0, working: 1, failed: 2, done
 export const byUrgency = <S extends { mood: Mood; agentGone?: boolean }>(sessions: readonly S[]): S[] =>
   [...sessions].sort((a, b) => (a.agentGone ? 5 : listRank[a.mood]) - (b.agentGone ? 5 : listRank[b.mood]));
 
-type Placed = { pc: string; folder: string; worktreeOf?: string; worktree?: string };
+type Placed = { pc: string; folder: string; worktreeOf?: string; worktree?: string; bot?: string };
 
 /** "lepons · 로그인 수정" for a worktree's session, so it never reads as a second "lepons"; the folder's name for any other. */
 export const folderName = (session: Placed): string =>
-  session.worktreeOf ? `${session.worktreeOf} · ${session.worktree ?? session.folder}` : session.folder;
+  session.bot ? `${session.bot} · ${session.folder}` : session.worktreeOf ? `${session.worktreeOf} · ${session.worktree ?? session.folder}` : session.folder;
 
 /**
  * Each worktree's sessions right under the last session of its original

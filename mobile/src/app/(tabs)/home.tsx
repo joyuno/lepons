@@ -1,13 +1,14 @@
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { useEffect, useRef, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { LinkNotice } from "@/link-notice";
+import { PcReconnectButton, usePcReconnect } from "@/pc-reconnect";
 import { halted, useConnection } from "@/connection";
 import { fmt, t, type StringKey } from "@/i18n";
 import { Level, Press, Spin, SwapText, Tally } from "@/motion";
-import { folderName, lampState, type AgentUsage, type PhonePc, type PhoneSessionView, type UsageWindow } from "@/phone/types";
+import { folderName, lampState, type AgentUsage, type PhoneSessionView, type UsageWindow } from "@/phone/types";
 import { modelLabel, modelStacks, tokenDates, tokenStatsOf, tokenStatsTimer, usdByAgent, usdCeiling, usdDays, usdText, usdTick, type TokenStats } from "@/phone/token-stats";
 import { font, Group, Lamp, radius, Screen, Section, SessionRow, size, Skeleton, space, useTheme } from "@/ui";
 
@@ -27,7 +28,7 @@ export default function Dashboard() {
   const count = (mood: PhoneSessionView["mood"]) => sessions.filter((session) => session.mood === mood).length;
   const waiting = sessions.filter((session) => session.mood === "waiting");
   const active = sessions.find((session) => session.mood === "working" && (session.summary?.now || session.summary?.goal || session.preview)) ?? sessions.find((session) => session.mood === "working");
-  const [pcNote, setPcNote] = useState("");
+  const pcReconnect = usePcReconnect();
   const [tokens, setTokens] = useState<TokenStats>();
   const [tokenBusy, setTokenBusy] = useState(false);
   const [project, setProject] = useState("all");
@@ -65,11 +66,6 @@ export default function Dashboard() {
   }, [c.demo, c.signedIn, c.status.kind]);
 
   // The PC's own "다시 연결"; it allows one per 10 s per PC.
-  const reconnectPc = async (pc: PhonePc) => {
-    const reply = await c.request("POST", "/api/pc-reconnect", { body: { id: pc.id } }).catch(() => undefined);
-    setPcNote(reply?.status === 200 ? t.reconnectAsked : reply?.status === 429 ? t.reconnectBusy : t.reconnectFailed);
-  };
-
   const pullToRefresh = () => {
     c.refresh();
     void refreshTokens();
@@ -142,20 +138,20 @@ export default function Dashboard() {
 
         {c.phone ? (
           <Section title={t.pcs}>
-            {c.phone.pcs.length === 0 ? <Text style={s.dim}>{t.noPcs}</Text> : null}
-            {c.phone.pcs.map((pc, i) => (
-              <View key={`${pc.label}-${i}`} style={[s.row, { minHeight: 32 }]}>
-                <Lamp state={pc.state} size={8} />
-                <Text style={[s.dim, { flex: 1 }]} numberOfLines={1}>{pc.label} {"\u00b7"} {t[`pc_${pc.state}`]}</Text>
-                {/* Failed, or switched off on the PC (not connected at start): this one PC is tried again, never all at once. */}
-                {pc.id !== undefined && (pc.state === "failed" || pc.state === "off") ? (
-                  <Pressable accessibilityRole="button" accessibilityLabel={`${pc.label}, ${t.reconnect}`} hitSlop={8} onPress={() => void reconnectPc(pc)} style={({ pressed }) => ({ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
-                    <SymbolView name={{ ios: "arrow.clockwise", android: "refresh" }} tintColor={p.text} size={20} />
-                  </Pressable>
-                ) : null}
+            {c.phone.pcs.length === 0 ? <Text style={s.dim}>{t.noPcs}</Text> : (
+              // One card, a hairline between PCs; every PC with an id can be asked to reconnect, that one only.
+              <View style={[s.card, { paddingVertical: 0, gap: 0 }]}>
+                {c.phone.pcs.map((pc, i) => (
+                  <View key={`${pc.label}-${i}`} style={[s.row, { minHeight: 48, ...(i > 0 ? { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: p.line } : {}) }]}>
+                    <Lamp state={pc.state} size={8} />
+                    <Text style={[s.text, font.semibold, { flexShrink: 1 }]} numberOfLines={1}>{pc.label}</Text>
+                    <Text style={[s.dim, { flex: 1, color: pc.state === "failed" ? p.stop : p.muted }]} numberOfLines={1}>{t[`pc_${pc.state}`]}</Text>
+                    {pc.id !== undefined ? <PcReconnectButton label={pc.label} state={pc.state} busy={pcReconnect.busy.has(pc.id)} onPress={() => void pcReconnect.reconnect(pc.id!)} /> : null}
+                  </View>
+                ))}
               </View>
-            ))}
-            {pcNote ? <Text style={s.dim} accessibilityLiveRegion="polite">{pcNote}</Text> : null}
+            )}
+            {pcReconnect.note ? <Text style={s.dim} accessibilityLiveRegion="polite">{pcReconnect.note.text}</Text> : null}
           </Section>
         ) : null}
       </View>

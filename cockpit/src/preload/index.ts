@@ -10,6 +10,7 @@ import type {
   DialogRequest,
   EditedText,
   NodeConfig,
+  OpenWith,
   PassphraseRequest,
   PhoneAnswer,
   PhoneAskForm,
@@ -65,6 +66,7 @@ const api: CockpitApi = {
   moveWindow: (dx: number, dy: number, start: boolean) => ipcRenderer.send(channels.moveWindow, dx, dy, start),
   listNodes: () => ipcRenderer.invoke(channels.listNodes),
   addLocalFolder: () => ipcRenderer.invoke(channels.addLocalFolder),
+  takeOpenWith: () => ipcRenderer.invoke(channels.takeOpenWith),
   addRemote: (destination: string, agent: AgentKind, password?: string, alternates?: string[]) =>
     ipcRenderer.invoke(channels.addRemote, destination, agent, password, alternates),
   addRemoteFolder: (nodeId: string, path: string) =>
@@ -90,21 +92,21 @@ const api: CockpitApi = {
   retryShare: (nodeId: string) => ipcRenderer.send(channels.retryShare, nodeId),
   recheckTmux: (nodeId: string) => ipcRenderer.invoke(channels.recheckTmux, nodeId),
   installTmux: (nodeId: string) => ipcRenderer.invoke(channels.installTmux, nodeId),
-  openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string) =>
-    ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt),
-  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string) =>
-    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt),
+  openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string) =>
+    ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt, bot),
+  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string) =>
+    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt, bot),
   writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
   resizeSession: (key: string, cols: number, rows: number) =>
     ipcRenderer.send(channels.resizeSession, key, cols, rows),
   tmuxScroll: (key: string, to?: number, find?: { text: string; up: boolean }) => ipcRenderer.invoke(channels.tmuxScroll, key, to, find),
   stopSession: (nodeId: string, repoId: string | null) =>
     ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
-  sessionWorkflow: (nodeId: string, repoId: string) =>
-    ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId),
+  sessionWorkflow: (nodeId: string, repoId: string, bot?: string) =>
+    ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId, bot),
   handoffText: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.handoffText, nodeId, repoId),
-  sessionTurn: (nodeId: string, repoId: string, workedMs: number) =>
-    ipcRenderer.invoke(channels.sessionTurn, nodeId, repoId, workedMs),
+  sessionTurn: (nodeId: string, repoId: string, workedMs: number, bot?: string) =>
+    ipcRenderer.invoke(channels.sessionTurn, nodeId, repoId, workedMs, bot),
   restartAgent: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.restartAgent, nodeId, repoId),
   pastConversations: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.pastConversations, nodeId, repoId),
   listDelegations: () => ipcRenderer.invoke(channels.listDelegations),
@@ -127,6 +129,26 @@ const api: CockpitApi = {
   llmKeyLock: () => ipcRenderer.invoke(channels.llmKeyLock),
   llmKeyReveal: (id: string) => ipcRenderer.invoke(channels.llmKeyReveal, id),
   llmPlatformModels: (platform: string, keyId: string) => ipcRenderer.invoke(channels.llmPlatformModels, platform, keyId),
+  scheduleList: () => ipcRenderer.invoke(channels.scheduleList),
+  scheduleLogs: (id: string) => ipcRenderer.invoke(channels.scheduleLogs, id),
+  scheduleLog: (id: string, name: string) => ipcRenderer.invoke(channels.scheduleLog, id, name),
+  scheduleSave: (form) => ipcRenderer.invoke(channels.scheduleSave, form),
+  schedulePause: (id: string, paused: boolean) => ipcRenderer.invoke(channels.schedulePause, id, paused),
+  scheduleRemove: (id: string) => ipcRenderer.invoke(channels.scheduleRemove, id),
+  botList: () => ipcRenderer.invoke(channels.botList),
+  botSave: (form) => ipcRenderer.invoke(channels.botSave, form),
+  botRemove: (id: string) => ipcRenderer.invoke(channels.botRemove, id),
+  botPause: (id: string, paused: boolean) => ipcRenderer.invoke(channels.botPause, id, paused),
+  osJobs: (nodeId: string) => ipcRenderer.invoke(channels.osJobs, nodeId),
+  osJobsCached: () => ipcRenderer.invoke(channels.osJobsCached),
+  routines: (nodeId: string) => ipcRenderer.invoke(channels.routines, nodeId),
+  codexAutomations: () => ipcRenderer.invoke(channels.codexAutomations),
+  osJobControl: (nodeId: string, jobId: string, action, when?: string) => ipcRenderer.invoke(channels.osJobControl, nodeId, jobId, action, when),
+  osJobNames: () => ipcRenderer.invoke(channels.osJobNames),
+  osJobRename: (nodeId: string, jobId: string, name: string) => ipcRenderer.invoke(channels.osJobRename, nodeId, jobId, name),
+  osJobDescribe: (items, locale: string) => ipcRenderer.invoke(channels.osJobDescribe, items, locale),
+  botRunNow: (id: string) => ipcRenderer.invoke(channels.botRunNow, id),
+  botMissed: (id: string, run: boolean) => ipcRenderer.invoke(channels.botMissed, id, run),
   worktreeChanges: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.worktreeChanges, nodeId, repoId),
   onRepoAction: (handler: (action: RepoAction, nodeId: string, repoId: string) => void) => {
     ipcRenderer.on(channels.repoAction, (_event, action: RepoAction, nodeId: string, repoId: string) =>
@@ -201,6 +223,9 @@ const api: CockpitApi = {
   },
   onNodes: (handler: (nodes: NodeConfig[]) => void) => {
     ipcRenderer.on(channels.nodesChanged, (_event, list: NodeConfig[]) => handler(list));
+  },
+  onOpenWith: (handler: (opens: OpenWith[]) => void) => {
+    ipcRenderer.on(channels.openWith, (_event, opens: OpenWith[]) => handler(opens));
   },
   onShareChanged: (handler: (nodeId: string, nudge: string[], restart: string[]) => void) => {
     ipcRenderer.on(channels.shareChanged, (_event, nodeId: string, nudge: string[], restart: string[] = []) =>

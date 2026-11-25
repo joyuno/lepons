@@ -10,6 +10,9 @@ import { machineFor, type MachineReach } from "../machine/machine.ts";
 import type { ConnectOptions } from "../ssh/connect.ts";
 import { channels, type NodeConfig, type PhoneSession, type PhoneSettingsView } from "../shared/ipc.ts";
 import { startPhoneHost, type PhoneHostDeps } from "./phone-host.ts";
+import { agents } from "../agent/agents.ts";
+import type { Bot } from "../agent/bots.ts";
+import type { Session } from "../session/state.ts";
 
 const KEY = "pc::repo";
 const TOKEN = "ExponentPushToken[abc]";
@@ -60,6 +63,7 @@ function setup(t: TestContext, options: { kind?: "local" | "ssh"; saved?: object
     safeStorage: { isEncryptionAvailable: () => false, encryptString: (text) => Buffer.from(text), decryptString: (data) => data.toString() },
     nodes: { list: () => [node] },
     sessions: new Map(),
+    lastInputAt: new Map(),
     screens: new Map(),
     sessionExecutor: new Map(),
     shareOutages: new Map(),
@@ -68,6 +72,7 @@ function setup(t: TestContext, options: { kind?: "local" | "ssh"; saved?: object
     accountsOf: async () => [],
     machineOf: (machine) => machineFor(machine, reach),
     stopSessionKey: async () => true,
+    bots: { list: () => [], busy: () => undefined, run: async () => {}, pause: () => {}, settleMissed: async () => {}, open: async () => undefined },
     ...options.overrides,
   });
   t.after(() => host.stop());
@@ -766,4 +771,43 @@ test("a key an earlier build kept in the clear is sealed on start, and stays the
   assert.equal(await handlers.get(channels.phoneTotpCheck)!({}, totpAt("JBSWY3DPEHPK3PXP", stepOf(Date.now()))), true, "the same key opens");
   const renewed = await handlers.get(channels.phoneTotp)!({}, true) as { secret: string };
   assert.equal(JSON.stringify(settings()).includes(renewed.secret), false, "a new key is sealed too");
+});
+
+test("the 봇 tab's bots go by names, the profile only where the phone's viewer opens it", async (t) => {
+  const bot: Bot = { id: "b1", name: "정리봇", nodeId: "pc", repoId: "repo", folder: "/x/repo", executor: "claude", role: "", fresh: true,
+    jobs: [{ id: "j1", when: { minute: 0, hour: 9 }, cron: "0 9 * * *", instructions: "a" }] };
+  const { deps, handlers } = setup(t, { overrides: { bots: {
+    list: () => [bot], busy: () => "waiting", run: async () => {}, pause: () => {}, settleMissed: async () => {}, open: async () => undefined,
+  } } });
+  const [first] = deps.bots();
+  assert.equal(first!.folder, "repo");
+  assert.equal(first!.executor, agents.claude.label);
+  assert.equal(first!.busy, "waiting");
+  assert.equal(first!.key, "pc::repo::bot:정리봇");
+  assert.equal(first!.profile, undefined, "a dot folder stays hidden from the phone by default");
+  await handlers.get(channels.setShowHidden)!({}, true);
+  assert.equal(deps.bots()[0]!.profile, ".lepons/bots/정리봇.md");
+});
+
+test("대화 열기 opens a bot's session unless it is up or connecting", async (t) => {
+  const bot: Bot = { id: "b1", name: "정리봇", nodeId: "pc", repoId: "repo", folder: "/x/repo", executor: "claude", role: "", fresh: true, jobs: [] };
+  const key = "pc::repo::bot:정리봇";
+  const opened: string[] = [];
+  const sessions = new Map<string, Session>();
+  const { deps } = setup(t, { overrides: { sessions, bots: {
+    list: () => [bot], busy: () => undefined, run: async () => {}, pause: () => {}, settleMissed: async () => {},
+    open: async (one) => void opened.push(one.id),
+  } } });
+  deps.openBot("nope");
+  deps.openBot("b1");
+  assert.deepEqual(opened, ["b1"]);
+  sessions.set(key, { state: { kind: "ready" } } as unknown as Session);
+  deps.openBot("b1");
+  assert.deepEqual(opened, ["b1"], "one up is left as it is");
+  sessions.set(key, { state: { kind: "connecting" } } as unknown as Session);
+  deps.openBot("b1");
+  assert.deepEqual(opened, ["b1"], "one connecting is left as it is");
+  sessions.set(key, { state: { kind: "closed" } } as unknown as Session);
+  deps.openBot("b1");
+  assert.deepEqual(opened, ["b1", "b1"], "a closed one is opened again");
 });

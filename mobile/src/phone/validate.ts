@@ -1,7 +1,7 @@
 import { modeLine, ruleLine } from "./status.ts";
 import {
   accountStates, moods, pcStates, stepKinds,
-  type AccountState, type AgentUsage, type CommandSuggestion, type PcAccounts, type PhoneState, type PhoneSubagent, type PhoneSummary, type UsageWindow, type WorkflowItem,
+  type AccountState, type AgentUsage, type CommandSuggestion, type PcAccounts, type PhoneBot, type PhoneState, type PhoneSubagent, type PhoneSummary, type UsageWindow, type When, type WorkflowItem,
 } from "./types.ts";
 
 /**
@@ -137,7 +137,7 @@ export function stateOf(data: unknown): PhoneState | undefined {
   const sessions = list(data.sessions, 500, (s) =>
     isObj(s) && str(s.id, 64) && /^[0-9a-f]+$/.test(s.id) && str(s.pc, 200) && str(s.folder, 500) &&
     (moods as readonly unknown[]).includes(s.mood) && optStr(s.preview, 2000) && typeof s.agent === "boolean"
-      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || (!(s.preview as string).includes("\n") && (modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string))) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s), ...autoOf(s.auto), ...askOf(s.ask) }
+      ? { id: s.id, pc: s.pc, folder: s.folder, mood: s.mood as PhoneState["sessions"][number]["mood"], agent: s.agent, ...(s.agentGone === true ? { agentGone: true } : {}), ...(s.preview === undefined || (!(s.preview as string).includes("\n") && (modeLine.test((s.preview as string).trim()) || ruleLine.test(s.preview as string))) ? {} : { preview: s.preview as string }), ...paneOf(s.pane), ...stepsOf(s.steps), ...summaryOf(s.summary), ...subagentsOf(s.subagents), ...(str(s.agentName, 100) ? { agentName: s.agentName } : {}), ...(s.mainFree === true ? { mainFree: true } : {}), ...worktreeOf(s), ...(named(s.bot) ? { bot: s.bot } : {}), ...autoOf(s.auto), ...askOf(s.ask) }
       : undefined);
   const pcs = list(data.pcs, 100, (p) =>
     isObj(p) && str(p.label, 200) && (pcStates as readonly unknown[]).includes(p.state)
@@ -268,4 +268,52 @@ export function commandsOf(body: unknown): CommandSuggestion[] | undefined {
   if (!isObj(body)) return undefined;
   return list(body.commands, 1000, (c) =>
     isObj(c) && str(c.name, 200) && c.name.startsWith("/") && str(c.description, 1000) ? { name: c.name, description: c.description } : undefined);
+}
+
+const isoTime = (value: unknown): value is string => str(value, 40) && !Number.isNaN(Date.parse(value));
+const nullable = <T>(value: unknown, read: (v: unknown) => T | undefined): T | null | undefined => (value === null ? null : read(value));
+/** Why a run was skipped (busy, unreachable, ...): the scheduler's code, never text. */
+const reasonOf = (value: unknown) => (str(value, 40) && /^[\w-]+$/.test(value) ? { reason: value } : {});
+const runStatusOf = (value: unknown): PhoneBot["runs"][number]["status"] | undefined => (value === "done" || value === "failed" || value === "skipped" || value === "missed" ? value : undefined);
+const botStates = ["running", "waiting", "idle", "paused", "missed"] as const;
+
+/** A job's time as the PC keeps it: a minute, an hour unless hourly, weekdays (0 = Sunday) unless every day. */
+export function whenOf(w: unknown): When | undefined {
+  const within = (v: unknown, hi: number): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= hi;
+  if (!isObj(w) || !within(w.minute, 59) || (w.hour !== undefined && !within(w.hour, 23))) return undefined;
+  const days = w.days === undefined ? undefined : list(w.days, 7, (d) => (within(d, 6) ? d : undefined));
+  if (w.days !== undefined && !days?.length) return undefined;
+  return { minute: w.minute, ...(w.hour === undefined ? {} : { hour: w.hour as number }), ...(days ? { days } : {}) };
+}
+
+/** /api/bots: a bad bot is dropped, a bad job or run only itself. Names and codes only: the PC sends no answers. */
+export function botsOf(body: unknown): PhoneBot[] | undefined {
+  if (!isObj(body)) return undefined;
+  return list(body.bots, 200, (b): PhoneBot | undefined => {
+    if (!isObj(b) || !str(b.id, 64) || !named(b.name) || !str(b.pc, 200) || !hexId(b.pcId) || !str(b.folder, 500) || !str(b.executor, 100)) return undefined;
+    if (typeof b.fresh !== "boolean" || typeof b.paused !== "boolean" || !(botStates as readonly unknown[]).includes(b.state)) return undefined;
+    const next = nullable(b.next, (v) => (isoTime(v) ? v : undefined));
+    const last = nullable(b.last, (v) => {
+      const status = isObj(v) ? runStatusOf(v.status) : undefined;
+      return isObj(v) && status && isoTime(v.at) ? { at: v.at, status, ...reasonOf(v.reason) } : undefined;
+    });
+    const missed = nullable(b.missed, (v) => (isObj(v) && Number.isInteger(v.count) && (v.count as number) >= 1 && isoTime(v.at) && str(v.jobId, 64) ? { count: v.count as number, at: v.at, jobId: v.jobId } : undefined));
+    const jobs = list(b.jobs, 100, (j) => {
+      const when = isObj(j) ? whenOf(j.when) : undefined;
+      return isObj(j) && when && str(j.id, 64) && str(j.text, 400) ? { id: j.id, when, text: j.text } : undefined;
+    });
+    const runs = list(b.runs, 10, (r) => {
+      const status = isObj(r) ? runStatusOf(r.status) : undefined;
+      return isObj(r) && status && isoTime(r.at) ? { at: r.at, status, ...reasonOf(r.reason), ...(str(r.jobText, 400) ? { jobText: r.jobText } : {}) } : undefined;
+    });
+    const sessionId = nullable(b.sessionId, (v) => (hexId(v) ? v : undefined));
+    if (next === undefined || last === undefined || missed === undefined || !jobs || !runs || sessionId === undefined) return undefined;
+    // A path in the folder only, as the files tab takes it.
+    const path = b.profilePath;
+    const profile = str(path, 500) && path !== "" && !/^[\\/]|^[A-Za-z]:/.test(path) && !path.split(/[\\/]/).includes("..") ? { profilePath: path } : {};
+    return {
+      id: b.id, name: b.name, pc: b.pc, pcId: b.pcId, folder: b.folder, executor: b.executor, fresh: b.fresh, paused: b.paused,
+      state: b.state as PhoneBot["state"], next, last, missed, jobs, runs, ...profile, sessionId,
+    };
+  });
 }

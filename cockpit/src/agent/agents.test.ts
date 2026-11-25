@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 
-import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
+import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
 import { startupLine, type Session } from "../session/state.ts";
 
 /** The command that registers the endpoint with an agent that has one. */
@@ -439,6 +439,16 @@ test("a resumed Antigravity is told to fork once its screen settles", () => {
     s3.emit("data", Buffer.from("> "));
     mock.timers.tick(1500);
     assert.deepEqual(s3.written, ["hand over"], "typed once what follows the answer settles");
+
+    let up = false;
+    const s4 = fake();
+    typeWhenSettled(s4 as unknown as Session, "봇 머리말", 1500, startQuestion, () => up);
+    s4.emit("data", Buffer.from("$ "));
+    mock.timers.tick(60_000);
+    assert.deepEqual(s4.written, [], "an AI not known to be up gets nothing: it may be a bare shell");
+    up = true;
+    mock.timers.tick(1500);
+    assert.deepEqual(s4.written, ["봇 머리말"], "typed at the first quiet after it is known up, with no new output needed");
   } finally {
     mock.timers.reset();
   }
@@ -461,5 +471,27 @@ test("only a UUID is taken as a conversation id", () => {
   assert.equal(isConversationId("01A18035-32EA-7882-AEA8-6AF87BAC56F9"), true);
   for (const bad of ["", "x; rm -rf ~", "01a18035-32ea-7882-aea8-6af87bac56f9 && x", "../01a18035", 42]) {
     assert.equal(isConversationId(bad), false, String(bad));
+  }
+});
+
+// A bot runs with the checks skipped, so its Claude is told what it may never run; nobody else is.
+test("a Claude bot's launch denies the hard-to-undo commands, quoted for each shell", () => {
+  const posix = botDenyFlag(agents.claude, "posix", true);
+  assert.match(posix, /^--disallowedTools 'Bash\(rm \*\)' /);
+  assert.ok(posix.includes("'PowerShell(Remove-Item *)'") && posix.includes("'Bash(git push *--force*)'") && posix.includes("'Bash(git reset --hard*)'"));
+  const cmd = botDenyFlag(agents.claude, "cmd", true);
+  assert.ok(cmd.includes('"Bash(rm *)"') && cmd.includes('"PowerShell(git clean*)"') && !cmd.includes("'"));
+  assert.equal(botDenyFlag(agents.codex, "posix", true), "", "Codex has no such flag");
+  assert.equal(botDenyFlag(agents.claude, "posix", false), "", "a person's Claude session is unchanged");
+});
+
+// --disallowedTools takes every word after it: on the composed line (launchFlags + extra, then resume) nothing may follow it.
+test("the deny flag stays last on a bot's launch line, new or resumed", () => {
+  for (const shell of ["posix", "cmd"] as const) {
+    const deny = botDenyFlag(agents.claude, shell, true);
+    const flags = launchFlags(agents.claude, shell, true, "정리 봇", `--settings x ${deny}`);
+    assert.ok(flags.endsWith(` ${deny}`), shell);
+    const line = resumeLine(agents.claude, (command) => command, shell, flags, "01a18035-32ea-7882-aea8-6af87bac56f9");
+    for (const launch of line.replace(/^\{ |; \}$/g, "").split(" || ")) assert.ok(launch.endsWith(deny), `${shell}: ${launch.slice(0, 60)}`);
   }
 });

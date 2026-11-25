@@ -61,3 +61,10 @@ export function pcFailReason(states: SessionState[], outage: { reason?: string }
 export function turnsEnded(before: ReadonlyMap<string, string>, now: Iterable<{ key: string; mood: SessionStatus }>): string[] {
   return [...now].filter((s) => before.get(s.key) === "working" && (s.mood === "waiting" || s.mood === "done" || s.mood === "idle")).map((s) => s.key);
 }
+
+/**
+ * What a terminal sends by itself, not a person typing: focus and mouse reports,
+ * device attribute and cursor position replies (tmux and codex ask for those), OSC replies.
+ * ponytail: a modified F3 reads as a cursor report on row 1 (both `\x1b[1;2R`); harmless here.
+ */
+export const isTerminalReport = (data: string): boolean => /^\x1b\[(<|I$|O$|\?|>|\d+;\d+R)|^\x1b\]/.test(data);

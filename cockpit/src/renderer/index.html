@@ -250,6 +250,7 @@
       .railTabs .railTab { white-space: nowrap; overflow: hidden; min-width: 0; }
       .railTabs.iconOnly .railTab > [data-i18n] { display: none; }
       .railTabs .railTab:hover { border-color: var(--muted); }
+      .railTabs .railTab:disabled { opacity: 0.45; cursor: default; border-color: var(--line); }
       .railTabs .railTab.on { border-color: var(--live); }
       .railTabIcon { flex: none; }
       #railToggle {
@@ -397,7 +398,7 @@
       .grip { cursor: grab; color: var(--muted); }
       .machineHead > .lamp { margin-right: 2px; }
       /* An icon, not a word: a word wrapped letter by letter once the head ran short. */
-      .reconnectBtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 18px; padding: 0; border-radius: 9px; border: 1px solid var(--stop); color: var(--stop); background: transparent; cursor: pointer; }
+      .reconnectBtn { flex: none; display: inline-grid; place-items: center; width: 22px; height: 18px; padding: 0; border-radius: 5px; border: 0; color: var(--stop); background: transparent; cursor: pointer; }
       .reconnectBtn .lucide { margin: 0; }
       .reconnectBtn svg { width: 12px; height: 12px; }
       .reconnectBtn:hover { background: color-mix(in srgb, var(--stop) 12%, transparent); }
@@ -512,6 +513,21 @@
         width: 26px; height: 24px; border-radius: 5px; font-size: 14px; line-height: 1;
       }
       #zoomBar button:hover { background: var(--raise); color: var(--text); }
+      /* "‹ 터미널" on every view but the terminal, at the content's top-left. It sits
+         in a 44px band: the workflow map's own strip (its words start after it),
+         the others' top margin -- a margin, not padding, so the map's measuring
+         and scrolling see the same box as before. The automation page measures
+         nothing: its band is a border in its own colour, so it reads as one page. */
+      /* Plain words, a little bolder than the text; the colour moves on hover and the global ring shows keyboard focus. */
+      #viewBack {
+        position: absolute; left: 14px; top: 9px; z-index: 6; height: 26px; padding: 0 6px; border: 0; border-radius: 5px; background: none;
+        color: var(--muted); font: 600 13px var(--sans); cursor: pointer;
+      }
+      #viewBack[hidden] { display: none; }
+      #viewBack:hover { color: var(--text); }
+      #map, #guide { margin-top: 44px; }
+      #automation { border-top: 44px solid var(--panel); }
+      #workflow .wmStrip { padding-left: 116px; }
       #zoomPct {
         min-width: 46px; text-align: center; font-family: var(--sans); font-variant-numeric: tabular-nums;
         font-size: 11px; color: var(--muted); user-select: none;
@@ -649,6 +665,159 @@
       }
       .wmPill[hidden] { display: none; }
       #workflow { flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; background: var(--ground); }
+      /* --- the 자동화 view (automation.ts): today's line, bot cards, a quiet
+         paged job list whose buttons show on hover, Claude routines under it. */
+      #automation { flex: 1; min-height: 0; min-width: 0; overflow: auto; background: var(--panel); }
+      .auto { display: flex; flex-direction: column; gap: 22px; min-height: 100%; box-sizing: border-box; padding: 22px 28px; font-size: 13px; }
+      .autoSection { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+      .autoHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+      .autoTitle { font-size: 13px; font-weight: 600; }
+      /* A section's title folds it: a caret before the words says which way. */
+      .autoFold { border: 0; background: none; padding: 0; cursor: pointer; }
+      .autoFold::before { content: "▾"; display: inline-block; width: 14px; color: var(--muted); }
+      .autoFold[aria-expanded="false"]::before { content: "▸"; }
+      .autoMuted { color: var(--muted); font-size: 12px; }
+      .autoMuted.bad, .autoSaid { color: var(--stop); font-size: 12px; margin: 0; }
+      p.autoMuted { margin: 0; }
+      .autoDim { color: var(--dim); }
+      .autoGo { margin-left: auto; padding: 7px 14px; border-radius: 5px; border: 1px solid var(--live); background: var(--live); color: #21160a; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+      .autoBtn { padding: 7px 12px; border-radius: 5px; border: 1px solid var(--line); background: var(--raise); font-size: 12.5px; cursor: pointer; }
+      .autoBtn:hover { border-color: var(--muted); }
+      .autoLink { align-self: flex-start; border: 0; background: none; padding: 2px 0; color: var(--link); font-size: 12px; cursor: pointer; }
+      .autoLink:hover:not(:disabled) { color: var(--text); text-decoration: underline; }
+      .autoLink:disabled { color: var(--dim); cursor: default; }
+      .autoHead .autoLink { align-self: auto; }
+      .autoHead .autoCrumb { color: var(--muted); font-size: 12.5px; }
+      .autoLine { position: relative; height: 64px; margin-top: 12px; }
+      .autoTrack, .autoGone { position: absolute; left: 0; top: 18px; height: 2px; background: var(--line); }
+      .autoTrack { right: 0; }
+      .autoGone { background: var(--idle); }
+      .autoNow { position: absolute; top: 4px; width: 2px; height: 30px; background: var(--live); }
+      .autoNowTag { position: absolute; top: -14px; transform: translateX(-50%); color: var(--live); font-size: 11px; font-weight: 600; }
+      .autoDot { position: absolute; top: 15px; width: 8px; height: 8px; margin-left: -4px; padding: 0; border: 0; border-radius: 50%; background: var(--muted); cursor: pointer; }
+      .autoDot:hover { background: var(--text); }
+      .autoHeadEnd { margin-left: auto; }
+      /* Today's point tooltip: #hoverTip's surface, with a chip in it. */
+      .autoTip {
+        position: fixed; z-index: 99; max-width: 380px; pointer-events: none;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+        padding: 7px 10px; font-size: 11.5px; color: var(--text); line-height: 1.5;
+        box-shadow: 0 10px 24px -8px rgba(0, 0, 0, .55);
+      }
+      .autoTip[hidden] { display: none; }
+      .autoTip .autoMuted { font-size: 11px; }
+      .autoTipLine .autoSrc { margin-left: 6px; }
+      @keyframes autoFlash { from { background: color-mix(in srgb, var(--live) 28%, transparent); } }
+      .autoFlash { animation: autoFlash 1.8s var(--ease) both; }
+      .autoDot.left { top: 14px; width: 10px; height: 10px; margin-left: -5px; box-sizing: border-box; border: 2px solid var(--muted); background: var(--panel); }
+      .autoDot.next { border-color: var(--live); }
+      .autoTicks { position: absolute; left: 0; right: 0; top: 30px; display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; }
+      .autoNextTag { position: absolute; top: 46px; transform: translateX(-50%); font-size: 11.5px; white-space: nowrap; }
+      .autoCards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+      .autoCard { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); cursor: pointer; }
+      .autoCard:hover, .autoCard:focus-visible { border-color: var(--muted); outline: none; }
+      .autoCard:has(.lamp[data-status="waiting"]) { border-color: var(--live-dim); }
+      .autoCardHead { display: flex; align-items: center; gap: 8px; }
+      .autoCardHead strong { font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .autoCardHead .autoMuted { margin-left: auto; white-space: nowrap; }
+      .autoCard.paused strong, .autoCard.paused .autoCardBody { color: var(--muted); }
+      .autoCardBody { font-size: 12.5px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+      .autoCardFoot { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--muted); font-size: 12px; }
+      .autoCardFoot .autoActs { margin-left: auto; }
+      .autoCardWait { display: none; color: var(--live); }
+      .autoCard:has(.lamp[data-status="waiting"]) .autoCardWait { display: inline; }
+      .autoCard:has(.lamp[data-status="waiting"]) .autoCardNext { display: none; }
+      .autoMissed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; color: var(--live); font-size: 12px; }
+      .autoMissed > span { margin-right: auto; }
+      .autoMissed .autoBtn { padding: 4px 10px; font-size: 12px; }
+      .lamp.fail { background: var(--stop); }
+      .autoActs { display: flex; gap: 2px; justify-content: flex-end; visibility: hidden; }
+      .autoCard:hover .autoActs, .autoCard:focus-within .autoActs,
+      .autoJob:hover .autoActs, .autoJob:focus-within .autoActs, .autoJob.hot .autoActs { visibility: visible; }
+      .autoIb { width: 28px; height: 28px; display: inline-grid; place-items: center; border: 0; border-radius: 5px; background: none; color: var(--muted); cursor: pointer; }
+      .autoIb:hover, .autoIb:focus-visible { background: var(--line); color: var(--text); outline: none; }
+      .autoIb:disabled { opacity: .35; cursor: default; background: none; color: var(--muted); }
+      /* A refresh icon while it reads: it turns, and a press does nothing. */
+      .autoIb.spinning { cursor: progress; }
+      .autoIb.spinning svg { animation: setSpin 1s linear infinite; }
+      .autoTools .autoIb { width: 24px; height: 24px; margin: -4px 0; }
+      .autoIb[aria-disabled="true"] { opacity: .35; cursor: default; }
+      .autoPager { display: flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+      .autoPager .autoIb { font-size: 16px; line-height: 1; }
+      .autoPc { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+      .autoPc[aria-pressed="true"] { border-color: var(--live); color: var(--text); }
+      .autoTools { margin-left: auto; display: flex; gap: 14px; }
+      .autoJobs { display: flex; flex-direction: column; }
+      .autoJob { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto 192px; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 6px; }
+      .autoJobText { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      .autoJobSub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+      .autoAi { margin-right: 5px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--link); font-size: 10px; }
+      .autoRename { width: 100%; box-sizing: border-box; font-size: 13px; }
+      .autoFilters { display: flex; flex-wrap: wrap; gap: 6px; }
+      .autoHead .switch[aria-checked="true"] { color: var(--text); }
+      .autoHead .switch[aria-checked="true"] i { background: color-mix(in srgb, var(--live) 35%, transparent); }
+      .autoHead .switch[aria-checked="true"] i::after { background: var(--live); }
+      .autoJob:hover, .autoJob.hot { background: var(--raise); }
+      .autoJobName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .autoJobName.off { color: var(--muted); }
+      .autoSrc { margin-left: 8px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10.5px; }
+      .autoWhen { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+      .autoLog {
+        max-height: 260px; overflow: auto; margin: 4px 10px 8px 34px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+        background: var(--ground); font: 12px var(--mono); white-space: pre-wrap; word-break: break-word; user-select: text;
+      }
+      .autoSet { display: flex; flex-direction: column; }
+      .autoSection > .autoLog { margin: 0; }
+      .autoSet .setSchedForm { margin: 6px 0 10px; }
+      .autoBotHead h2 { margin: 0; font-size: 18px; font-weight: 600; }
+      .autoBotTools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+      .autoMenu { display: flex; gap: 6px; }
+      .autoBotGrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 28px; }
+      .autoSide { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+      .autoProfile { padding: 16px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); line-height: 1.75; white-space: pre-line; }
+      .autoProfile p { margin: 0 0 12px; }
+      .autoProfile .autoRule { margin: 0; color: var(--live); font-size: 12.5px; }
+      .autoWork { display: grid; grid-template-columns: 120px minmax(0, 1fr) 28px; gap: 12px; align-items: start; padding: 8px 10px; border-radius: 6px; white-space: pre-line; }
+      .autoWork:hover { background: var(--raise); }
+      /* See-through, not hidden: closing the bot dialog gives the focus back to the pencil that opened it. */
+      .autoWork .autoIb { opacity: 0; margin-top: -4px; }
+      .autoWork:hover .autoIb, .autoWork .autoIb:focus-visible { opacity: 1; }
+      /* The bot form's linkable jobs: one grid, so names, chips and times line up across rows; a row is its label (display: contents). */
+      .autoLinks { display: grid; grid-template-columns: auto minmax(0, 1fr) auto minmax(0, auto); align-items: center; gap: 6px 10px; }
+      .autoLinks > .setNote { grid-column: 1 / -1; }
+      .autoLinkRow { display: contents; cursor: pointer; }
+      .autoLinkRow .autoSrc { margin-left: 0; justify-self: start; white-space: nowrap; }
+      .autoLinkRow .autoWhen { white-space: normal; text-align: right; }
+      .autoFormGroup { display: flex; flex-direction: column; gap: 8px; }
+      .autoFormGroup + .autoFormGroup { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 6px; }
+      .autoAddJob { font-size: 13px; }
+      .autoSub { margin: 6px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+      .autoRun { display: grid; grid-template-columns: 14px 120px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 6px 0; font-size: 12.5px; }
+      .autoFormJobs { display: flex; flex-direction: column; gap: 12px; }
+      .autoFormJob { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; border-radius: 6px; }
+      .autoFormJob.dragging { opacity: .45; }
+      .autoFormJobFields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-left: 10px; border-left: 2px solid var(--line); }
+      .autoHandleSide { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+      .autoHandle { width: 26px; height: 28px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: grab; }
+      .autoHandle:hover, .autoHandle[aria-expanded="true"] { background: var(--raise); color: var(--text); }
+      .autoHandleTools { display: flex; flex-direction: column; gap: 2px; }
+      .autoHandleTools[hidden] { display: none; }
+      .autoHandleTools .autoIb { width: 26px; height: 24px; font-size: 15px; }
+      .autoFormFold > summary { cursor: pointer; }
+      .autoFormFold[open] > summary { margin-bottom: 8px; }
+      /* The new-schedule and bot dialogs: title, a body that scrolls, and a footer that stays on screen. */
+      dialog.autoDialog { padding: 0; width: min(580px, calc(100vw - 48px)); max-height: 85vh; }
+      dialog.autoDialog[open] { display: flex; flex-direction: column; }
+      .autoDialogHead { margin: 0; padding: 18px 22px 8px; }
+      .autoDialogBody { flex: 1; min-height: 0; overflow: auto; padding: 0 22px 10px; }
+      .autoDialogBody:focus-visible { outline: none; }
+      .autoDialogFoot { display: flex; align-items: center; gap: 12px; padding: 12px 22px; border-top: 1px solid var(--line); }
+      .autoDialogFoot > p { flex: 1; min-width: 0; margin: 0; }
+      /* A note's own display would show it empty, taking the row's room and pushing the buttons to the middle. */
+      .autoDialogFoot > p[hidden] { display: none; }
+      :is(#settingsPanel, .autoSet).autoDialogFoot .setButtons { margin: 0 0 0 auto; flex-direction: row-reverse; justify-content: flex-start; }
+      label.autoCheck { display: flex; align-items: center; gap: 8px; margin: 2px 0; color: var(--text); font-size: 12.5px; }
+      @media (max-width: 760px) { .autoBotGrid { grid-template-columns: minmax(0, 1fr); } }
       /* --- the workflow map (workflowmap/): a canvas with its strip, zoom bar,
          focus bar and right panel over it. Every colour is a theme variable:
          the canvas reads the same ones (paint.ts themeFrom). */
@@ -924,55 +1093,55 @@
       #settingsPanel label:has(input:checked) { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
       #settingsPanel label:has(input:focus-visible) { outline: 2px solid var(--live); outline-offset: 2px; }
       #settingsPanel input:focus-visible { outline: none; }
-      #settingsPanel .setButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+      :is(#settingsPanel, .autoSet) .setButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
       #settingsPanel .setPetDelete {
         margin-left: auto; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;
         border: 1px solid var(--line); background: var(--raise); color: var(--muted);
       }
       #settingsPanel .setPetDelete:hover { border-color: var(--muted); color: var(--text); }
-      #settingsPanel .setButtons button {
+      :is(#settingsPanel, .autoSet) .setButtons button {
         padding: 7px 12px; border-radius: 5px; cursor: pointer;
         border: 1px solid var(--line); background: var(--raise);
       }
-      #settingsPanel .setButtons button:hover { border-color: var(--muted); }
-      #settingsPanel .setButtons button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
-      #settingsPanel select {
+      :is(#settingsPanel, .autoSet) .setButtons button:hover { border-color: var(--muted); }
+      :is(#settingsPanel, .autoSet) .setButtons button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      :is(#settingsPanel, .autoSet) select {
         display: block; width: 100%; max-width: 440px; margin: 6px 0; padding: 9px 12px; border: 1px solid var(--line);
         border-radius: 8px; background: var(--ground); color: var(--text); font-size: 13px; cursor: pointer;
       }
-      #settingsPanel select:hover { border-color: var(--muted); }
-      #settingsPanel select:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+      :is(#settingsPanel, .autoSet) select:hover { border-color: var(--muted); }
+      :is(#settingsPanel, .autoSet) select:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
       #settingsPanel .setStepper { display: flex; align-items: center; gap: 8px; margin: 6px 0 14px; }
       #settingsPanel .setStepper .setButtons { margin-top: 0; }
       #settingsPanel .setStepper output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
       /* The AI accounts tab: PCs as pills wearing their rail lamp, then one
          card row per AI -- name, state badge, its one button on the right. */
-      #settingsPanel .setChips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
-      #settingsPanel .setChips:empty { display: none; }
-      #settingsPanel .setChips button {
+      :is(#settingsPanel, .autoSet) .setChips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+      :is(#settingsPanel, .autoSet) .setChips:empty { display: none; }
+      :is(#settingsPanel, .autoSet) .setChips button {
         display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
         border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 12.5px;
       }
-      #settingsPanel .setChips button:hover { border-color: var(--muted); }
-      #settingsPanel .setChips button[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
-      #settingsPanel .setAccount {
+      :is(#settingsPanel, .autoSet) .setChips button:hover { border-color: var(--muted); }
+      :is(#settingsPanel, .autoSet) .setChips button[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
+      :is(#settingsPanel, .autoSet) .setAccount {
         display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 440px; margin: 6px 0; padding: 9px 12px;
         border: 1px solid var(--line); border-radius: 8px; background: var(--ground);
       }
-      #settingsPanel .setAccount .setButtons { margin: 0 0 0 auto; }
-      #settingsPanel .setAccount .setMoney { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
-      #settingsPanel .setAccount .setButtons button { padding: 5px 12px; }
-      #settingsPanel .setBadge {
+      :is(#settingsPanel, .autoSet) .setAccount .setButtons { margin: 0 0 0 auto; }
+      :is(#settingsPanel, .autoSet) .setAccount .setMoney { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+      :is(#settingsPanel, .autoSet) .setAccount .setButtons button { padding: 5px 12px; }
+      :is(#settingsPanel, .autoSet) .setBadge {
         padding: 2px 8px; border-radius: 999px; font-size: 11px; color: var(--muted);
         border: 1px solid var(--line); background: var(--panel);
       }
-      #settingsPanel .setBadge.good { color: var(--go); border-color: color-mix(in srgb, var(--go) 40%, var(--line)); }
-      #settingsPanel .setBadge.bad { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
-      #settingsPanel .setNote { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
+      :is(#settingsPanel, .autoSet) .setBadge.good { color: var(--go); border-color: color-mix(in srgb, var(--go) 40%, var(--line)); }
+      :is(#settingsPanel, .autoSet) .setBadge.bad { color: var(--stop); border-color: color-mix(in srgb, var(--stop) 40%, var(--line)); }
+      :is(#settingsPanel, .autoSet) .setNote { flex-basis: 100%; margin: 0; color: var(--muted); font-size: 12px; }
       /* 내 API 키: a row per key, then the form that adds one. */
       #settingsPanel .setKeyLogo { display: inline-flex; }
       #settingsPanel .setKeyLogo svg, #settingsPanel .setKeyForm .setChips svg { width: 16px; height: 16px; flex: none; }
-      #settingsPanel .setAccount .setLink { margin-left: auto; }
+      :is(#settingsPanel, .autoSet) .setAccount .setLink { margin-left: auto; }
       #settingsPanel .setKeyForm { display: flex; flex-direction: column; gap: 10px; max-width: 440px; margin: 18px 0 0; }
       #settingsPanel .setKeyForm .setButtons { margin: 0; }
       #settingsPanel .setKeyForm .setLink { align-self: flex-start; }
@@ -982,8 +1151,8 @@
       #settingsPanel .setKeyFull { font-family: var(--mono); color: var(--text); white-space: normal; word-break: break-all; user-select: text; flex-basis: 100%; order: 9; }
       #settingsPanel .setEye { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
       #settingsPanel .setEye svg { width: 15px; height: 15px; }
-      #settingsPanel .setAccount .setEye { margin-left: auto; }
-      #settingsPanel .setAccount .setEye ~ .setLink { margin-left: 0; }
+      :is(#settingsPanel, .autoSet) .setAccount .setEye { margin-left: auto; }
+      :is(#settingsPanel, .autoSet) .setAccount .setEye ~ .setLink { margin-left: 0; }
       #settingsPanel .setEye:hover, #settingsPanel .setEye[aria-pressed="true"] { color: var(--text); border-color: var(--muted); }
       /* Usage chart: the phone's (home.tsx UsdBars) -- a week of stacked bars under a dashed line at the axis top. */
       #settingsPanel .setChart { margin: 0 0 16px; padding: 14px 16px 12px; border: 1px solid var(--line); border-radius: 10px; }
@@ -999,14 +1168,31 @@
       #settingsPanel .setChartBar i { display: block; min-height: 1px; }
       #settingsPanel .setChartBar i + i { border-bottom: 2px solid var(--ground); }
       #settingsPanel .setChartNone { flex: 1; align-self: flex-end; padding-bottom: 4px; text-align: center; color: var(--muted); font-size: 11px; }
-      #settingsPanel .setButtons + .setChips { margin-top: 12px; }
+      :is(#settingsPanel, .autoSet) .setButtons + .setChips { margin-top: 12px; }
       #settingsPanel .setChartDays { display: flex; gap: 8px; margin: 6px 0 0 52px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
       #settingsPanel .setChartDays span { flex: 1; text-align: center; }
       #settingsPanel .setChartDays .peak { color: var(--text); font-weight: 600; }
       #settingsPanel .setChartLegend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 10px; color: var(--muted); font-size: 11px; }
       #settingsPanel .setChartLegend span { display: inline-flex; align-items: center; gap: 6px; }
       #settingsPanel .setChartLegend i { width: 8px; height: 8px; border-radius: 2px; }
-      #settingsPanel .setNote.bad { color: var(--stop); }
+      :is(#settingsPanel, .autoSet) .setNote.bad { color: var(--stop); }
+      /* 예약 작업: a row per schedule; opened, its output and buttons, or its form. */
+      :is(#settingsPanel, .autoSet) .setSched { max-width: 560px; }
+      :is(#settingsPanel, .autoSet) .setSchedDetails { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; }
+      :is(#settingsPanel, .autoSet) .setSchedDetails select, :is(#settingsPanel, .autoSet) .setSchedForm select { margin: 0; }
+      :is(#settingsPanel, .autoSet) .setSchedDetails .setButtons { margin: 0; align-items: center; }
+      :is(#settingsPanel, .autoSet) .setSchedForm { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; max-width: 440px; margin: 10px 0 14px; }
+      :is(#settingsPanel, .autoSet) .setSchedForm .setButtons, :is(#settingsPanel, .autoSet) .setSchedForm .setChips { margin: 0; }
+      :is(#settingsPanel, .autoSet) .setSchedWhen { display: flex; gap: 8px; }
+      :is(#settingsPanel, .autoSet) .setSchedWhen > * { flex: 1; min-width: 0; }
+      :is(#settingsPanel, .autoSet) .setSchedWhen [hidden] { display: none; }
+      :is(#settingsPanel, .autoSet) .setSchedForm input[type="time"] {
+        padding: 8px 10px; background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 5px; font: 13px var(--sans);
+      }
+      :is(#settingsPanel, .autoSet) .setLog {
+        max-height: 260px; overflow: auto; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+        background: var(--panel); font: 12px var(--mono); white-space: pre-wrap; word-break: break-word; user-select: text;
+      }
       /* Usage by AI and model under the chart: one table its width, figures right-aligned in tabular digits. */
       #settingsPanel .setUsage { width: 100%; border-collapse: collapse; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 13px; font-variant-numeric: tabular-nums; }
       #settingsPanel .setUsage th, #settingsPanel .setUsage td { padding: 7px 14px; text-align: left; font-weight: 400; }
@@ -1027,15 +1213,15 @@
       /* 원격 PC 관리: a count line, then one card per PC -- lamp, name and
          address as one button that opens its details, a switch, and ⋯. */
       #settingsPanel .setSummary { display: flex; align-items: center; gap: 12px; max-width: 440px; color: var(--muted); font-size: 12px; }
-      #settingsPanel .setLink { border: 0; background: none; padding: 2px 0; color: var(--link); font-size: 12px; cursor: pointer; }
+      :is(#settingsPanel, .autoSet) .setLink { border: 0; background: none; padding: 2px 0; color: var(--link); font-size: 12px; cursor: pointer; }
       #settingsPanel .setSummary .setLink { margin-left: auto; color: var(--muted); }
-      #settingsPanel .setLink:hover { color: var(--text); text-decoration: underline; }
-      #settingsPanel .setRemoteMain {
+      :is(#settingsPanel, .autoSet) .setLink:hover { color: var(--text); text-decoration: underline; }
+      :is(#settingsPanel, .autoSet) .setRemoteMain {
         flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px;
         border: 0; background: none; padding: 0; text-align: left; cursor: pointer;
       }
-      #settingsPanel .setRemoteMain strong { white-space: nowrap; }
-      #settingsPanel .setMuted { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      :is(#settingsPanel, .autoSet) .setRemoteMain strong { white-space: nowrap; }
+      :is(#settingsPanel, .autoSet) .setMuted { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #settingsPanel .setRemote .setNote p { margin: 6px 0 0; }
       #settingsPanel .setRemote .setNote .setLink { margin-top: 4px; }
       #settingsPanel .setSwitch {
@@ -1729,8 +1915,16 @@
           <button type="button" id="usageToggle" class="iconBtn"></button>
           <span id="usageText"></span>
         </div>
-        <button class="railBtn" id="openBroadcast" data-i18n="broadcast.open" hidden></button>
         <button class="railBtn primary" id="addMachine" data-i18n="rail.addMachine"></button>
+        <!-- Tools beside the views below: one instruction to several sessions, and the bots. -->
+        <div class="railTabs">
+          <button class="railBtn railTab" id="openBroadcast">
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg><span data-i18n="broadcast.short"></span>
+          </button>
+          <button class="railBtn railTab" id="openBots">
+            <svg class="railTabIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg><span data-i18n="rail.bots"></span>
+          </button>
+        </div>
         <div class="railTabs">
           <!-- An icon beside each word: two plain words at the rail's foot went unseen. -->
           <button class="railBtn railTab" id="openMap">
@@ -1752,11 +1946,13 @@
         <div id="map" hidden></div>
         <div id="guide" hidden></div>
         <div id="workflow" hidden></div>
+        <div id="automation" hidden></div>
         <div id="zoomBar" hidden>
           <button id="zoomOut" type="button" title="−">−</button>
           <span id="zoomPct">100%</span>
           <button id="zoomIn" type="button" title="+">+</button>
         </div>
+        <button id="viewBack" type="button" hidden data-i18n="view.backToTerminal"></button>
       </div>
     </main>
 

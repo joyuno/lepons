@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sharedReads } from "../machine/machine.ts";
 import type { RepoCatalog } from "./catalog.ts";
 import { delegateAgents, type AgentKind } from "../agent/agents.ts";
+import { MAX_SCHEDULE_TEXT, parseWhen, type When } from "../agent/schedule.ts";
 
 /**
  * Cross-machine delegation, mediated by the cockpit.
@@ -21,6 +22,61 @@ export interface DelegationHub {
     executor?: AgentKind,
   ): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }>;
   check(id: string): Promise<{ ok: true; report: string } | { ok: false; error: string }>;
+  /** Puts a schedule on the folder's machine, once someone at this PC says yes (agent/schedule.ts). */
+  schedule(request: ScheduleRequest): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }>;
+  /** The schedules this caller may see, each with its latest run. */
+  schedules(repo?: string): Promise<{ ok: true; report: string } | { ok: false; error: string }>;
+  unschedule(id: string): Promise<{ ok: true; detail: string } | { ok: false; error: string }>;
+  /** Makes a bot (a named session with a profile file and timetables), once someone at this PC says yes. */
+  bot(request: BotRequest): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }>;
+  bots(): Promise<{ ok: true; report: string } | { ok: false; error: string }>;
+  /** Changes a bot through the same question as making one; a no changes nothing. */
+  updateBot(request: BotUpdate): Promise<{ ok: true; detail: string } | { ok: false; error: string }>;
+}
+
+/** A create_bot call; each job's `when` was already checked by parseWhen. */
+export interface BotRequest {
+  repo: string;
+  name: string;
+  role: string;
+  executor?: AgentKind;
+  /** A new conversation each run (the default) or carry on the last one. */
+  fresh: boolean;
+  jobs: Array<{ when: string; instructions: string }>;
+}
+
+/** An update_bot call: the bot and only the fields to change. */
+export type BotUpdate = { id: string } & Partial<Pick<BotRequest, "role" | "executor" | "fresh" | "jobs">>;
+
+/** What create_bot and update_bot share. */
+const botFields = {
+  role: z.string().describe(`What the bot is for; at most ${MAX_SCHEDULE_TEXT} characters`),
+  executor: z.enum(delegateAgents as [AgentKind, ...AgentKind[]]).optional().describe("Agent to run; defaults to the machine's selected agent"),
+  fresh: z.boolean().optional().describe("Start a new conversation each run (default true); false carries on the last one"),
+  jobs: z.array(z.object({
+    when: z.string().describe("hourly | daily HH:MM | weekdays HH:MM | weekly DAY HH:MM | a 5-field cron; at most hourly"),
+    instructions: z.string().describe(`What to do at that time; at most ${MAX_SCHEDULE_TEXT} characters`),
+  })),
+};
+
+/** Checked before the hub hears of it: a bad timetable needs no machine and no question. */
+function badTimetable(jobs: Array<{ when: string }>): string | undefined {
+  for (const job of jobs) {
+    const parsed = parseWhen(job.when);
+    if (!parsed.ok) return parsed.error;
+  }
+  return undefined;
+}
+
+/** A schedule_task call, its `when` already checked by parseWhen. */
+export interface ScheduleRequest {
+  repo: string;
+  when: When;
+  cron: string;
+  instructions: string;
+  executor?: AgentKind;
+  precheck?: string;
+  name?: string;
 }
 
 /**
@@ -58,7 +114,8 @@ export function createMcpServer(catalog: RepoCatalog, hub: DelegationHub): McpSe
         "holds, what a file in it says -- is answered by calling list_repos " +
         "first, never by inspecting this machine's network.\n\n" +
         "read_file and search_repo read; they cannot change anything. To have " +
-        "a file edited on the machine that owns it, use delegate_task.",
+        "a file edited on the machine that owns it, use delegate_task. To run a " +
+        "task on a timetable -- one that goes on while this PC is off -- use schedule_task.",
     },
   );
 
@@ -272,6 +329,130 @@ export function createMcpServer(catalog: RepoCatalog, hub: DelegationHub): McpSe
         return { isError: true, content: [{ type: "text" as const, text: outcome.error }] };
       }
       return { content: [{ type: "text" as const, text: outcome.report }] };
+    },
+  );
+
+  const text = (value: string) => [{ type: "text" as const, text: value }];
+
+  server.registerTool(
+    "schedule_task",
+    {
+      title: "Run a task on a timetable, on the machine that owns the folder",
+      description:
+        "Registers a recurring headless agent run with that machine's own scheduler (cron on macOS/Linux, " +
+        "Task Scheduler on Windows), so it keeps running while this PC and Lepons are off; that machine " +
+        "must be on. Times are its local time. Someone at the Lepons window must approve it first. " +
+        "Results come back through list_schedules, and to the paired phone while Lepons runs.",
+      inputSchema: {
+        repo: z.string().describe("Repository id from list_repos, or the path of this session's own project folder"),
+        when: z.string().describe("hourly | daily HH:MM | weekdays HH:MM | weekly DAY HH:MM | a 5-field cron 'M H * * DOW'; at most hourly"),
+        instructions: z.string().describe(`What the agent should do on each run; at most ${MAX_SCHEDULE_TEXT} characters, as the approval shows it whole`),
+        executor: z.enum(delegateAgents as [AgentKind, ...AgentKind[]]).optional().describe("Agent to run; defaults to the machine's selected agent"),
+        precheck: z.string().optional().describe("Shell command run first in the folder (PowerShell on Windows); a non-zero exit skips that run"),
+        name: z.string().optional().describe("A short name, shown in lists and phone notifications"),
+      },
+    },
+    async ({ repo, when, instructions, executor, precheck, name }) => {
+      // Checked before the hub hears of it: a bad timetable needs no machine and no question.
+      const parsed = parseWhen(when);
+      if (!parsed.ok) return { isError: true, content: text(parsed.error) };
+      const outcome = await hub.schedule({
+        repo, when: parsed.when, cron: parsed.cron, instructions,
+        ...(executor === undefined ? {} : { executor }),
+        ...(precheck?.trim() ? { precheck } : {}),
+        ...(name?.trim() ? { name: name.trim() } : {}),
+      });
+      if (!outcome.ok) return { isError: true, content: text(outcome.error) };
+      return { content: text(`scheduled: ${outcome.id} (${parsed.cron}). ${outcome.detail}`) };
+    },
+  );
+
+  server.registerTool(
+    "list_schedules",
+    {
+      title: "List scheduled tasks",
+      description: "Lists the schedules made through schedule_task, with each one's latest run: when, exit code and the end of its output.",
+      inputSchema: { repo: z.string().optional().describe("Only this repository's schedules") },
+    },
+    async ({ repo }) => {
+      const outcome = await hub.schedules(repo);
+      return outcome.ok ? { content: text(outcome.report) } : { isError: true, content: text(outcome.error) };
+    },
+  );
+
+  server.registerTool(
+    "remove_schedule",
+    {
+      title: "Remove a scheduled task",
+      description: "Takes a schedule off its machine: its cron line or Task Scheduler task, and its folder with the logs.",
+      inputSchema: { id: z.string().describe("Schedule id from schedule_task or list_schedules") },
+    },
+    async ({ id }) => {
+      const outcome = await hub.unschedule(id);
+      return outcome.ok ? { content: text(outcome.detail) } : { isError: true, content: text(outcome.error) };
+    },
+  );
+
+  server.registerTool(
+    "create_bot",
+    {
+      title: "Make a bot: a named session with its own role file and timetables",
+      description:
+        "Makes a bot in a project folder: its own session beside the folder's normal one, a profile file " +
+        "(.lepons/bots/<name>.md) holding its role and memory, and timetables that wake it up. " +
+        "Someone at the Lepons window must approve it first. It runs with permission prompts skipped, like a normal session with bypass on.",
+      inputSchema: {
+        repo: z.string().describe("Repository id from list_repos, or the path of this session's own project folder"),
+        name: z.string().describe("The bot's name; at most 60 characters"),
+        role: botFields.role,
+        executor: botFields.executor,
+        fresh: botFields.fresh,
+        jobs: botFields.jobs.describe("Timetables; may be empty"),
+      },
+    },
+    async ({ repo, name, role, executor, fresh, jobs }) => {
+      const bad = badTimetable(jobs);
+      if (bad) return { isError: true, content: text(bad) };
+      const outcome = await hub.bot({ repo, name, role, jobs, fresh: fresh ?? true, ...(executor === undefined ? {} : { executor }) });
+      return outcome.ok ? { content: text(`bot: ${outcome.id}. ${outcome.detail}`) } : { isError: true, content: text(outcome.error) };
+    },
+  );
+
+  server.registerTool(
+    "update_bot",
+    {
+      title: "Change a bot",
+      description:
+        "Changes a bot made with create_bot: only the fields given. Someone at the Lepons window must approve it first; " +
+        "a no changes nothing. Its name and folder stay. A new AI takes over from its next run.",
+      inputSchema: {
+        id: z.string().describe("Bot id from create_bot or list_bots"),
+        role: botFields.role.optional(),
+        executor: botFields.executor,
+        fresh: botFields.fresh,
+        jobs: botFields.jobs.optional().describe("Timetables, replacing all of the bot's; may be empty"),
+      },
+    },
+    async ({ id, role, executor, fresh, jobs }) => {
+      const bad = jobs && badTimetable(jobs);
+      if (bad) return { isError: true, content: text(bad) };
+      const outcome = await hub.updateBot({
+        id, ...(role === undefined ? {} : { role }), ...(executor === undefined ? {} : { executor }), ...(fresh === undefined ? {} : { fresh }), ...(jobs === undefined ? {} : { jobs }),
+      });
+      return outcome.ok ? { content: text(`bot: ${id}. ${outcome.detail}`) } : { isError: true, content: text(outcome.error) };
+    },
+  );
+
+  server.registerTool(
+    "list_bots",
+    {
+      title: "List bots",
+      description: "Lists the bots made in Lepons: name, folder, role, timetables and whether paused.",
+      inputSchema: {},
+    },
+    async () => {
+      const outcome = await hub.bots();
+      return outcome.ok ? { content: text(outcome.report) } : { isError: true, content: text(outcome.error) };
     },
   );
 

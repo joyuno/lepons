@@ -10,11 +10,18 @@ import { NodeSession } from "../ssh/session.ts";
 import { LocalSession } from "../session/local.ts";
 import { localMachine, machineFor, type Changed, type Machine } from "../machine/machine.ts";
 import { execInPty, probeCapabilities, runRemote, runRemoteStatus } from "../ssh/capabilities.ts";
-import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor } from "../agent/agents.ts";
+import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor } from "../agent/agents.ts";
 import { ExecutorCheckError, localLaunch, localProbe } from "../agent/delegate.ts";
+import { removeBot, saveBot, type BotInput } from "./bots.ts";
+import { botPreamble, botProfilePath, botSlug, type Bot } from "../agent/bots.ts";
+import { listRoutines } from "../agent/routines.ts";
+import { parseAutomationRows, parseCloudList, type CodexCloudTask } from "../agent/codex-automations.ts";
+import { controlOsJob, describeLines, editOsJob, listOsJobs, osJobName, parseDescribed, type DescribeItem, type OsJob, type OsJobApprove } from "../agent/os-jobs.ts";
+import { describeWhen, installSchedule, NO_SESSION, parseWhen, readSchedule, removeSchedule, runLog, runLogs, scheduleTextProblem, setPaused, type ScheduleInfo, type When } from "../agent/schedule.ts";
+import { pushTitle } from "../phone/push.ts";
 import { freshWindowsPath, loginReply, loginWatch, outputTail, regValue, sudoAsks, tmuxInstallLine } from "../agent/install.ts";
 import { suggestShares, type Manifests } from "../repo/suggest.ts";
-import { confirmGone, spacedLooks, type AgentProbe } from "../session/agent-life.ts";
+import { agentSettled as settledIn, recordLook, confirmGone, spacedLooks, type AgentProbe } from "../session/agent-life.ts";
 import { parseTmuxScroll, tmuxCommand, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSessionName } from "../session/tmux.ts";
 import type { Session, SessionState } from "../session/state.ts";
 import type { BrowseResult } from "../browse/types.ts";
@@ -28,6 +35,9 @@ import { importPet, listPets, themeForWindow } from "./pet-themes.ts";
 import { scanImports } from "./import-scan.ts";
 import { existingFoldersCommand, parseExistingFolders, parseRemoteProjects, remoteProjectsCommand } from "./remote-projects.ts";
 import { onSomeScreen } from "./window-place.ts";
+import { openArgs, registerExplorerMenu } from "./open-with.ts";
+import { BotScheduler, nextRunOf } from "./bot-scheduler.ts";
+import { openOnce } from "./open-once.ts";
 import { startPhoneHost, type PhoneHost } from "./phone-host.ts";
 import {
   allowSshScript, authorizedKeyLine, disallowSshScript, errorHint, findGitBash, gitBashCandidates, isPerUserGit, runElevated, whoami, type KeyFor,
@@ -47,7 +57,7 @@ import { folderPath, resolveTarget } from "../browse/target.ts";
 import { containedBy } from "../read/wire-path.ts";
 import { isSecretName } from "../repo/protect.ts";
 import { removeFoldersAsk, validateRepoLabel } from "../repo/label.ts";
-import { setLocale, isLocale, t, type Locale } from "../i18n/i18n.ts";
+import { dictionaries, setLocale, isLocale, t, formatDate, type Locale } from "../i18n/i18n.ts";
 import { startMcpEndpoint, type McpEndpoint } from "../mcp/http.ts";
 import { startRepoBridge, type RepoBridge } from "../mcp/bridge.ts";
 import { OutputRing } from "../phone/screen.ts";
@@ -66,6 +76,10 @@ import {
   SaltStore,
   McpAgentStore,
   IdSetStore,
+  BotStore,
+  ScheduleStore,
+  TextMapStore,
+  JobCacheStore,
   TokenStore,
   preferredSharePort,
 } from "./stores.ts";
@@ -83,8 +97,18 @@ import {
   type EditOpenResult,
   type EditSaveResult,
   type NodeConfig,
+  type OpenWith,
+  type BotForm,
+  type BotRow,
+  type BotRun,
+  type ScheduleDone,
+  type ScheduleForm,
+  type ScheduleList,
+  type ScheduleRow,
   type PastConversation,
   extraRoots,
+  botOfKey,
+  projectOf,
   type MakeFileResult,
   type RepoConfig,
   type RepoKind,
@@ -101,11 +125,12 @@ import { startLlmHost, type LlmHost, type LlmLaunch } from "./llm-host.ts";
 import { LLM_KEY_ENV } from "../agent/local-llm.ts";
 import { addWorktree, goneWorktrees, localHost, mergeWorktree, movedTranscript, pendingWork, remoteHost, removeWorktree, startRepo, type WorktreeHost } from "./worktree.ts";
 import { parseCodexRollout, recentEvents } from "../workflow/codex.ts";
+import { answerOfRun, recordsBefore } from "./bot-answer.ts";
 import { PHONE_EVENTS } from "../phone/contract.ts";
 import { parseOpencodeExport } from "../workflow/opencode.ts";
 import { handoffPrompt } from "../workflow/handoff.ts";
 import { readTurn } from "../workflow/turn.ts";
-import type { TurnEnd } from "../shared/status.ts";
+import { isTerminalReport, type TurnEnd } from "../shared/status.ts";
 import { dropFolder } from "../shared/term-paths.ts";
 import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeAskHookSettings, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
 import { collectTokenStats, type TokenStats } from "../agent/token-stats.ts";
@@ -130,10 +155,40 @@ let uncleaned: IdSetStore;
 let refusedHostKeys: IdSetStore;
 /** PCs whose delegated tasks run without asking ("항상 허용"); dropped when the PC is removed or moved. */
 let delegationTrust: IdSetStore;
+/** Schedules made from here (agent/schedule.ts), and which run of each the phone last heard of. */
+let schedules: ScheduleStore;
+/** Bots made here (agent/bots.ts); their profile files live on the PC they run on. */
+let bots: BotStore;
 /** Passphrases for this run only; never written anywhere. */
 const passphrases = new PassphraseCache();
 const pendingPassphrases = new Map<string, (value: string | null) => void>();
 let mainWindow: BrowserWindow | undefined;
+
+/** Paths "Open with Lepons" gave, held until the page asks (takeOpenWith); null once it has. */
+let heldOpens: string[] | null = [];
+/** Set once main is ready: hands paths straight to the page. */
+let sendOpens: ((paths: string[]) => void) | undefined;
+function openWith(paths: string[]): void {
+  if (heldOpens) heldOpens.push(...paths);
+  else if (paths.length > 0) sendOpens?.(paths);
+}
+// One Lepons per account: a second launch (Explorer's "Lepons로 열기", a
+// double-click on the exe) hands its paths to the running one and leaves.
+const onlyInstance = app.requestSingleInstanceLock();
+if (!onlyInstance) app.exit(0);
+app.on("second-instance", (_event, argv) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+  openWith(openArgs(argv, process.defaultApp === true));
+});
+// macOS: Finder's Open With and a drop on the Dock icon, from before ready on.
+app.on("open-file", (event, path) => {
+  event.preventDefault();
+  openWith([path]);
+});
+openWith(openArgs(process.argv, process.defaultApp === true));
 
 /** Asks the operator through the app window; the reply is not stored. */
 function askForPassphrase(keyPath: string, retry: boolean, title?: string): Promise<string | null> {
@@ -238,7 +293,8 @@ const sessions = new Map<string, Session>();
 const screens = new Map<string, { ring: OutputRing; cols: number; rows: number }>();
 /** What the phone is served over the relay, and the relay link itself. */
 let phoneHost: PhoneHost | undefined;
-/** When this PC last had keyboard input for a session: the push holds back while someone is at the desk. */
+/** When someone last typed into each session, here or from the phone: a bot's run waits while its session was typed in lately. */
+const lastInputAt = new Map<string, number>();
 /** The AI accounts tab's sign-in on a remote PC, run out of sight; one at a time. */
 let signIn: { write(text: string): void; end(): void; done(): Promise<boolean | "again"> } | undefined;
 /** Hidden tmux installs running, by PC: each one's way to stop. */
@@ -653,10 +709,12 @@ function launchLine(
   plain: boolean,
   bypass: boolean,
   name: string | undefined,
+  bot = false,
 ): string | undefined {
   const spec = agentSpec(node.agent);
   const llm = node.agent === "opencode" ? llmLaunches.get(scope) : undefined;
-  const extra = (shell: "posix" | "cmd") => [usageFlag(node, shell), llm?.flags ?? ""].filter((flag) => flag !== "").join(" ");
+  // The deny flag must stay last: Claude's --disallowedTools is variadic and would swallow any positional argument after it.
+  const extra = (shell: "posix" | "cmd") => [usageFlag(node, shell), llm?.flags ?? "", botDenyFlag(spec, shell, bot)].filter((flag) => flag !== "").join(" ");
   // Only a session that is started runs this: one reattached in tmux keeps
   // its own conversation, which is the better answer anyway. `wrap` is what
   // each launch needs on its way out -- an environment, on the remote nodes.
@@ -698,9 +756,10 @@ function buildSession(
   plain = false,
   bypass = false,
   name?: string,
+  bot = false,
 ): { session: Session; survives: boolean } {
   const term = { name: "xterm-256color", cols, rows };
-  const command = launchLine(node, scope, cwd, resume, update, plain, bypass, name);
+  const command = launchLine(node, scope, cwd, resume, update, plain, bypass, name, bot);
   if (node.kind === "local") {
     // A local terminal has no connection to lose, so nothing to survive.
     return {
@@ -1120,6 +1179,282 @@ function askToDelegate(source: string, target: NodeConfig, folder: string, instr
 }
 
 /**
+ * The question for a new or edited schedule. Asked every time, however
+ * trusted the machine asking: a schedule runs unattended for as long as it
+ * exists, so there is no "always", and nothing reaches the PC without this yes.
+ */
+function askToSchedule(source: string, target: NodeConfig, folder: string, input: ScheduleInput, agent: string): (() => Promise<number>) | undefined {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return undefined;
+  const buttons: string[] = [];
+  buttons[REFUSE] = t("delegate.askRefuse");
+  buttons[ONCE] = t("schedule.askAllow");
+  return () => appDialog(window, {
+    type: "warning",
+    message: t("schedule.askTitle", { source }),
+    detail: t("schedule.askDetail", {
+      target: machineLabel(target),
+      folder,
+      when: describeWhen(input.when),
+      agent,
+      // Whole, never cut: this is what will run unattended (saveSchedule holds them to what a dialog can show).
+      instructions: input.instructions.trim(),
+      precheck: input.precheck === undefined ? "" : t("schedule.askPrecheck", { command: input.precheck.trim() }),
+    }),
+    buttons,
+    defaultId: REFUSE,
+    cancelId: REFUSE,
+  }).then(({ response }) => response);
+}
+
+/**
+ * The question for a new or edited bot, asked every time like a schedule's:
+ * a bot edits files unattended. A plain session open in the same folder only
+ * adds a line, since two AIs in one folder can step on each other.
+ */
+function askToBot(source: string, bot: Bot, plainOpen: boolean, existing: string | undefined): (() => Promise<number>) | undefined {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return undefined;
+  const target = nodes.list().find((node) => node.id === bot.nodeId);
+  const buttons: string[] = [];
+  buttons[REFUSE] = t("delegate.askRefuse");
+  const editing = bots.get(bot.id) !== undefined;
+  buttons[ONCE] = t(editing ? "bot.askEditAllow" : "bot.askAllow");
+  return () => appDialog(window, {
+    type: "warning",
+    message: t(editing ? "bot.askEditTitle" : "bot.askTitle", { source }),
+    detail: t("bot.askDetail", {
+      name: bot.name,
+      target: target ? machineLabel(target) : bot.nodeId,
+      folder: bot.folder,
+      agent: agentSpec(bot.executor).label,
+      // Whole, never cut: this is what will run unattended (saveBot holds them to what a dialog can show).
+      role: bot.role.trim(),
+      jobs: bot.jobs.length === 0 ? t("bot.askNoJobs") : bot.jobs.map((job) => t("bot.askJob", { when: describeWhen(job.when), instructions: job.instructions.trim() })).join("\n"),
+      plain: (plainOpen ? t("bot.askPlain") : "") + (bot.linked?.length ? t("bot.askLinked", { jobs: bot.linked.map(osJobName).join(", ") }) : "") +
+        (existing === undefined ? "" : t("bot.askExisting", { text: existing })),
+    }),
+    buttons,
+    defaultId: REFUSE,
+    cancelId: REFUSE,
+  }).then(({ response }) => response);
+}
+
+/** The question before a button on an existing job does anything: what it does and the exact command or line. */
+function osJobApprover(node: NodeConfig): OsJobApprove {
+  return async (action, job, detail) => {
+    const window = mainWindow;
+    const buttons: string[] = [];
+    buttons[REFUSE] = t("delegate.askRefuse");
+    buttons[ONCE] = t("osjob.askAllow");
+    const ask = !window || window.isDestroyed() ? undefined : () => appDialog(window, {
+      type: "warning",
+      message: t("osjob.askTitle", { target: machineLabel(node) }),
+      // kickstart -k stops a running job first, which for one that stays up is a restart.
+      detail: t("osjob.askDetail", { action: t(`osjob.action.${action}`), label: job.label, detail }) + (action === "run" && job.resident ? `\n\n${t("osjob.askRestart")}` : ""),
+      buttons,
+      defaultId: REFUSE,
+      cancelId: REFUSE,
+    }).then(({ response }) => response);
+    return (await approveDelegation(false, ask, () => {})) === "allowed";
+  };
+}
+
+/** saveBot with this PC's store, machines and dialog. */
+function saveBotHere(source: string, input: BotInput, editing?: string) {
+  return saveBot({
+    store: bots,
+    machine: (nodeId) => {
+      const node = nodes.list().find((each) => each.id === nodeId);
+      return node ? machineOf(node) : undefined;
+    },
+    watched: (nodeId) => nodes.list().some((each) => each.id === nodeId && (each.kind === "local" || each.useTmux === true)),
+    approve: (bot, existing) => approveDelegation(false, askToBot(source, bot, sessions.get(sessionKey(bot.nodeId, bot.repoId))?.state.kind === "ready", existing), () => {}),
+  }, input, editing);
+}
+
+/**
+ * A project folder a node's agent may schedule in: one on its own machine --
+ * by id or by path, as list_repos leaves its own folders out -- or one shared
+ * to it.
+ */
+function schedulableFolder(fromNodeId: string, repo: string): { owner: NodeConfig; folder: string } | undefined {
+  const bare = (path: string) => path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+  const candidate = candidateRepos().find((entry) => entry.kind === "folder" &&
+    (entry.wireId === repo || (entry.ownerNodeId === fromNodeId && bare(entry.root) === bare(repo))));
+  if (!candidate || (candidate.ownerNodeId !== fromNodeId && !grants.for(fromNodeId).has(candidate.wireId))) return undefined;
+  const owner = nodes.list().find((node) => node.id === candidate.ownerNodeId);
+  return owner ? { owner, folder: candidate.root } : undefined;
+}
+
+/** What a schedule is made or edited from: schedule_task's arguments, or the settings form's. */
+interface ScheduleInput {
+  when: When;
+  cron: string;
+  instructions: string;
+  precheck?: string;
+  name?: string;
+  executor?: AgentKind;
+}
+
+type Outcome = { ok: true } | { ok: false; error: string };
+
+/**
+ * Schedule changes per PC, one after another: crontab is read, changed and
+ * written whole, and two at once would lose one's line. Task Scheduler too, for
+ * the same order. The question is asked before a change joins the line.
+ */
+const scheduleQueues = new Map<string, Promise<unknown>>();
+function onMachine<T>(nodeId: string, work: () => Promise<T>): Promise<T> {
+  const next = (scheduleQueues.get(nodeId) ?? Promise.resolve()).then(work);
+  scheduleQueues.set(nodeId, next.catch(() => undefined));
+  return next;
+}
+const UNKNOWN_HOME = "home_unknown: Lepons has not learned that machine's home folder yet; connect to it once and try again";
+
+/** The PC a schedule made from here is on, with its home. */
+function scheduleHost(id: string): { node: NodeConfig; home: string } | { error: string } {
+  const record = schedules.get(id);
+  const node = record && nodes.list().find((each) => each.id === record.nodeId);
+  if (!node) return { error: `unknown_schedule: ${id}` };
+  return node.home ? { node, home: node.home } : { error: UNKNOWN_HOME };
+}
+
+/**
+ * Makes a schedule on the PC that owns the folder, or rewrites `editing` there,
+ * once someone at this PC says yes. An edit keeps what the form does not
+ * change: its folder, name, agent and a pause.
+ */
+async function saveSchedule(source: string, owner: NodeConfig, folder: string, input: ScheduleInput, editing?: { id: string; info: ScheduleInfo }): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }> {
+  const problem = scheduleTextProblem(input.instructions, input.precheck);
+  if (problem) return { ok: false, error: problem };
+  const kept = editing?.info;
+  const executor = input.executor ?? (isAgentKind(kept?.executor) ? kept.executor : owner.agent);
+  const command = agentSpec(executor).can.delegate;
+  if (command === null) {
+    return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no scheduled tasks; pass executor ${delegateAgents.join(" or ")}` };
+  }
+  if (!owner.home) return { ok: false, error: UNKNOWN_HOME };
+  const machine = machineOf(owner);
+  try {
+    const ready = await machine.ready();
+    if (!ready.ok) return { ok: false, error: ready.reason };
+    await machine.checkAgent(executor);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const id = editing?.id ?? `s-${randomUUID().slice(0, 8)}`;
+  const asked: { answer: Awaited<ReturnType<typeof approveDelegation>> } = { answer: "unanswered" };
+  const installed = await installSchedule(machine, owner.home, {
+    id, folder, when: input.when, cron: input.cron, command, instructions: input.instructions, executor,
+    name: input.name || kept?.name || input.instructions.trim().split("\n")[0]!.slice(0, 40),
+    ...(input.precheck ? { precheck: input.precheck } : {}),
+    ...(kept?.paused ? { paused: true } : {}),
+  }, async () => {
+    asked.answer = await approveDelegation(false, askToSchedule(source, owner, folder, input, agentSpec(executor).label), () => {});
+    return asked.answer === "allowed";
+  }, (work) => onMachine(owner.id, work));
+  if (asked.answer === "refused") return { ok: false, error: `refused: the operator on ${hostname()} said no to this schedule` };
+  if (asked.answer === "unanswered") {
+    return { ok: false, error: `approval_needed: this schedule needs a yes on ${hostname()} (the Lepons window there), and none came. Ask the operator, then try again.` };
+  }
+  if (!installed.ok) return installed;
+  if (!editing) schedules.set(id, { nodeId: owner.id });
+  const signedIn = installed.windowsLogon === "interactive"
+    ? " It runs only while someone is signed in to that Windows PC: Windows allows a task that runs while signed out to an elevated administrator only."
+    : "";
+  return { ok: true, id, detail: `${agentSpec(executor).label} runs it on ${machineLabel(owner)} in ${folder}, by that machine's clock.${signedIn}` };
+}
+
+/** Every schedule made from here, read back from its PC; `see` picks which a caller is shown. */
+async function scheduleRows(see: (nodeId: string, folder: string | undefined) => boolean = () => true): Promise<ScheduleRow[]> {
+  const rows = await Promise.all(schedules.list().map(async ([id, record]): Promise<ScheduleRow | undefined> => {
+    const node = nodes.list().find((each) => each.id === record.nodeId);
+    const base = { id, nodeId: record.nodeId, machine: node ? machineLabel(node) : record.nodeId };
+    // Not machine.ready(): that asks for a locked key's passphrase, for each PC at once.
+    const read = node?.home ? await readSchedule(machineOf(node), node.home, id) : undefined;
+    if (!read) return see(record.nodeId, undefined) ? { ...base, state: "unreachable" } : undefined;
+    const { info } = read;
+    if (!info) return see(record.nodeId, undefined) ? { ...base, state: "missing" } : undefined;
+    if (!see(record.nodeId, info.folder)) return undefined;
+    const when = parseWhen(info.cron);
+    return {
+      ...base, state: "ok", name: info.name, folder: info.folder, cron: info.cron, when: when.ok ? describeWhen(when.when) : info.cron,
+      executor: info.executor, agent: isAgentKind(info.executor) ? agentSpec(info.executor).label : info.executor,
+      instructions: read.instructions, precheck: info.precheck ?? "", paused: info.paused === true, tail: read.tail,
+      ...(info.windowsLogon === "interactive" ? { signedInOnly: true } : {}),
+      ...(read.last ? { last: read.last } : {}),
+    };
+  }));
+  return rows.filter((row) => row !== undefined);
+}
+
+async function pauseSchedule(id: string, paused: boolean): Promise<Outcome> {
+  const host = scheduleHost(id);
+  if ("error" in host) return { ok: false, error: host.error };
+  const machine = machineOf(host.node);
+  const ready = await machine.ready();
+  if (!ready.ok) return { ok: false, error: ready.reason };
+  return onMachine(host.node.id, () => setPaused(machine, host.home, id, paused));
+}
+
+async function deleteSchedule(id: string): Promise<{ ok: true; detail: string } | { ok: false; error: string }> {
+  const record = schedules.get(id);
+  if (!record) return { ok: false, error: `unknown_schedule: ${id}. Try list_schedules.` };
+  const node = nodes.list().find((each) => each.id === record.nodeId);
+  if (!node) {
+    schedules.set(id, undefined);
+    return { ok: true, detail: `${id} dropped: its machine is no longer in Lepons, so whatever is left there stays` };
+  }
+  const home = node.home;
+  if (!home) return { ok: false, error: UNKNOWN_HOME };
+  const machine = machineOf(node);
+  const ready = await machine.ready();
+  if (!ready.ok) return { ok: false, error: ready.reason };
+  const removed = await onMachine(node.id, () => removeSchedule(machine, home, id));
+  if (!removed.ok) return removed;
+  schedules.set(id, undefined);
+  return { ok: true, detail: `removed: ${id} from ${machineLabel(node)}` };
+}
+
+/** Whether a node's agent may see or remove a schedule: one on its own machine, or in a folder shared to it. */
+const scheduleVisible = (fromNodeId: string, nodeId: string, folder: string | undefined): boolean =>
+  nodeId === fromNodeId || (folder !== undefined && grants.for(fromNodeId).has(wireRepoId(nodeId, folder)));
+
+let reportingRuns = false;
+/**
+ * Tells the phone of scheduled runs that ended since it last heard: at start
+ * and every few minutes while Lepons runs, so a PC that was off reports what
+ * happened meanwhile once. A run its precheck called off is not news. The
+ * push names the schedule and the PC and says how it ended, never what the AI
+ * wrote (phone/push.ts): that is read in the app.
+ * ponytail: last.json holds a schedule's latest run only, so of several runs missed while off the phone hears of the last.
+ */
+async function reportScheduleRuns(): Promise<void> {
+  if (reportingRuns) return;
+  reportingRuns = true;
+  try {
+    await Promise.all(schedules.list().map(async ([id, record]) => {
+      const node = nodes.list().find((each) => each.id === record.nodeId);
+      // Not machine.ready(): that asks for a locked key's passphrase, and a timer must not.
+      const read = node?.home ? await readSchedule(machineOf(node), node.home, id) : undefined;
+      const last = read?.last;
+      const current = schedules.get(id);
+      if (!node || !read?.info || !last || !current || last.startedAt === current.reported) return;
+      schedules.set(id, { ...current, reported: last.startedAt });
+      // A Mac that could not start it is news, with what to do about it (agent/schedule.ts macLauncher).
+      const noSession = last.reason === NO_SESSION;
+      if (last.skipped && !noSession) return;
+      const pc = node.kind === "local" ? undefined : node.name?.trim() || undefined;
+      phoneHost?.scheduleRan(id, pushTitle(read.info.name, undefined, pc),
+        noSession ? t("schedule.pushNoSession") : last.exitCode === 0 ? t("schedule.pushOk") : t("schedule.pushFailed", { code: last.exitCode }));
+    }));
+  } finally {
+    reportingRuns = false;
+  }
+}
+
+/**
  * Starts a separate task with the selected executor on the repository owner.
  */
 function delegationHub(fromNodeId: string): DelegationHub {
@@ -1227,6 +1562,72 @@ function delegationHub(fromNodeId: string): DelegationHub {
           (lines.length > 0 ? lines.join("\n") : "(no activity recorded since the handoff)"),
       };
     },
+    schedule: async (request) => {
+      const place = schedulableFolder(fromNodeId, request.repo);
+      if (!place) return { ok: false, error: `unknown_repo: ${request.repo} is neither a project folder on this machine nor one shared with it. Try list_repos.` };
+      const source = nodes.list().find((node) => node.id === fromNodeId);
+      return saveSchedule(source ? machineLabel(source) : fromNodeId, place.owner, place.folder, request);
+    },
+    schedules: async (repo) => {
+      const place = repo === undefined ? undefined : schedulableFolder(fromNodeId, repo);
+      if (repo !== undefined && !place) return { ok: false, error: `unknown_repo: ${repo}. Try list_repos.` };
+      const rows = await scheduleRows((nodeId, folder) =>
+        scheduleVisible(fromNodeId, nodeId, folder) && (!place || (nodeId === place.owner.id && folder === place.folder)));
+      if (rows.length === 0) return { ok: true, report: "No schedules." };
+      return {
+        ok: true,
+        report: rows.map((row) => {
+          if (row.state !== "ok") return `${row.id}  ${row.machine}  (${row.state === "missing" ? "no longer on that machine" : "that machine could not be read"})`;
+          const head = `${row.id}  ${row.name}  [${row.cron}]${row.paused ? " paused" : ""}${row.signedInOnly ? " (runs only while signed in)" : ""}  ${row.agent}  ${row.machine} / ${row.folder}`;
+          if (!row.last) return `${head}\n  no run yet`;
+          const tail = (row.tail ?? "").trimEnd().split("\n").filter((line) => line !== "").map((line) => `    ${line}`).join("\n");
+          return `${head}\n  last run: ${row.last.startedAt} to ${row.last.endedAt}, exit ${row.last.exitCode}` +
+            `${row.last.reason === NO_SESSION ? " (not run: no tmux server on that Mac -- connect to it with Lepons once)" : row.last.skipped ? " (skipped: precheck failed)" : ""}` +
+            `${tail === "" ? "" : `\n${tail}`}`;
+        }).join("\n\n"),
+      };
+    },
+    bot: async (request) => {
+      const place = schedulableFolder(fromNodeId, request.repo);
+      const repo = place?.owner.repos.find((each) => each.path.replaceAll("\\", "/").replace(/\/+$/, "") === place.folder.replaceAll("\\", "/").replace(/\/+$/, ""));
+      if (!place || !repo) return { ok: false, error: `unknown_repo: ${request.repo} is neither a project folder on this machine nor one shared with it. Try list_repos.` };
+      const executor = request.executor ?? place.owner.agent;
+      if (agentSpec(executor).can.delegate === null) return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no bots; pass executor ${delegateAgents.join(" or ")}` };
+      const source = nodes.list().find((node) => node.id === fromNodeId);
+      const saved = await saveBotHere(source ? machineLabel(source) : fromNodeId, {
+        name: request.name, nodeId: place.owner.id, repoId: repo.id, folder: place.folder, executor, role: request.role, fresh: request.fresh, jobs: request.jobs,
+      });
+      return saved.ok ? { ok: true, id: saved.bot.id, detail: `${agentSpec(executor).label} runs "${saved.bot.name}" on ${machineLabel(place.owner)} in ${place.folder}.` } : saved;
+    },
+    updateBot: async (request) => {
+      const bot = bots.get(request.id);
+      if (!bot || !scheduleVisible(fromNodeId, bot.nodeId, bot.folder)) return { ok: false, error: `unknown_bot: ${request.id}. Try list_bots.` };
+      const executor = request.executor ?? bot.executor;
+      if (agentSpec(executor).can.delegate === null) return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no bots; pass executor ${delegateAgents.join(" or ")}` };
+      const source = nodes.list().find((node) => node.id === fromNodeId);
+      const { id: _id, jobs, ...rest } = bot;
+      const saved = await saveBotHere(source ? machineLabel(source) : fromNodeId, {
+        ...rest, executor, role: request.role ?? bot.role, fresh: request.fresh ?? bot.fresh,
+        // Kept jobs go back in as their cron line, which parseWhen reads as it wrote it.
+        jobs: request.jobs ?? jobs.map((job) => ({ id: job.id, when: job.cron, instructions: job.instructions })),
+      }, bot.id);
+      return saved.ok ? { ok: true, detail: `${agentSpec(executor).label} runs "${saved.bot.name}" in ${saved.bot.folder}.` } : saved;
+    },
+    bots: async () => {
+      const seen = bots.list().filter((bot) => scheduleVisible(fromNodeId, bot.nodeId, bot.folder));
+      if (seen.length === 0) return { ok: true, report: "No bots." };
+      return {
+        ok: true,
+        report: seen.map((bot) => `${bot.id}  ${bot.name}  ${bot.folder}${bot.paused ? "  (paused)" : ""}\n  role: ${bot.role}\n${bot.jobs.map((job) => `  ${job.cron}: ${job.instructions}`).join("\n")}`).join("\n\n"),
+      };
+    },
+    unschedule: async (id) => {
+      const record = schedules.get(id);
+      // The folder is on its PC; a caller that is not that PC needs a grant to it.
+      const info = record && record.nodeId !== fromNodeId ? (await scheduleRows((nodeId) => nodeId === record.nodeId)).find((row) => row.id === id) : undefined;
+      if (!record || !scheduleVisible(fromNodeId, record.nodeId, info?.folder)) return { ok: false, error: `unknown_schedule: ${id}. Try list_schedules.` };
+      return deleteSchedule(id);
+    },
   };
 }
 
@@ -1289,7 +1690,7 @@ function requireNode(id: string): NodeConfig {
 }
 
 /** The ceiling on what `openFile`, `readText`, and `readBinary` bring into the app. */
-const previewLimit = 5 * 1024 * 1024;
+const previewLimit = 10 * 1024 * 1024;
 
 /**
  * The language a first start opens in. Windows: the one picked in the
@@ -1302,6 +1703,11 @@ function firstLocale(): Locale {
     const picked = ({ "1042": "ko", "1033": "en", "2052": "zh" } as const)[id as "1042"];
     if (picked) return picked;
   } catch { /* not installed by the NSIS installer */ }
+  return systemLocale();
+}
+
+/** The language the OS itself shows. */
+function systemLocale(): Locale {
   const os = (app.getPreferredSystemLanguages()[0] ?? app.getLocale()).toLowerCase();
   return os.startsWith("ko") ? "ko" : os.startsWith("zh") ? "zh" : "en";
 }
@@ -1423,6 +1829,7 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 app.whenReady().then(() => {
+  if (!onlyInstance) return;
   // Main's own dialogs and menus speak the first-start language until the
   // page reports the one it saved (setLocale below), which then wins.
   setLocale(firstLocale());
@@ -1469,6 +1876,8 @@ app.whenReady().then(() => {
   uncleaned = new IdSetStore(join(userData, "unregister-pending.json"));
   refusedHostKeys = new IdSetStore(join(userData, "refused-host-keys.json"));
   delegationTrust = new IdSetStore(join(userData, "delegation-trust.json"));
+  schedules = new ScheduleStore(join(userData, "schedules.json"));
+  bots = new BotStore(join(userData, "bots.json"));
   void ownStatusLine().then(async (own) => {
     const path = join(userData, "claude-statusline.json");
     await writeFile(path, statusLineSettings(own));
@@ -1575,7 +1984,25 @@ app.whenReady().then(() => {
   // project's CLAUDE.md.
   const translated = new Map<string, string>();
   const languageName: Record<string, string> = { ko: "Korean", en: "English", zh: "Simplified Chinese" };
-  ipcMain.handle(channels.translate, (_event, text: string, locale: string) => {
+  /** One Haiku answer to `input` under `prompt` (no double quotes in it: it goes on a command line); undefined when it failed or said nothing. */
+  const askHaiku = (prompt: string, input: string): Promise<string | undefined> => {
+    const launch = localLaunch(
+      `claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence --disable-slash-commands --system-prompt "${prompt}"`,
+    );
+    return new Promise((resolve) => {
+      const child = spawn(launch.file, launch.args, { cwd: tmpdir(), env: sanitizedEnv(), shell: launch.shell, windowsHide: true });
+      let output = "";
+      const timer = setTimeout(() => child.kill(), 90_000);
+      child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+      child.on("error", () => resolve(undefined));
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        resolve(code === 0 && output.trim() !== "" ? output.trim() : undefined);
+      });
+      child.stdin.end(input);
+    });
+  };
+  ipcMain.handle(channels.translate, async (_event, text: string, locale: string) => {
     const language = languageName[locale];
     if (typeof text !== "string" || text === "" || language === undefined) return { ok: false, error: "bad request" };
     const cacheKey = `${locale}\0${text}`;
@@ -1584,27 +2011,46 @@ app.whenReady().then(() => {
     const prompt =
       `Translate the user's text into ${language}. Output only the translation, nothing else. ` +
       "Keep code, file paths, commands and identifiers as they are. If it is already in that language, repeat it unchanged.";
-    const launch = localLaunch(
-      `claude -p --model haiku --tools "" --strict-mcp-config --no-session-persistence --disable-slash-commands --system-prompt "${prompt}"`,
-    );
-    return new Promise<{ ok: true; text: string } | { ok: false; error: string }>((resolve) => {
-      const child = spawn(launch.file, launch.args, { cwd: tmpdir(), env: sanitizedEnv(), shell: launch.shell, windowsHide: true });
-      let output = "";
-      const timer = setTimeout(() => child.kill(), 90_000);
-      child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
-      child.on("error", () => resolve({ ok: false, error: t("err.translateNoClaude") }));
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        const result = output.trim();
-        if (code !== 0 || result === "") {
-          resolve({ ok: false, error: t("err.translateNoClaude") });
-          return;
-        }
-        translated.set(cacheKey, result);
-        resolve({ ok: true, text: result });
-      });
-      child.stdin.end(text);
+    const result = await askHaiku(prompt, text);
+    if (result === undefined) return { ok: false, error: t("err.translateNoClaude") };
+    translated.set(cacheKey, result);
+    return { ok: true, text: result };
+  });
+
+  // OS jobs' names a person gave them, and the AI's line for the ones the OS
+  // says nothing about: asked only while the page's "AI 설명" switch is on,
+  // at most 20 jobs per request and one Haiku call, each answer kept on disk under a key that changes
+  // with the job's command, so a kept one is never asked for again.
+  const jobNames = new TextMapStore(join(userData, "osjob-names.json"));
+  const jobLines = new TextMapStore(join(userData, "osjob-ai.json"));
+  ipcMain.handle(channels.osJobNames, () => jobNames.all());
+  ipcMain.handle(channels.osJobRename, (_event, nodeId: string, jobId: string, name: string) => {
+    jobNames.set(`${String(nodeId)}\n${String(jobId)}`, String(name ?? "").trim().slice(0, 80));
+  });
+  ipcMain.handle(channels.osJobDescribe, async (_event, items: DescribeItem[], locale: string) => {
+    const language = languageName[locale];
+    if (!Array.isArray(items) || language === undefined) return { lines: {} };
+    const lines: Record<string, string> = {};
+    const asking = items.filter((item) => {
+      if (typeof item?.key !== "string") return false;
+      const kept = jobLines.get(item.key);
+      if (kept !== undefined) lines[item.key] = kept;
+      return kept === undefined;
     });
+    const prompt =
+      "Each input line is one scheduled job: a number, its cleaned name, its original name, the command it runs, and the OS, separated by tabs. " +
+      `For every line write what that job does, in ${language}, at most 12 words, plain words for someone who is not a developer. ` +
+      "Answer with one line per job: the same number, a tab character, then the text. Nothing else: no heading, no list marks, no quotes. " +
+      "When the name and command say too little, say what it most likely is, briefly.";
+    // One Haiku call at most: the page sends 20 at a time and stops when its switch goes off.
+    const batch = asking.slice(0, 20);
+    const answer = batch.length > 0 ? await askHaiku(prompt, describeLines(batch)) : undefined;
+    for (const [at, text] of parseDescribed(answer ?? "", batch.length)) {
+      const { key } = batch[at - 1]!;
+      jobLines.set(key, text);
+      lines[key] = text;
+    }
+    return batch.length > 0 && answer === undefined ? { lines, failed: true as const } : { lines };
   });
 
   ipcMain.on(channels.setTheme, (_event, theme: unknown) => {
@@ -1665,24 +2111,30 @@ app.whenReady().then(() => {
   // `before`: the phone's "show older", the PHONE_EVENTS events before that time and whether there are more.
   /** How far back each folder's newest events took last time: a poll starts there instead of growing to it again. */
   const newestBytes = new Map<string, number>();
-  const workflowOf = async (nodeId: string, repoId: string, full = false, before?: number): Promise<SessionWorkflowResult> => {
+  /** A bot's name from the slug in its session key: its preamble, and so its records, carry the name. */
+  const botNameOf = (nodeId: string, repoId: string, slug: string): string | undefined =>
+    bots.list().find((one) => one.nodeId === nodeId && one.repoId === repoId && botSlug(one.name) === slug)?.name;
+  const workflowOf = async (nodeId: string, repoId: string, full = false, before?: number, bot?: string): Promise<SessionWorkflowResult> => {
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     const repo = node?.repos.find((candidate) => candidate.id === repoId);
     if (!node || !repo) return { ok: false, reason: "no_transcript" };
     // Each agent's own record, picked by what this session launched with --
     // not what the node is configured for. Without that, a repository that
     // once ran Claude serves that old jsonl as the running Codex session's.
-    const executor = sessionExecutor.get(sessionKey(nodeId, repoId)) ?? node.agent;
+    // A bot's session has its own executor entry.
+    const executor = sessionExecutor.get(sessionKey(nodeId, repoId, false, bot)) ?? node.agent;
     const format = executor === "shell" ? null : agentSpec(executor).can.transcript;
     // Reading another agent's record would narrate some other session's work.
     if (format === null) return { ok: false, reason: "no_transcript" };
+    // A bot's own record, or a person's: never the other's newer one in the same folder.
+    const owner = bot === undefined ? undefined : botNameOf(nodeId, repoId, bot) ?? bot;
     if (format === "opencode") {
       const exported = await machineOf(node).record("opencode", repo.path);
       if (!exported) return { ok: false, reason: "no_transcript" };
       return { ok: true, workflow: parseOpencodeExport(exported, full) };
     }
     if (format === "codex") {
-      const rollout = await machineOf(node).record("codex", repo.path);
+      const rollout = await machineOf(node).record("codex", repo.path, owner);
       if (!rollout) return { ok: false, reason: "no_transcript" };
       return { ok: true, workflow: parseCodexRollout(rollout, full) };
     }
@@ -1690,9 +2142,9 @@ app.whenReady().then(() => {
     const machine = machineOf(node);
     // On this PC the whole record is read at once. Over SSH: doubling to the newest 50 (measured: 7-8 MB on a 28 MB record), then 4 MB more per "show older" step.
     const keep = node.kind === "local" ? PHONE_EVENTS.local : PHONE_EVENTS.remote;
-    const place = `${nodeId}::${repo.path}`;
+    const place = `${nodeId}::${repo.path}\0${owner ?? ""}`;
     for (let bytes = before === undefined ? newestBytes.get(place) ?? 2_000_000 : 2_000_000; ; ) {
-      const held = await machine.claudeRecord(repo.path, bytes);
+      const held = await machine.claudeRecord(repo.path, bytes, owner);
       if (held === undefined) return { ok: false, reason: "no_transcript" };
       const workflow = parseTranscript(held.text, full, Infinity);
       const earlier = before === undefined ? workflow.events : workflow.events.filter((event) => event.at < before);
@@ -1707,7 +2159,7 @@ app.whenReady().then(() => {
       bytes = Math.max(bytes, length) + (before === undefined ? Math.max(length, 1_000_000) : 4_000_000);
     }
   };
-  ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string) => workflowOf(nodeId, repoId));
+  ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string, bot?: string) => workflowOf(nodeId, repoId, false, undefined, typeof bot === "string" ? bot : undefined));
   // What another AI is told to carry on this folder's conversation; read before the old one is replaced.
   ipcMain.handle(channels.handoffText, async (_event, nodeId: string, repoId: string): Promise<string | undefined> => {
     const read = await workflowOf(nodeId, repoId).catch(() => undefined);
@@ -1720,15 +2172,18 @@ app.whenReady().then(() => {
 
   // Once per quiet (pet.ts), and only the tail: the page goes on meanwhile, and
   // takes "unknown" as output rhythm's own answer.
-  ipcMain.handle(channels.sessionTurn, async (_event, nodeId: string, repoId: string, workedMs: number): Promise<TurnEnd> => {
+  // A bot's session reads by its own AI, and its own record.
+  ipcMain.handle(channels.sessionTurn, async (_event, nodeId: string, repoId: string, workedMs: number, bot?: string): Promise<TurnEnd> => {
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     const repo = node?.repos.find((candidate) => candidate.id === repoId);
     if (!node || !repo) return "unknown";
-    const executor = sessionExecutor.get(sessionKey(nodeId, repoId)) ?? node.agent;
+    const slug = typeof bot === "string" ? bot : undefined;
+    const executor = sessionExecutor.get(sessionKey(nodeId, repoId, false, slug)) ?? node.agent;
     const can = executor === "shell" ? undefined : agentSpec(executor).can;
     const format = can?.status === "record" ? can.transcript : null;
     if (format === null) return "unknown";
-    return readTurn(() => machineOf(node).recordTail(format, repo.path), format, workedMs);
+    const owner = slug === undefined ? undefined : botNameOf(nodeId, repoId, slug) ?? slug;
+    return readTurn(() => machineOf(node).recordTail(format, repo.path, owner), format, workedMs);
   });
 
   // The session dialog's list of past conversations (spec C-5), newest first.
@@ -2229,7 +2684,7 @@ app.whenReady().then(() => {
     const said = ran?.output.trim() ?? "";
     return said === "dir" ? "dir" : /^\d+$/.test(said) ? Number(said) : "missing";
   };
-  /** Why a file could not be read, one reason and the full path: not there, a folder, or over the 5MB a preview takes. */
+  /** Why a file could not be read, one reason and the full path: not there, a folder, or over the 10MB a preview takes. */
   const unreadable = async (node: NodeConfig, path: string): Promise<string> => {
     const size = await sizeOn(node, path);
     const shown = machineOf(node).nativePath(path);
@@ -2251,7 +2706,11 @@ app.whenReady().then(() => {
     const base = typeof root === "string" ? root.replace(/\/+$/, "") : "";
     if (size === "missing" && base !== "" && at.startsWith(`${base}/`)) {
       const relative = at.slice(base.length + 1);
-      const hits = (await machineOf(node).allFiles(base, phoneHost?.showHidden() === true && "safe")).filter((file) => file === relative || file.endsWith(`/${relative}`));
+      const files = await machineOf(node).allFiles(base, phoneHost?.showHidden() === true && "safe");
+      // A folder is found the same way, among the folders those files sit in: an agent printing from a subfolder
+      // ("산출물/05_실험/") names it from there.
+      const candidates = folder === true ? [...new Set(files.flatMap((file) => file.split("/").slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join("/"))))] : files;
+      const hits = candidates.filter((entry) => entry === relative || entry.endsWith(`/${relative}`));
       if (hits.length === 1) {
         at = `${base}/${hits[0]}`;
         size = await sizeOn(node, at);
@@ -2619,7 +3078,7 @@ app.whenReady().then(() => {
   /**
    * Markdown is the one format worth rendering in place: it is where an
    * operator's own docs and agent notes live, on nodes with no editor of
-   * their own to open a copy in. Same 5MB ceiling and remote snapshot as
+   * their own to open a copy in. Same 10MB ceiling and remote snapshot as
    * `openFile`, just returned as text instead of written to a temp copy.
    */
   const readText = async (nodeId: string, path: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> => {
@@ -2726,6 +3185,16 @@ app.whenReady().then(() => {
     return { nodes: nodes.save(updated), repoId: repo.id };
   };
 
+  /** This PC's entry, made up if it has none yet. */
+  const localNode = (): NodeConfig => nodes.list().find((node) => node.id === localNodeId) ?? {
+    kind: "local",
+    id: localNodeId,
+    label: t("machine.thisComputer"),
+    agent: "claude",
+    home: homedir().replaceAll("\\", "/"),
+    repos: [],
+  };
+
   ipcMain.handle(channels.addLocalFolder, async () => {
     const picked = await dialog.showOpenDialog({
       title: t("picker.title"),
@@ -2734,17 +3203,39 @@ app.whenReady().then(() => {
     if (picked.canceled || picked.filePaths[0] === undefined) {
       return { nodes: nodes.list() };
     }
-    const existing = nodes.list().find((node) => node.id === localNodeId);
-    const local: NodeConfig = existing ?? {
-      kind: "local",
-      id: localNodeId,
-      label: t("machine.thisComputer"),
-      agent: "claude",
-      home: homedir().replaceAll("\\", "/"),
-      repos: [],
-    };
-    return addFolder(local, picked.filePaths[0]);
+    return addFolder(localNode(), picked.filePaths[0]);
   });
+
+  // "Open with Lepons": a folder goes on this PC's list (or is found there),
+  // a file is only named -- which pane it takes is the page's to say. A path
+  // gone by now is skipped.
+  const resolveOpens = async (paths: string[]): Promise<OpenWith[]> => {
+    const opens: OpenWith[] = [];
+    for (const path of paths) {
+      const found = await stat(path).catch(() => undefined);
+      if (!found) continue;
+      if (found.isDirectory()) {
+        const { nodes: list, repoId } = addFolder(localNode(), path);
+        opens.push({ folder: true, repoId, nodes: list });
+      } else {
+        // The file is read through this PC's entry, so there has to be one.
+        const list = nodes.list().some((node) => node.id === localNodeId) ? nodes.list() : nodes.save(localNode());
+        opens.push({ folder: false, path: path.replaceAll("\\", "/"), nodes: list });
+      }
+    }
+    return opens;
+  };
+  ipcMain.handle(channels.takeOpenWith, () => {
+    const paths = heldOpens ?? [];
+    heldOpens = null;
+    return resolveOpens(paths);
+  });
+  sendOpens = (paths) => void resolveOpens(paths).then((opens) => {
+    if (opens.length > 0 && !window.isDestroyed()) window.webContents.send(channels.openWith, opens);
+  });
+  // Explorer's "Lepons로 열기", in the language Windows shows. Not from a
+  // development run: its exe is electron.exe.
+  if (process.platform === "win32" && app.isPackaged) void registerExplorerMenu(process.execPath, dictionaries[systemLocale()]["openWith.menu"]!);
 
   ipcMain.handle(
     channels.addRemote,
@@ -2980,9 +3471,12 @@ app.whenReady().then(() => {
     }
     const { response } = await appDialog(window ?? undefined, ask);
     if (response !== 0) return nodes.list();
+    // Its bots' sessions end there too, as deleting a bot ends them: left in tmux they would go on working, unseen.
+    await Promise.all(bots.list().filter((bot) => bot.nodeId === nodeId && repoIds.includes(bot.repoId)).map((bot) => stopBot(bot, true)));
     if (last) return forgetNode(nodeId);
     for (const repo of leaving) {
-      for (const key of [sessionKey(nodeId, repo.id), sessionKey(nodeId, repo.id, true)]) {
+      // Its terminal and its bots' sessions go with it.
+      for (const key of new Set([...sessions.keys(), ...sessionExecutor.keys()].filter((each) => projectOf(each) === sessionKey(nodeId, repo.id)))) {
         sessions.get(key)?.close();
         sessions.delete(key);
         sessionExecutor.delete(key);
@@ -3216,16 +3710,27 @@ app.whenReady().then(() => {
     else agentGone.delete(key);
     if (!window.isDestroyed()) window.webContents.send(channels.agentGone, key, gone);
   };
+  /** The launch (its watch's notBefore) after which a look found each session's AI running. */
+  const agentSeenUp = new Map<string, number>();
+  /** Its AI is known to be running: seen by a look since it was last (re)launched, and not gone since. What is typed into it reaches the AI, not a shell. */
+  const agentSettled = (key: string): boolean => settledIn(agentSeenUp, key, agentWatch.get(key)?.notBefore, agentGone.has(key));
   const askGone = async (nodeId: string): Promise<string[]> => {
     const probes: AgentProbe[] = [];
+    const launches = new Map<string, number>();
     let node: NodeConfig | undefined;
     for (const [key, watch] of agentWatch) {
       const session = sessions.get(key);
       if (watch.node.id !== nodeId || Date.now() < watch.notBefore || session?.state.kind !== "ready") continue;
       node = watch.node;
       probes.push({ key, pid: session.pid, tmux: watch.tmux });
+      launches.set(key, watch.notBefore);
     }
-    return node ? machineOf(node).agentsGone(probes).catch(() => []) : [];
+    if (!node) return [];
+    const gone = await machineOf(node).agentsGone(probes).catch(() => undefined);
+    // By launch: one relaunched while this look was out is not the one it saw. Gone in any read, even
+    // the first of confirmGone's two, is unsettled at once: nothing is typed in while that is checked.
+    recordLook(agentSeenUp, launches, gone);
+    return gone ?? [];
   };
   /**
    * One way in for everything that may want an answer (connecting, focus, output
@@ -3271,7 +3776,7 @@ app.whenReady().then(() => {
     // Cleared first, so a second click finds nothing to do. Asked again because the
     // operator may have started something meanwhile, and it would get this line as input.
     setAgentGone(key, false);
-    const gone = await machineOf(watch.node).agentsGone([{ key, pid: session.pid, tmux: watch.tmux }]).catch((): string[] => []);
+    const gone = await machineOf(watch.node).agentsGone([{ key, pid: session.pid, tmux: watch.tmux }]).catch(() => undefined) ?? [];
     if (!gone.includes(key)) return;
     // As on opening: the agent reads its servers once, at start.
     if (shares.has(nodeId)) {
@@ -3284,7 +3789,7 @@ app.whenReady().then(() => {
 
   // Shared by openSession (reattach if possible) and restartSession (drop
   // the remote tmux session first, so this always starts a fresh agent).
-  const openOrRestart = async (
+  const openOrRestartNow = async (
     nodeId: string,
     repoId: string | null,
     cols: number,
@@ -3296,12 +3801,15 @@ app.whenReady().then(() => {
     terminal = false,
     // Typed once the new AI is up: what another AI's conversation handed over (handoffPrompt).
     firstPrompt?: string,
+    bot?: string,
   ): Promise<SessionState> => {
     if (executor !== undefined && executor !== "shell" && !isAgentKind(executor)) {
       return { kind: "closed", reason: "spawn_failed", detail: "Unknown executor" };
     }
     const plain = terminal || executor === "shell";
     const configured = requireNode(nodeId);
+    // A bot works in its folder or nowhere: never in the PC's home.
+    if (bot !== undefined && !configured.repos.some((each) => each.id === repoId)) return { kind: "closed", reason: "spawn_failed", detail: "Unknown folder" };
     const node = { ...configured, agent: executor === undefined || plain ? configured.agent : executor };
     // A picked conversation's id goes onto the launch line unquoted, and only
     // an agent that forks a chosen one may take it -- agy would continue the original.
@@ -3309,7 +3817,7 @@ app.whenReady().then(() => {
       return { kind: "closed", reason: "spawn_failed", detail: "Unknown conversation" };
     }
     forgetChangedKeyAnswers(node.id);
-    const key = sessionKey(nodeId, repoId, terminal);
+    const key = sessionKey(nodeId, repoId, terminal, bot);
     // Known before it connects: a session still connecting, or one whose PC is off, is the phone's to see and close too.
     // Not over a running one's: a restart that fails leaves that session, and stopping it needs its own agent's name.
     if (!sessionExecutor.has(key)) sessionExecutor.set(key, plain ? "shell" : node.agent);
@@ -3351,16 +3859,22 @@ app.whenReady().then(() => {
     if ((fresh || typeof resume === "string") && node.kind === "ssh" && node.useTmux) {
       await machineOf(node).run(tmuxKillCommand(key, plain ? "shell" : node.agent), { login: true });
     }
+    // A bot's preamble goes only to an AI started now: over tmux an open may reattach one already running.
+    if (bot !== undefined && firstPrompt && !fresh && node.kind === "ssh" && node.useTmux) {
+      const there = await machineOf(node).run(`tmux has-session -t ${posixQuote(`=${tmuxSessionName(tmuxScope(key, node.agent))}`)}`, { login: true }).catch(() => undefined);
+      if (!there || there.timedOut || there.code === 0) firstPrompt = undefined;
+    }
     const repo = repoId === null ? undefined : node.repos.find((r) => r.id === repoId);
     // The CLI is brought up to date by the first session each machine gets
     // after Lepons starts -- "once per power-on" -- not on every launch.
     const updateKey = `${nodeId}::${node.agent}`;
     // Not with a handoff to type: a quiet update would take it, and its Enter, at the shell. The next session updates.
-    const update = !plain && !firstPrompt && !updatedThisRun.has(updateKey);
-    if (!plain && !firstPrompt) updatedThisRun.add(updateKey);
+    // Nor for a bot: its AI would come up behind the update, past the grace a look gives it, and read as up meanwhile.
+    const update = !plain && !firstPrompt && bot === undefined && !updatedThisRun.has(updateKey);
+    if (!plain && !firstPrompt && bot === undefined) updatedThisRun.add(updateKey);
     // A PC's own terminal has no folder: home, as a remote login lands there too.
     const cwd = repo?.path ?? (node.kind === "local" ? homedir() : undefined);
-    const { session, survives } = buildSession(node, key, cwd, cols, rows, resume ?? false, update, plain, bypass === true, repo?.label);
+    const { session, survives } = buildSession(node, key, cwd, cols, rows, resume ?? false, update, plain, bypass === true || bot !== undefined, repo?.label, bot !== undefined);
     sessions.set(key, session);
     sessionExecutor.set(key, plain ? "shell" : node.agent);
     const screen = { ring: new OutputRing(), cols, rows };
@@ -3382,7 +3896,8 @@ app.whenReady().then(() => {
         }
         // The operator may have moved about in the shell the AI left. Over SSH this is tmux, which has its own -c.
         const back = node.kind !== "local" || !cwd ? "" : process.platform === "win32" ? `cd /d "${cwd}" && ` : `cd ${posixQuote(cwd)} && `;
-        session.write(`${back}${launchLine(node, key, cwd, true, false, false, bypass === true, repo?.label)}\r`);
+        // A bot never continues a conversation: it would take up the person's newest in the folder.
+        session.write(`${back}${launchLine(node, key, cwd, bot === undefined, false, false, bypass === true || bot !== undefined, repo?.label, bot !== undefined)}\r`);
         const fork = agentSpec(node.agent).forkCommand;
         if (fork) typeWhenSettled(session, fork);
       })(),
@@ -3419,23 +3934,48 @@ app.whenReady().then(() => {
     // agy: that would branch the conversation open there.
     const fork = agentSpec(node.agent).forkCommand;
     if (fork && resume === true && !plain && !(node.kind === "ssh" && node.useTmux && !fresh)) typeWhenSettled(session, fork);
-    if (firstPrompt && !plain) typeWhenSettled(session, firstPrompt.replace(/\s+/g, " "), 3000, startQuestion);
+    // A bot's line waits for a look to find its AI up: if that AI never starts, the line would run in the shell.
+    // Never once a person has typed there meanwhile: it would land in what they wrote.
+    // ponytail: that case keeps a 3 s look going until the session closes; give typeWhenSettled a way to give up if it ever costs.
+    const openedAt = Date.now();
+    const botReady = () => agentSettled(key) && (lastInputAt.get(key) ?? -Infinity) < openedAt;
+    if (firstPrompt && !plain) typeWhenSettled(session, firstPrompt.replace(/\s+/g, " "), 3000, startQuestion, bot === undefined ? undefined : botReady);
     return session.open();
+  };
+
+  // One open per session at a time, whoever asks (the window, a bot's run, the phone), so none closes the session
+  // another is still making (open-once.ts). A restart waits its turn and then restarts.
+  const openOnceFor = openOnce<SessionState>();
+  const openOrRestart = (...args: Parameters<typeof openOrRestartNow>): Promise<SessionState> => {
+    const [nodeId, repoId, , , fresh, , , , terminal, , bot] = args;
+    return openOnceFor(sessionKey(nodeId, repoId, terminal, bot), () => openOrRestartNow(...args), !fresh);
+  };
+
+  /** What the window hands over to type first; for a bot it opens, the line that has it read its profile (a scheduled run adds its own). */
+  const firstPromptOf = (nodeId: string, repoId: string | null, firstPrompt: unknown, bot: unknown): string | undefined => {
+    if (typeof firstPrompt === "string") return firstPrompt;
+    if (typeof bot !== "string") return undefined;
+    const found = bots.list().find((one) => one.nodeId === nodeId && one.repoId === repoId && botSlug(one.name) === botSlug(bot));
+    return found && botPreamble(found.name, botProfilePath(found.folder, found.name));
   };
 
   ipcMain.handle(
     channels.openSession,
-    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState> =>
-      openOrRestart(nodeId, repoId, cols, rows, false, executor, resume, bypass, terminal, typeof firstPrompt === "string" ? firstPrompt : undefined),
+    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState> =>
+      // A bot never continues a person's conversation.
+      openOrRestart(nodeId, repoId, cols, rows, false, executor, typeof bot === "string" ? false : resume, bypass, terminal, firstPromptOf(nodeId, repoId, firstPrompt, bot), typeof bot === "string" ? bot : undefined),
   );
 
   ipcMain.handle(
     channels.restartSession,
-    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState> =>
-      openOrRestart(nodeId, repoId, cols, rows, true, executor, resume, bypass, terminal, typeof firstPrompt === "string" ? firstPrompt : undefined),
+    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState> =>
+      // A bot's session restarts as itself, never as the folder's plain one, and never continues a person's conversation.
+      openOrRestart(nodeId, repoId, cols, rows, true, executor, typeof bot === "string" ? false : resume, bypass, terminal, firstPromptOf(nodeId, repoId, firstPrompt, bot), typeof bot === "string" ? bot : undefined),
   );
 
   ipcMain.on(channels.writeSession, (_event, key: string, data: string) => {
+    // The terminal answering tmux's or an AI's question is not someone typing: a bot's run would wait for it.
+    if (!isTerminalReport(data)) lastInputAt.set(key, Date.now());
     sessions.get(key)?.write(data);
   });
 
@@ -3454,6 +3994,8 @@ app.whenReady().then(() => {
   const park = (why: string) => {
     for (const [key, session] of sessions) {
       if (!survivesDisconnect.has(key)) continue;
+      // A bot works while its owner is away.
+      if (botOfKey(key) !== undefined) continue;
       if (session.state.kind !== "ready") continue;
       console.log(`parking ${key} (${why})`);
       session.close("idle_closed");
@@ -3688,7 +4230,9 @@ app.whenReady().then(() => {
     const result = await checkForUpdate(current, undefined, process.platform, app.isPackaged ? target : undefined);
     if (quiet && result.kind !== "newer") return;
     if (result.kind === "failed") {
-      await appDialog(window, { type: "warning", message: t("update.failed"), detail: result.detail });
+      await appDialog(window, result.resetAt
+        ? { type: "warning", message: t("update.rateLimited", { time: formatDate(result.resetAt, { hour: "2-digit", minute: "2-digit" }) }), detail: result.detail }
+        : { type: "warning", message: t("update.failed"), detail: result.detail });
     } else if (result.kind === "current") {
       await appDialog(window, { type: "info", message: t("update.current", { current }) });
     } else if (result.patch || result.installer) {
@@ -4114,13 +4658,13 @@ app.whenReady().then(() => {
    * told it throws, leaving this side as it was -- or with `anyway` ends this
    * side all the same and answers false.
    */
-  const stopSessionKey = async (nodeId: string, key: string, anyway = false): Promise<boolean> => {
+  const stopSessionKey = async (nodeId: string, key: string, anyway = false, known?: Executor): Promise<boolean> => {
     let told = true;
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     // The session's own executor, not the node's setting: they differ the
     // moment an operator picks the other agent, and each has its own tmux
     // session. Killing by the node's agent ends someone else's work.
-    const agent = sessionExecutor.get(key) ?? node?.agent;
+    const agent = sessionExecutor.get(key) ?? known ?? node?.agent;
     if (node?.kind === "ssh" && node.useTmux && agent !== undefined) {
       const machine = machineOf(node);
       const ready = await machine.ready();
@@ -4140,13 +4684,274 @@ app.whenReady().then(() => {
     survivesDisconnect.delete(key);
     return told;
   };
+  /**
+   * A bot's session ended, over tmux by every AI that may run there under its name: what the session runs,
+   * the one an edit replaced, and its own. The first stop clears sessionExecutor, so each later one goes by its `known`.
+   */
+  const stopBot = async (bot: Bot, anyway = false): Promise<void> => {
+    const key = sessionKey(bot.nodeId, bot.repoId, false, bot.name);
+    for (const agent of new Set([sessionExecutor.get(key), bot.retired, bot.executor])) {
+      if (agent !== undefined) await stopSessionKey(bot.nodeId, key, anyway, agent);
+    }
+  };
 
+  /** 멈춤 and 다시 켜기, from the 자동화 view or the phone. */
+  const pauseBot = (id: string, paused: boolean): ScheduleDone => {
+    const bot = bots.get(id);
+    if (!bot) return { ok: false, error: `unknown_bot: ${id}` };
+    bots.set({ ...bot, paused });
+    // A run waiting for its turn is called off now, not at the next tick.
+    void botScheduler.tick();
+    return { ok: true };
+  };
   phoneHost = startPhoneHost({
-    userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages,
+    userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, lastInputAt,
     readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey,
+    botName: botNameOf,
+    // Called only once a phone asks, by when botScheduler (below) is made.
+    bots: {
+      // As the 자동화 view lists them.
+      list: () => bots.list().map(botRow),
+      busy: (id) => botScheduler.busy(id),
+      run: (id, jobId) => botScheduler.runNow(id, jobId),
+      pause: (id, paused) => void pauseBot(id, paused),
+      settleMissed: (id, run) => botScheduler.settleMissed(id, run),
+      // 세션으로 가기's opening, from main as a scheduled run's is: its own AI, no resume, its profile's line first.
+      // phone-host's openBot leaves one already up alone; one being opened is joined (openOrRestart).
+      open: (bot) => openOrRestart(bot.nodeId, bot.repoId, 120, 40, false, bot.executor, false, true, false, firstPromptOf(bot.nodeId, bot.repoId, undefined, bot.name), bot.name),
+    },
   });
   const twoFactor = phoneHost.twoFactor;
+  void reportScheduleRuns();
+  setInterval(() => void reportScheduleRuns(), 5 * 60_000).unref();
   llmHost = startLlmHost({ userData, ipcMain, nodes: () => nodes.list(), machineOf, sshOptions, vault: safeStorage, twoFactor });
+
+  // 예약 작업 in settings (agent/schedule.ts): the same reads and the same question as the MCP tools.
+  ipcMain.handle(channels.scheduleList, async (): Promise<ScheduleList> => ({
+    schedules: await scheduleRows(),
+    places: nodes.list().map((node) => ({ nodeId: node.id, machine: machineLabel(node), folders: node.repos.map((repo) => ({ id: repo.id, label: repo.label })) })),
+  }));
+  ipcMain.handle(channels.scheduleLogs, async (_event, id: string): Promise<string[]> => {
+    const host = scheduleHost(String(id));
+    return "error" in host ? [] : runLogs(machineOf(host.node), host.home, String(id));
+  });
+  ipcMain.handle(channels.scheduleLog, async (_event, id: string, name: string): Promise<string | undefined> => {
+    const host = scheduleHost(String(id));
+    return "error" in host ? undefined : runLog(machineOf(host.node), host.home, String(id), String(name));
+  });
+  ipcMain.handle(channels.scheduleSave, async (_event, form: ScheduleForm): Promise<ScheduleDone> => {
+    const parsed = parseWhen(String(form?.when ?? ""));
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    const instructions = String(form.instructions ?? "");
+    const executor = isAgentKind(form.executor) && delegateAgents.includes(form.executor) ? form.executor : undefined;
+    const input: ScheduleInput = {
+      when: parsed.when, cron: parsed.cron, instructions,
+      ...(form.precheck?.trim() ? { precheck: form.precheck } : {}),
+      ...(form.name?.trim() ? { name: form.name.trim() } : {}),
+      ...(executor ? { executor } : {}),
+    };
+    const local = nodes.list().find((node) => node.kind === "local");
+    const source = local ? machineLabel(local) : hostname();
+    if (form.id) {
+      const id = String(form.id);
+      const host = scheduleHost(id);
+      if ("error" in host) return { ok: false, error: host.error };
+      const read = await readSchedule(machineOf(host.node), host.home, id);
+      if (!read?.info) return { ok: false, error: read ? `unknown_schedule: ${id} is no longer on that machine` : "unreachable: could not reach that machine" };
+      const saved = await saveSchedule(source, host.node, read.info.folder, input, { id, info: read.info });
+      return saved.ok ? { ok: true } : saved;
+    }
+    const node = nodes.list().find((each) => each.id === form.nodeId);
+    const repo = node?.repos.find((each) => each.id === form.repoId);
+    if (!node || !repo) return { ok: false, error: "unknown_repo" };
+    const saved = await saveSchedule(source, node, repo.path, input);
+    return saved.ok ? { ok: true } : saved;
+  });
+  ipcMain.handle(channels.schedulePause, (_event, id: string, paused: boolean) => pauseSchedule(String(id), paused === true));
+  ipcMain.handle(channels.scheduleRemove, async (_event, id: string): Promise<ScheduleDone> => {
+    const removed = await deleteSchedule(String(id));
+    return removed.ok ? { ok: true } : removed;
+  });
+
+  // The 자동화 view's bots (agent/bots.ts): the same question as create_bot.
+  const botRow = (bot: Bot): BotRow => {
+    const runs = bots.runs(bot.id).flatMap((run): BotRun[] => run.status === "sent" ? [] : [{
+      jobId: run.jobId, startedAt: run.startedAt, state: run.status,
+      ...(run.endedAt ? { endedAt: run.endedAt } : {}), ...(run.reason ? { reason: run.reason } : {}), ...(run.answer ? { answer: run.answer } : {}),
+    }]).reverse();
+    const missed = bots.runs(bot.id).filter((run) => run.status === "missed" && !run.handled);
+    // Paused too: the card says when it would run again.
+    const next = nextRunOf({ ...bot, paused: false }, new Date());
+    return {
+      ...bot, ...(next ? { nextRun: next } : {}), ...(runs[0] ? { last: runs[0] } : {}), runs: runs.slice(0, 10),
+      ...(missed.length > 0 ? { missed: { count: missed.length, at: missed.at(-1)!.startedAt, jobId: missed.at(-1)!.jobId } } : {}),
+    };
+  };
+  ipcMain.handle(channels.botList, (): BotRow[] => bots.list().map(botRow));
+  ipcMain.handle(channels.botSave, async (_event, form: BotForm): Promise<ScheduleDone> => {
+    const kept = form.id ? bots.get(String(form.id)) : undefined;
+    const node = nodes.list().find((each) => each.id === form.nodeId);
+    const repo = node?.repos.find((each) => each.id === form.repoId);
+    if (!node || !repo) return { ok: false, error: "unknown_repo" };
+    const executor = isAgentKind(form.executor) && delegateAgents.includes(form.executor) ? form.executor : kept?.executor ?? node.agent;
+    const local = nodes.list().find((each) => each.kind === "local");
+    const saved = await saveBotHere(local ? machineLabel(local) : hostname(), {
+      name: String(form.name ?? ""), nodeId: node.id, repoId: repo.id, folder: repo.path, executor, role: String(form.role ?? ""),
+      fresh: form.fresh === true,
+      jobs: Array.isArray(form.jobs) ? form.jobs.map((job) => ({ ...(typeof job?.id === "string" ? { id: job.id } : {}), when: String(job?.when ?? ""), instructions: String(job?.instructions ?? "") })) : [],
+      ...(Array.isArray(form.linked) ? { linked: form.linked.map(String) } : {}),
+    }, form.id ? String(form.id) : undefined);
+    return saved.ok ? { ok: true } : saved;
+  });
+  // The profile file stays: it holds the bot's memory, and the user may want it back.
+  // Its session is ended first, over tmux too, by the AI it runs: it skips permission questions.
+  ipcMain.handle(channels.botRemove, (_event, id: string): Promise<ScheduleDone> =>
+    removeBot(bots, String(id), (bot) => stopBot(bot)));
+  ipcMain.handle(channels.botPause, (_event, id: string, paused: boolean): ScheduleDone => pauseBot(String(id), paused === true));
+  // Existing launchd/cron/systemd/Task Scheduler jobs (agent/os-jobs.ts): listed read-only, changed only after the question.
+  const osJobHost = async (nodeId: unknown) => {
+    const node = nodes.list().find((each) => each.id === nodeId);
+    if (!node) return { error: `unknown_node: ${String(nodeId)}` };
+    if (!node.home) return { error: UNKNOWN_HOME };
+    const machine = machineOf(node);
+    const ready = await machine.ready();
+    return ready.ok ? { node, machine, home: node.home } : { error: ready.reason };
+  };
+  // Each PC's last answer is kept, so the view can draw at once next time.
+  const jobCache = new JobCacheStore(join(userData, "osjobs-cache.json"));
+  ipcMain.handle(channels.osJobsCached, () => jobCache.all());
+  ipcMain.handle(channels.osJobs, async (_event, nodeId: string) => {
+    const host = await osJobHost(nodeId);
+    if ("error" in host) return { ok: false as const, error: host.error };
+    const listed = await listOsJobs(host.machine, host.home);
+    if (listed.ok) try { jobCache.set(host.node.id, new Date().toISOString(), listed.jobs, nodes.list().map((node) => node.id)); } catch { /* the list still goes to the page */ }
+    return listed;
+  });
+  // Codex's own timetables on this PC, read only and only on a click: the
+  // desktop app's automations straight from its SQLite file (opened read-only
+  // and closed at once, so Codex's own writes are never held up), and Codex
+  // Cloud tasks from `codex cloud list --json`, empty stdin, 30 s at most.
+  ipcMain.handle(channels.codexAutomations, async () => {
+    const appData = async () => {
+      const file = join(homedir(), ".codex", "sqlite", "codex.db");
+      if (!existsSync(file)) return { ok: false as const, error: "missing" };
+      try {
+        const { DatabaseSync } = await import("node:sqlite");
+        const db = new DatabaseSync(file, { readOnly: true });
+        try {
+          return { ok: true as const, rows: parseAutomationRows(db.prepare("SELECT * FROM automations ORDER BY name").all()) };
+        } finally {
+          db.close();
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        return { ok: false as const, error: /no such table/i.test(detail) ? "missing" : detail.slice(0, 200) };
+      }
+    };
+    const cloud = () => new Promise<{ ok: true; tasks: CodexCloudTask[] } | { ok: false; error: string }>((resolve) => {
+      const launch = localLaunch("codex cloud list --json --limit 20");
+      // POSIX: its own process group, so the shell wrapper and codex under it go together on a timeout.
+      const windows = process.platform === "win32";
+      const child = spawn(launch.file, launch.args, { cwd: tmpdir(), env: sanitizedEnv(), shell: launch.shell, windowsHide: true, detached: !windows });
+      let output = "";
+      let settled = false;
+      const settle = (result: { ok: true; tasks: CodexCloudTask[] } | { ok: false; error: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      // The answer comes from the timer itself: killing cmd.exe (or the -lic shell) can leave codex holding the pipes,
+      // and then "close" never comes. The whole tree goes: taskkill /T on Windows, the process group elsewhere.
+      const timer = setTimeout(() => {
+        settle({ ok: false, error: "timeout" });
+        if (child.pid === undefined) return;
+        if (windows) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill());
+        else {
+          try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
+        }
+      }, 30_000);
+      child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+      child.stderr.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+      child.on("error", () => settle({ ok: false, error: "no_codex" }));
+      child.on("close", (code) => {
+        const tasks = code === 0 ? parseCloudList(output) : undefined;
+        settle(tasks ? { ok: true, tasks } : { ok: false, error: output.trim().split("\n")[0]?.slice(0, 200) || `exit ${code}` });
+      });
+      child.stdin.end();
+    });
+    const [app, tasks] = await Promise.all([appData(), cloud()]);
+    return { app, cloud: tasks };
+  });
+  ipcMain.handle(channels.routines, async (_event, nodeId: string) => {
+    const host = await osJobHost(nodeId);
+    if ("error" in host) return { ok: false as const, error: host.error };
+    return listRoutines(host.machine);
+  });
+  ipcMain.handle(channels.osJobControl, async (_event, nodeId: string, jobId: string, action: string, when?: string) => {
+    const host = await osJobHost(nodeId);
+    if ("error" in host) return { ok: false as const, error: host.error };
+    // The job is looked up again on its machine: what the page sends is only a name for it, never the command.
+    const listed = await listOsJobs(host.machine, host.home);
+    if (!listed.ok) return listed;
+    const found: OsJob | undefined = listed.jobs.find((each) => each.id === String(jobId));
+    if (!found) return { ok: false as const, error: `unknown_job: ${String(jobId)} is no longer on that machine` };
+    const job = found;
+    const approve = osJobApprover(host.node);
+    // The question is asked outside the machine's queue; only the work goes in it.
+    const serial = <T,>(work: () => Promise<T>) => onMachine(host.node.id, work);
+    if (action === "edit") {
+      const parsed = parseWhen(String(when ?? ""));
+      return parsed.ok ? editOsJob(host.machine, job, parsed.when, approve, serial) : { ok: false as const, error: parsed.error };
+    }
+    if (action !== "pause" && action !== "resume" && action !== "run" && action !== "log") return { ok: false as const, error: `unknown_action: ${String(action)}` };
+    return controlOsJob(host.machine, job, action, approve, serial);
+  });
+  /** Where a bot's agent keeps its records: its machine, their format and the folder they are filed under. */
+  const botRecords = (bot: Bot) => {
+    const node = nodes.list().find((one) => one.id === bot.nodeId);
+    const repo = node?.repos.find((one) => one.id === bot.repoId);
+    return node && repo ? { machine: machineOf(node), format: agentSpec(bot.executor).can.transcript, folder: repo.path } : undefined;
+  };
+  const botScheduler = new BotScheduler({
+    bots, nodes: () => nodes.list(), sessions, lastInputAt, agentGone, agentUp: agentSettled, ipcMain,
+    snapshot: async (bot) => {
+      const at = botRecords(bot);
+      return at && recordsBefore(at.machine, at.format, at.folder);
+    },
+    answer: async (bot, before, startedAt) => {
+      const at = botRecords(bot);
+      return at && answerOfRun(at.machine, at.format, at.folder, before, startedAt);
+    },
+    open: async (node, bot, resume) => openOrRestart(node.id, bot.repoId, 120, 40, false, bot.executor, resume, true, false, undefined, bot.name),
+    restart: async (node, bot) => {
+      // The AI an edit replaced has a tmux session of its own name, which the new one's restart leaves running.
+      if (bot.retired && node.kind === "ssh" && node.useTmux) {
+        await machineOf(node).run(tmuxKillCommand(sessionKey(node.id, bot.repoId, false, bot.name), bot.retired), { login: true }).catch(() => undefined);
+      }
+      return openOrRestart(node.id, bot.repoId, 120, 40, true, bot.executor, false, true, false, undefined, bot.name);
+    },
+    notify: (bot, body) => phoneHost?.scheduleRan(`bot-${bot.id}`, t("bot.pushTitle", { name: bot.name }), t(`bot.${body}`)),
+  });
+  botScheduler.start();
+  // On waking, at once rather than at the next 30 s: the tick tells what the sleep missed and runs what is due now.
+  powerMonitor.on("resume", () => void botScheduler.tick());
+  ipcMain.handle(channels.botRunNow, async (_event, id: string): Promise<ScheduleDone> => {
+    try {
+      await botScheduler.runNow(String(id));
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+  ipcMain.handle(channels.botMissed, async (_event, id: string, run: boolean): Promise<ScheduleDone> => {
+    try {
+      await botScheduler.settleMissed(String(id), run === true);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
   // Off means off. A tmux-backed agent outlives this end of the connection
   // by design -- that is what makes a dropped link survivable -- so letting

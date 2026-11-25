@@ -59,6 +59,9 @@ const words = {
     stopped: "멈췄어요. 다음에 할 일을 알려 주세요.",
     menuNo: "알겠어요. 어떻게 고칠지 알려 주세요.",
     menuYes: "고쳤어요. 이제 합계에 할인이 먼저 빠져요.",
+    botTidy: "문서 정리봇", botReport: "주간 리포트", botTests: "테스트 지킴이",
+    tidyList: "오늘 바뀐 문서 목록 정리하기", tidyWeek: "지난주 바뀐 내용 요약 쓰기",
+    reportLogs: "어제 오류 로그 모으기", reportWrite: "모은 오류로 요약 쓰기", testsRun: "테스트 돌리고 실패한 것 정리하기",
     echo: "데모라서 실제로 바뀐 건 없어요. 받은 말: \"{text}\"",
   },
   en: {
@@ -94,6 +97,9 @@ const words = {
     stopped: "Stopped. Tell me what to do next.",
     menuNo: "OK. Tell me how you'd like it fixed.",
     menuYes: "Fixed. The cart total now takes the discount off first.",
+    botTidy: "Docs tidy bot", botReport: "Weekly report", botTests: "Test keeper",
+    tidyList: "List the docs changed today", tidyWeek: "Sum up last week's changes",
+    reportLogs: "Collect yesterday's error logs", reportWrite: "Write a summary of the errors", testsRun: "Run the tests and list what fails",
     echo: "This is a demo, so nothing actually changed. You said: \"{text}\"",
   },
   zh: {
@@ -129,6 +135,9 @@ const words = {
     stopped: "已停止。告诉我下一步做什么。",
     menuNo: "好的。告诉我想怎么修。",
     menuYes: "修好了。现在合计会先减去折扣。",
+    botTidy: "文档整理机器人", botReport: "周报", botTests: "测试守护",
+    tidyList: "整理今天改动的文档清单", tidyWeek: "总结上周的改动",
+    reportLogs: "收集昨天的错误日志", reportWrite: "根据错误写一份总结", testsRun: "运行测试并整理失败项",
     echo: "这是演示，实际上什么都没改。收到的话：\"{text}\"",
   },
 }[locale];
@@ -157,6 +166,8 @@ interface DemoSession {
   subagents?: PhoneSubagent[];
   /** A worktree's: its original folder; its folder is the task's name. */
   worktreeOf?: string;
+  /** A bot's session: the bot's name. The 봇 tab opens it; the sessions tab leaves it out. */
+  bot?: string;
 }
 
 const progress = (since: number, files: string[], reads: number, commands: number, subagents = 0, running = 0): NonNullable<PhoneSummary["progress"]> =>
@@ -379,12 +390,13 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
   /** The pretend PC's folders with nothing open: one tap opens a fresh session there, as the PC would. */
   const closed: Array<{ id: string; folder: string; worktreeOf?: string }> = [{ id: "de0000000000000f", folder: "landing-page" }];
   const state = (): ReplyOf<"GET /api/state"> => ({
-    sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents, worktreeOf }) => {
+    sessions: sessions.map(({ id, pc, folder, mood, agent, preview, pane, events, summary, subagents, worktreeOf, bot }) => {
       const steps = events.flatMap((event): StepKind[] => (event.kind === "note" ? [] : [event.kind])).slice(-5);
       return {
         id, pc: pc ?? words.pc, folder, mood, agent, preview, ...(pane ? { pane } : {}), ...(steps.length ? { steps } : {}),
         ...(summary ? { summary } : {}), ...(subagents ? { subagents } : {}), ...(agent ? { agentName: "Claude Code" } : {}),
         ...(worktreeOf ? { worktreeOf, worktree: folder } : {}),
+        ...(bot ? { bot } : {}),
       };
     }),
     pcs: pcs.map((pc) => ({ ...pc })),
@@ -394,6 +406,72 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
       { name: "Codex", fiveHour: { percent: 12, resetsAt: hours(4) }, week: { percent: 91, resetsAt: hours(30) } },
     ],
   });
+  /**
+   * Three made-up bots: one that ran yesterday, one whose morning run was missed, one paused on the laptop. A run
+   * goes on for a few seconds, then ends done; nothing runs.
+   */
+  const at = (daysAgo: number, hour: number, minute = 0) => {
+    const day = new Date();
+    day.setDate(day.getDate() - daysAgo);
+    day.setHours(hour, minute, 0, 0);
+    return day.toISOString();
+  };
+  /** The latest of today's or yesterday's hh:mm that has passed. */
+  const lastAt = (hour: number) => (Date.parse(at(0, hour)) < Date.now() ? at(0, hour) : at(1, hour));
+  type DemoBot = Omit<ReplyOf<"GET /api/bots">["bots"][number], "next" | "sessionId" | "pc" | "pcId"> & { onLaptop?: boolean; session: string };
+  const bots: DemoBot[] = [
+    {
+      id: "demo-tidy", name: words.botTidy, folder: "docs-site", executor: "Claude Code", fresh: true, paused: false, state: "idle", session: "de0000000000000b",
+      jobs: [{ id: "t1", when: { minute: 0, hour: 18 }, text: words.tidyList }, { id: "t2", when: { minute: 30, hour: 8, days: [1] }, text: words.tidyWeek }],
+      runs: [{ at: at(1, 18), status: "done", jobText: words.tidyList }, { at: at(2, 18), status: "done", jobText: words.tidyList }],
+      last: { at: at(1, 18), status: "done" }, missed: null,
+    },
+    {
+      id: "demo-report", name: words.botReport, folder: "api-server", executor: "Codex", fresh: false, paused: false, state: "missed", session: "de0000000000000c",
+      jobs: [{ id: "r1", when: { minute: 0, hour: 9 }, text: words.reportLogs }, { id: "r2", when: { minute: 0, hour: 9 }, text: words.reportWrite }],
+      runs: [
+        { at: lastAt(9), status: "missed", jobText: words.reportLogs },
+        { at: at(2, 9, 1), status: "done", jobText: words.reportWrite },
+        { at: at(2, 9), status: "done", jobText: words.reportLogs },
+        { at: at(3, 9), status: "skipped", reason: "busy", jobText: words.reportLogs },
+      ],
+      last: { at: lastAt(9), status: "missed" }, missed: { count: 1, at: lastAt(9), jobId: "r1" },
+    },
+    {
+      id: "demo-tests", name: words.botTests, folder: "mobile-app", executor: "Claude Code", fresh: true, paused: true, state: "paused", session: "de0000000000000d", onLaptop: true,
+      jobs: [{ id: "k1", when: { minute: 0, hour: 13, days: [1, 2, 3, 4, 5] }, text: words.testsRun }],
+      runs: [{ at: at(3, 13), status: "skipped", reason: "paused", jobText: words.testsRun }],
+      last: { at: at(3, 13), status: "skipped", reason: "paused" }, missed: null,
+    },
+  ];
+  /** The next minute one of its jobs comes due, within a week. */
+  const nextOf = (bot: Pick<DemoBot, "jobs">) => {
+    const times = bot.jobs.flatMap(({ when }) => Array.from({ length: 8 }, (_, d) => d).flatMap((d) =>
+      (when.hour === undefined ? Array.from({ length: 24 }, (_, h) => h) : [when.hour]).map((hour) => {
+        const day = new Date();
+        day.setDate(day.getDate() + d);
+        day.setHours(hour, when.minute, 0, 0);
+        return when.days && !when.days.includes(day.getDay()) ? Infinity : day.getTime();
+      })));
+    const next = Math.min(...times.filter((time) => time > Date.now()));
+    return Number.isFinite(next) ? new Date(next).toISOString() : null;
+  };
+  const botView = ({ onLaptop, session, ...bot }: DemoBot): ReplyOf<"GET /api/bots">["bots"][number] => ({
+    ...bot, pc: onLaptop ? words.laptop : words.pc, pcId: pcs[onLaptop ? 1 : 0]!.id, next: nextOf(bot),
+    sessionId: sessions.some((one) => one.id === session) ? session : null,
+  });
+  /** A run: a few seconds of work, then done; the bot's session, if open, shows it working meanwhile. */
+  const runBot = (bot: DemoBot, jobId: string | undefined) => {
+    const job = bot.jobs.find((one) => one.id === jobId) ?? bot.jobs[0]!;
+    bot.state = "running";
+    later(4000, () => {
+      const run = { at: new Date().toISOString(), status: "done" as const, jobText: job.text };
+      bot.runs = [run, ...bot.runs].slice(0, 10);
+      bot.last = { at: run.at, status: "done" };
+      bot.state = bot.paused ? "paused" : bot.missed ? "missed" : "idle";
+    });
+  };
+
   /** The one plain shell among the pretend sessions, for the terminal tab. */
   const shell = sessions.find((session) => !session.agent)!;
   const changed = (session: DemoSession, screen?: string) => {
@@ -556,6 +634,40 @@ export function createDemo(emit: <E extends keyof PhoneEvents>(name: E, data: Ph
     if (at === "POST /api/answer") return fail(409, "stale");
     // The pretend PC keeps nothing outside its folders.
     if (at === "GET /api/outside") return fail(404, "file");
+    if (at === "GET /api/bots") return ok(at, { bots: bots.map(botView) });
+    if (at === "POST /api/bots/run" || at === "POST /api/bots/pause" || at === "POST /api/bots/missed" || at === "POST /api/bots/open") {
+      const fields = typeof body === "object" && body !== null ? (body as Unproven<"POST /api/bots/run"> & Unproven<"POST /api/bots/pause"> & Unproven<"POST /api/bots/missed">) : {};
+      const bot = bots.find((one) => one.id === fields.id);
+      if (!bot) return fail(404, "bot");
+      if (at === "POST /api/bots/pause") {
+        if (typeof fields.paused !== "boolean") return fail(400, "paused");
+        bot.paused = fields.paused;
+        if (bot.state !== "running") bot.state = bot.paused ? "paused" : bot.missed ? "missed" : "idle";
+        return ok(at, { ok: true });
+      }
+      // Its session, opened a moment later if it is not in the list: idle until spoken to.
+      if (at === "POST /api/bots/open") {
+        if (!sessions.some((one) => one.id === bot.session)) {
+          later(1200, () => {
+            sessions.push({ id: bot.session, ...(bot.onLaptop ? { pc: words.laptop } : {}), folder: bot.folder, bot: bot.name, mood: "idle", agent: true, preview: "", screen: "", events: [], docs: {} });
+            emit("state", state());
+          });
+        }
+        return ok(at, { sessionId: bot.session });
+      }
+      if (at === "POST /api/bots/missed" && typeof fields.run !== "boolean") return fail(400, "run");
+      const run = at === "POST /api/bots/run" || fields.run === true;
+      if (run && bot.paused) return fail(409, "paused");
+      if (run && bot.state === "running") return fail(409, "busy");
+      // The missed job runs, as on the PC (its first, were it edited away).
+      const jobId = at === "POST /api/bots/missed" ? bot.missed?.jobId : typeof fields.jobId === "string" ? fields.jobId : undefined;
+      if (at === "POST /api/bots/missed") {
+        bot.missed = null;
+        bot.state = bot.paused ? "paused" : "idle";
+      }
+      if (run) runBot(bot, jobId);
+      return ok("POST /api/bots/run", { ok: true });
+    }
     // The pretend PC has no pushes to send: every route but this one is answered above.
     at satisfies "POST /api/push-token";
     return fail(404, "not found");

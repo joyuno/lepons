@@ -24,8 +24,8 @@ const QUEUED_MS = 5 * 60_000;
 const TYPING_MS = 400;
 const none: Waiting[] = [];
 
-/** As inputFor leaves them (the PC types them so), any run of spaces as one. */
-const words = (text: string) => text.replace(/[\r\n]+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").replace(/\s+/g, " ").trim();
+/** Spaces left out: the PC types a long message in pieces, and where one piece ends the transcript may add or drop a break. */
+const words = (text: string) => text.replace(/[\x00-\x1f\x7f]/g, "").replace(/\s+/g, "");
 
 /** The bubbles whose message the transcript does not show yet. An agent may join queued messages into one row, a line each. */
 export function stillWaiting(list: readonly Waiting[], items: ReadonlyArray<{ kind: string; text?: string; at: number }>): readonly Waiting[] {

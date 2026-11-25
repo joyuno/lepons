@@ -103,3 +103,31 @@ test("only this repository's release pages are ever offered", async () => {
   assert.deepEqual(await checkForUpdate("1.6.0", release("v9.9.9", "https://example.com/lepons-setup.exe")),
     { kind: "failed", detail: "no release in the response" });
 });
+
+// Anonymous API calls are capped per address; the plain release page is not.
+const refused = (status: number, headers: Record<string, string> = {}) => new Response("rate limit", { status, headers });
+const landed = (url: string) => Object.defineProperty(new Response("<html>", { status: 200 }), "url", { value: url });
+const tagPage = "https://github.com/joyuno/lepons/releases/tag/v1.11.0";
+
+test("when the API refuses, the release page still tells the latest version", async () => {
+  const get = (page: Response) => async (url: string) => (url.includes("api.github.com") ? refused(403) : page);
+  assert.deepEqual(await checkForUpdate("1.10.0", get(landed(tagPage)), "win32"), { kind: "newer", latest: "1.11.0", url: tagPage });
+  assert.deepEqual(await checkForUpdate("1.11.0", get(landed(tagPage)), "win32"), { kind: "current", latest: "1.11.0" });
+});
+
+test("when both refuse, a rate limit says when it ends", async () => {
+  const get = (status: number, headers?: Record<string, string>) => async (url: string) =>
+    url.includes("api.github.com") ? refused(status, headers) : landed("https://github.com/joyuno/lepons/releases");
+  const soon = Math.floor(Date.now() / 1000) + 600;
+  assert.deepEqual(await checkForUpdate("1.10.0", get(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(soon) })),
+    { kind: "failed", detail: "HTTP 403", resetAt: soon * 1000 });
+  // retry-after comes first when given (the secondary limit has only that); a reset already past is shown as now.
+  const after = await checkForUpdate("1.10.0", get(403, { "retry-after": "60", "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(soon) }));
+  assert.ok(after.kind === "failed" && after.resetAt! > Date.now() + 50_000 && after.resetAt! <= Date.now() + 60_000);
+  const past = await checkForUpdate("1.10.0", get(403, { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1000000000" }));
+  assert.ok(past.kind === "failed" && past.resetAt! >= Date.now() - 5000 && past.resetAt! <= Date.now());
+  assert.deepEqual(await checkForUpdate("1.10.0", get(404)), { kind: "failed", detail: "HTTP 404" });
+  // Calls left, and no retry-after: not a rate limit, so plain "HTTP 403".
+  assert.deepEqual(await checkForUpdate("1.10.0", get(403, { "x-ratelimit-remaining": "42", "x-ratelimit-reset": String(soon) })),
+    { kind: "failed", detail: "HTTP 403" });
+});

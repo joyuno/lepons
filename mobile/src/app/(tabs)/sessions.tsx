@@ -1,14 +1,17 @@
 import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ActivityIndicator, Alert, Animated, FlatList, Pressable, RefreshControl, Text, View, type ViewStyle } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useConnection } from "@/connection";
+import { PcReconnectButton, usePcReconnect } from "@/pc-reconnect";
 import { fmt, t } from "@/i18n";
 import { useRowMoves } from "@/motion";
+import { inPcOrder, movedPc } from "@/phone/bots";
 import { sessionList, type ListGroup, type ListRow } from "@/phone/session-list";
 import { folderName, lampState, type PhoneSessionView, type PhoneState } from "@/phone/types";
+import { loadPcOrder, savePcOrder } from "@/store";
 import { SwipeRow, type RowAction } from "@/swipe-row";
 import { font, groupRow, Lamp, radius, SessionRow, size, space, useTheme } from "@/ui";
 
@@ -24,6 +27,8 @@ const open = (id: string) => router.push({ pathname: "/session/[id]", params: { 
 const rowKey = (row: Row) => row.kind === "session" ? `s${row.session.id}` : `f${row.folder.id}`;
 /** A session's id is its folder's, so an original stays unfolded when its closed folder opens. */
 const foldKey = (row: Row) => row.kind === "session" ? row.session.id : row.folder.id;
+/** A PC group by its opaque id; by its label from a PC older than that. */
+const pcKey = (group: { pc: string; pcId?: string }) => group.pcId ?? group.pc;
 
 /**
  * What waits for the reader first, each its own card; then each PC: its state,
@@ -34,9 +39,21 @@ const foldKey = (row: Row) => row.kind === "session" ? row.session.id : row.fold
  */
 export default function Sessions() {
   const c = useConnection();
+  const pcReconnect = usePcReconnect();
   const { c: p, s } = useTheme();
   const sessions = (c.phone?.sessions ?? []).filter((session) => session.agent);
-  const { waiting, groups } = sessionList(sessions, c.phone?.folders ?? [], c.phone?.pcs ?? []);
+  const listed = sessionList(sessions, c.phone?.folders ?? [], c.phone?.pcs ?? []);
+  // The PCs in the order moved here in 편집, kept on this phone per paired PC.
+  const pairing = c.demo ? "demo" : c.pairing?.id ?? "";
+  const [order, setOrder] = useState<string[]>(() => loadPcOrder(pairing));
+  useEffect(() => setOrder(loadPcOrder(pairing)), [pairing]);
+  const { waiting } = listed;
+  const groups = inPcOrder(listed.groups, pcKey, order);
+  const movePc = (key: string, by: -1 | 1) => {
+    const next = movedPc(groups.map(pcKey), key, by);
+    setOrder(next);
+    savePcOrder(pairing, next);
+  };
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(() => new Set());
   const toggle = (key: string) => setUnfolded((was) => {
     const now = new Set(was);
@@ -121,11 +138,28 @@ export default function Sessions() {
       const { group } = item;
       // Red only for a PC that cannot be reached; one with nothing open is just quiet.
       const down = group.state === "failed";
+      const pcId = group.pcId;
       return (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: item.first ? 0 : space.xl, marginBottom: space.sm, paddingHorizontal: space.xs, minHeight: 32 }}>
-          {group.state ? <Lamp state={group.state} size={8} /> : null}
-          <Text style={[s.text, font.semibold, { fontSize: size.footnote, flexShrink: 1 }]} numberOfLines={1}>{group.pc}</Text>
-          {group.state ? <Text style={[s.dim, { fontSize: size.footnote, color: down ? p.stop : p.muted }]}>{t[`pc_${group.state}`]}</Text> : null}
+        <View style={{ marginTop: item.first ? 0 : space.xl, marginBottom: space.sm }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, paddingHorizontal: space.xs, minHeight: 44 }}>
+            {group.state ? <Lamp state={group.state} size={8} /> : null}
+            <Text style={[s.text, font.semibold, { fontSize: size.footnote, flexShrink: 1 }]} numberOfLines={1}>{group.pc}</Text>
+            {group.state ? <Text style={[s.dim, { fontSize: size.footnote, color: down ? p.stop : p.muted, flex: 1 }]} numberOfLines={1}>{t[`pc_${group.state}`]}</Text> : <View style={{ flex: 1 }} />}
+            {/* That one PC asked again, as on 홈; a PC without an id cannot be asked. */}
+            {pcId && !editing ? <PcReconnectButton label={group.pc} state={group.state} busy={pcReconnect.busy.has(pcId)} onPress={() => void pcReconnect.reconnect(pcId)} /> : null}
+            {/* 편집: each PC moves a place up or down; the first and the last only one way. */}
+            {editing && groups.length > 1 ? ([[-1, "pcMoveUp", { ios: "chevron.up", android: "expand_less" }], [1, "pcMoveDown", { ios: "chevron.down", android: "expand_more" }]] as const).map(([by, label, name]) => {
+              const at = groups.indexOf(group);
+              const stuck = by < 0 ? at === 0 : at === groups.length - 1;
+              return (
+                <Pressable key={label} accessibilityRole="button" accessibilityLabel={fmt(t[label], { pc: group.pc })} accessibilityState={{ disabled: stuck }} disabled={stuck} hitSlop={4} onPress={() => movePc(pcKey(group), by)}
+                  style={({ pressed }) => ({ width: 44, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: stuck ? 0.3 : pressed ? 0.5 : 1 })}>
+                  <SymbolView name={name} tintColor={p.link} size={18} />
+                </Pressable>
+              );
+            }) : null}
+          </View>
+          {pcId && pcReconnect.note?.id === pcId ? <Text style={[s.dim, { fontSize: size.footnote, paddingHorizontal: space.xs }]} accessibilityLiveRegion="polite">{pcReconnect.note.text}</Text> : null}
         </View>
       );
     }
@@ -197,8 +231,8 @@ export default function Sessions() {
         ListHeaderComponent={
           <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, marginBottom: empty ? 0 : space.md }}>
             {c.demo ? <Text style={[s.dim, { flex: 1, color: p.live }]}>{t.demoBanner}</Text> : <View style={{ flex: 1 }} />}
-            {/* Only open sessions have something to close. */}
-            {sessions.length === 0 ? null : (
+            {/* Only open sessions have something to close, and only two PCs or more something to move. */}
+            {sessions.length === 0 && groups.length < 2 ? null : (
                 <Pressable accessibilityRole="button" accessibilityHint={t.rowActions} hitSlop={8} onPress={() => { setEditing((now) => !now); setSwiped(undefined); }}
                   style={({ pressed }) => ({ minHeight: 32, minWidth: 44, alignItems: "flex-end", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
                   <Text style={[font.semibold, { fontSize: size.callout, color: p.link }]}>{editing ? t.editDone : t.edit}</Text>

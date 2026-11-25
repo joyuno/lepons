@@ -143,6 +143,8 @@ export interface AgentSpec {
   updatesItself?: true;
   /** Typed into a resumed session where the CLI forks only from inside the conversation (typeWhenSettled). */
   forkCommand?: string;
+  /** Typed to start a new conversation in the same session (a bot's fresh run). Absent where unchecked: the session is reopened instead. */
+  clearCommand?: string;
 }
 
 export const agents: Record<AgentKind, AgentSpec> = {
@@ -171,6 +173,7 @@ export const agents: Record<AgentKind, AgentSpec> = {
     nameFlag: (name, shell) =>
       `--name ${shell === "cmd" ? `"${name.replace(/["%\r\n]/g, "")}"` : posixQuote(name)}`,
     resumeExitsWhenEmpty: true,
+    clearCommand: "/clear",
     install: {
       posix: "curl -fsSL https://claude.ai/install.sh | bash",
       win32: "irm https://claude.ai/install.ps1 | iex",
@@ -222,6 +225,7 @@ export const agents: Record<AgentKind, AgentSpec> = {
     bypassFlag: "--dangerously-bypass-approvals-and-sandbox",
     reviewFlag: "--approve-for-me",
     resumeExitsWhenEmpty: false,
+    clearCommand: "/new",
     install: {
       posix: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
       win32: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
@@ -387,6 +391,7 @@ export const agents: Record<AgentKind, AgentSpec> = {
     reviewFlag: "",
     // ponytail: unchecked whether --continue exits where nothing was recorded; the fallback costs nothing if not.
     resumeExitsWhenEmpty: true,
+    clearCommand: "/new",
     install: {
       posix: "curl -fsSL https://opencode.ai/install | bash",
       win32: "npm install -g opencode-ai",
@@ -534,6 +539,24 @@ export function withUpdate(kind: AgentKind, command: string, shell: "posix" | "c
   return shell === "cmd" ? `${kind} update & ${command}` : `{ ${kind} update; ${command}; }`;
 }
 
+const DENIED_COMMANDS = [
+  "rm *", "rmdir *", "del *", "rd *", "Remove-Item *",
+  "git push *--force*", "git push -f*", "git push * -f*",
+  "git reset --hard*", "git clean*", "git branch -D*", "git checkout -- *", "git restore*",
+];
+
+/**
+ * A bot runs unattended with the checks skipped, so what is hard to undo is
+ * denied by name (deny rules hold under the bypass): the Claude CLI's
+ * --disallowedTools, for both of its shell tools. Another agent has no such flag.
+ * ponytail: a prefix match, so `git -C dir push --force` or a script still gets through.
+ */
+export function botDenyFlag(spec: AgentSpec, shell: "posix" | "cmd", bot: boolean): string {
+  if (!bot || spec !== agents.claude) return "";
+  const quote = (rule: string) => (shell === "cmd" ? `"${rule}"` : posixQuote(rule));
+  return `--disallowedTools ${["Bash", "PowerShell"].flatMap((tool) => DENIED_COMMANDS.map((c) => quote(`${tool}(${c})`))).join(" ")}`;
+}
+
 /**
  * What follows the agent's own command on every launch: either skipping
  * checks or the automatic reviewer, and the session's name.
@@ -572,8 +595,10 @@ export const startQuestion = /\btrust\b|Yes, I accept|Do you want/i;
  * been quiet for quietMs, when the TUI has drawn and waits for input.
  * Enter goes apart, as everywhere text is typed into an agent, so it is
  * not read as part of a paste. Dropped if the session closes first.
+ * With `ready`, a quiet while it says no is looked at again after another
+ * quietMs: until then what is typed might reach a shell, not the AI.
  */
-export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, text: string, quietMs = 1500, holdWhile?: RegExp): void {
+export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, text: string, quietMs = 1500, holdWhile?: RegExp, ready?: () => boolean): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   // What came since the last quiet: a question there holds the text until the operator answers it.
   let seen = "";
@@ -585,10 +610,11 @@ export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, 
   const onData = (chunk?: Buffer | string) => {
     clearTimeout(timer);
     if (holdWhile) seen = (seen + String(chunk ?? "")).slice(-8000);
-    timer = setTimeout(() => {
+    timer = setTimeout(function settled() {
       const asking = holdWhile?.test(seen.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ""));
       seen = "";
       if (asking) return;
+      if (ready && !ready()) return void (timer = setTimeout(settled, quietMs));
       stop();
       session.write(text);
       setTimeout(() => session.write("\r"), 150);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { SessionWorkflow, WorkflowItem } from "../shared/ipc.ts";
 import { posixQuote } from "../session/state.ts";
+import { owns, ownsScript } from "./owner.ts";
 
 /**
  * Codex keeps each session as `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`,
@@ -34,26 +35,20 @@ export function cwdNeedle(repoPath: string): string {
 /** Before a `for f in $(ls ...)`: one path a line, as a home folder's name may hold a space. */
 export const onePathALine = "IFS='\n'; ";
 
-/** The same lookup on a node: the newest matching rollout's tail, or nothing. */
-export function remoteRolloutScript(repoPath: string): string {
+/** The same lookup on a node: the newest matching rollout's tail, the bot `bot`'s or with none a person's (owner.ts), or nothing. */
+export function remoteRolloutScript(repoPath: string, bot?: string): string {
   return (
     `${onePathALine}for f in $(ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -${scanLimit}); do ` +
     // LC_ALL=C: the head can end inside a character, and a UTF-8 grep then prints "Binary file matches" instead of the line.
-    `head -c ${headBytes} "$f" | LC_ALL=C grep -F ${posixQuote(cwdNeedle(repoPath))} | grep -qvF ${posixQuote(subagentMark)} && { tail -c ${tailBytes} "$f"; exit 0; }; done`
+    `head -c ${headBytes} "$f" | LC_ALL=C grep -F ${posixQuote(cwdNeedle(repoPath))} | grep -qvF ${posixQuote(subagentMark)} && ${ownsScript(bot)} && { tail -c ${tailBytes} "$f"; exit 0; }; done`
   );
 }
 
 export const same = (a: string, b: string) =>
   process.platform === "win32" ? a.replaceAll("\\", "/").toLowerCase() === b.replaceAll("\\", "/").toLowerCase() : a === b;
 
-/** The newest local rollout for `repoPath`, its tail, or undefined. */
-/** `anyFolder`: the newest rollout whatever folder it ran in that `wanted` accepts. */
-export async function latestCodexRollout(
-  repoPath: string,
-  home = homedir(),
-  anyFolder = false,
-  wanted: (tail: string) => boolean = () => true,
-): Promise<string | undefined> {
+/** The newest rollouts of the last few days, newest first. */
+async function recentRollouts(home: string): Promise<Array<{ path: string; mtime: number }>> {
   const root = join(home, ".codex", "sessions");
   // Newest day folders first; a few days back is plenty for "what is running".
   const days: string[] = [];
@@ -75,7 +70,64 @@ export async function latestCodexRollout(
       if (info) files.push({ path: join(dir, name), mtime: info.mtimeMs });
     }
   }
-  files.sort((a, b) => b.mtime - a.mtime);
+  return files.sort((a, b) => b.mtime - a.mtime);
+}
+
+/** Every recent rollout of `repoPath` (a subagent's left out) with a change mark: which of them a run wrote is told by comparing two lists. */
+export async function codexRolloutFiles(repoPath: string, home = homedir()): Promise<Array<{ id: string; mark: string }>> {
+  const found: Array<{ id: string; mark: string }> = [];
+  for (const { path, mtime } of (await recentRollouts(home)).slice(0, scanLimit)) {
+    const handle = await open(path, "r").catch(() => undefined);
+    if (!handle) continue;
+    try {
+      const head = Buffer.alloc(headBytes);
+      const { bytesRead } = await handle.read(head, 0, headBytes, 0);
+      const opening = head.toString("utf8", 0, bytesRead);
+      const cwd = /"cwd":("(?:[^"\\]|\\.)*")/.exec(opening)?.[1];
+      if (cwd === undefined || !same(JSON.parse(cwd) as string, repoPath) || opening.includes(subagentMark)) continue;
+      found.push({ id: path, mark: `${mtime}:${(await handle.stat()).size}` });
+    } finally {
+      await handle.close();
+    }
+  }
+  return found;
+}
+
+/** The same listing on a node: one `path<TAB>size<TAB>mtime` line each. */
+export function remoteRolloutListScript(repoPath: string): string {
+  return (
+    `${onePathALine}for f in $(ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -${scanLimit}); do ` +
+    `head -c ${headBytes} "$f" | LC_ALL=C grep -F ${posixQuote(cwdNeedle(repoPath))} | grep -qvF ${posixQuote(subagentMark)} && ` +
+    `printf '%s\\t%s\\t%s\\n' "$f" "$(wc -c <"$f")" "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"; done`
+  );
+}
+
+/** One rollout's tail by the path a listing gave; undefined for any other path. */
+export async function codexRolloutTail(path: string, home = homedir()): Promise<string | undefined> {
+  if (!path.startsWith(join(home, ".codex", "sessions")) || path.includes("..")) return undefined;
+  const handle = await open(path, "r").catch(() => undefined);
+  if (!handle) return undefined;
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - tailBytes);
+    const tail = Buffer.alloc(size - start);
+    await handle.read(tail, 0, tail.length, start);
+    return tail.toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+/** The newest local rollout for `repoPath`, its tail, or undefined. */
+/** `anyFolder`: the newest rollout whatever folder it ran in that `wanted` accepts. Otherwise the bot `bot`'s, or with none a person's (owner.ts). */
+export async function latestCodexRollout(
+  repoPath: string,
+  home = homedir(),
+  anyFolder = false,
+  wanted: (tail: string) => boolean = () => true,
+  bot?: string,
+): Promise<string | undefined> {
+  const files = await recentRollouts(home);
   for (const { path } of files.slice(0, scanLimit)) {
     const handle = await open(path, "r").catch(() => undefined);
     if (!handle) continue;
@@ -84,7 +136,7 @@ export async function latestCodexRollout(
       const { bytesRead } = await handle.read(head, 0, headBytes, 0);
       const opening = head.toString("utf8", 0, bytesRead);
       const cwd = /"cwd":("(?:[^"\\]|\\.)*")/.exec(opening)?.[1];
-      if (!anyFolder && (cwd === undefined || !same(JSON.parse(cwd) as string, repoPath) || opening.includes(subagentMark))) continue;
+      if (!anyFolder && (cwd === undefined || !same(JSON.parse(cwd) as string, repoPath) || opening.includes(subagentMark) || !(await owns(path, bot)))) continue;
       const { size } = await handle.stat();
       const start = Math.max(0, size - tailBytes);
       const tail = Buffer.alloc(size - start);

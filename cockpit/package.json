@@ -1,6 +1,6 @@
 {
   "name": "lepons-cockpit",
-  "version": "1.10.18",
+  "version": "1.11.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -74,8 +74,24 @@
         "NSLocalNetworkUsageDescription": "Needed to connect over SSH to PCs on the same network (router).",
         "NSDocumentsFolderUsageDescription": "Needed to open projects in your Documents folder and let agents edit their files.",
         "NSDesktopFolderUsageDescription": "Needed to open projects on your Desktop and let agents edit their files.",
-        "NSDownloadsFolderUsageDescription": "Needed to open projects in your Downloads folder and let agents edit their files."
+        "NSDownloadsFolderUsageDescription": "Needed to open projects in your Downloads folder and let agents edit their files.",
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Folder",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": ["public.folder"]
+          }
+        ]
       },
+      "fileAssociations": [
+        {
+          "name": "Document",
+          "role": "Viewer",
+          "rank": "Alternate",
+          "ext": ["txt", "md", "markdown", "json", "jsonc", "yaml", "yml", "toml", "xml", "csv", "tsv", "log", "ini", "conf", "env", "sh", "bash", "zsh", "ps1", "bat", "js", "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "hpp", "cs", "php", "lua", "sql", "html", "htm", "css", "scss", "vue", "svelte", "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "pdf"]
+        }
+      ],
       "extraResources": [
         {
           "from": "build/mac-strings"

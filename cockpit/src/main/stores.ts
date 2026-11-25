@@ -1,10 +1,12 @@
 import type { AgentKind } from "../agent/agents.ts";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { KnownHosts } from "../ssh/known-hosts.ts";
+import type { Bot } from "../agent/bots.ts";
 import type { NodeConfig } from "../shared/ipc.ts";
+import type { OsJob } from "../agent/os-jobs.ts";
 
 function readJson<T>(path: string, fallback: T): T {
   try {
@@ -14,9 +16,30 @@ function readJson<T>(path: string, fallback: T): T {
   }
 }
 
-function writeJson(path: string, value: unknown): void {
+/**
+ * Written aside, flushed to disk, then put in place: a power cut mid-write leaves the old file,
+ * never a cut-off or empty one that reads as no data. A virus scanner on Windows may hold the
+ * new file for a moment (EPERM, EACCES, EBUSY): the move is tried again a few times, 50 ms apart.
+ * `rename` is for tests.
+ */
+export function writeJson(path: string, value: unknown, rename: (from: string, to: string) => void = renameSync): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(value, null, 2), "utf8");
+  const fd = openSync(`${path}.tmp`, "w");
+  try {
+    writeFileSync(fd, JSON.stringify(value, null, 2), "utf8"); // loops until all is written, unlike writeSync
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return rename(`${path}.tmp`, path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (attempt >= 5 || !(code === "EPERM" || code === "EACCES" || code === "EBUSY")) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
 }
 
 /**
@@ -155,6 +178,202 @@ export class IdSetStore {
     if (kept.length === this.#ids.length) return;
     this.#ids = kept;
     writeJson(this.#path, this.#ids);
+  }
+}
+
+/** Short texts by key, kept on disk: the names a person gave OS jobs, the AI's line for each. An empty text removes the key. */
+export class TextMapStore {
+  readonly #path: string;
+  #texts: Record<string, string>;
+
+  constructor(path: string) {
+    this.#path = path;
+    this.#texts = readJson<Record<string, string>>(path, {});
+  }
+
+  all(): Record<string, string> {
+    return { ...this.#texts };
+  }
+
+  get(key: string): string | undefined {
+    return Object.hasOwn(this.#texts, key) ? this.#texts[key] : undefined;
+  }
+
+  set(key: string, text: string): void {
+    const { [key]: _old, ...rest } = this.#texts;
+    this.#texts = text === "" ? rest : { ...rest, [key]: text };
+    writeJson(this.#path, this.#texts);
+  }
+}
+
+/** The last job list each PC answered with, and when (ISO), by node id: the automation view draws it before the PCs answer again. */
+export class JobCacheStore {
+  readonly #path: string;
+  #lists: Record<string, { at: string; jobs: OsJob[] }>;
+
+  constructor(path: string) {
+    this.#path = path;
+    this.#lists = readJson<Record<string, { at: string; jobs: OsJob[] }>>(path, {});
+  }
+
+  all(): Record<string, { at: string; jobs: OsJob[] }> {
+    return { ...this.#lists };
+  }
+
+  /**
+   * Keeps a PC's answer. The same list again is written at most once an hour
+   * (only its time would change). `known`, when given, is every configured
+   * node id: the lists of PCs no longer configured are dropped.
+   */
+  set(nodeId: string, at: string, jobs: OsJob[], known?: readonly string[]): void {
+    const kept = this.#lists[nodeId];
+    const gone = known ? Object.keys(this.#lists).filter((id) => !known.includes(id)) : [];
+    const same = kept !== undefined && JSON.stringify(kept.jobs) === JSON.stringify(jobs) && Date.parse(at) - Date.parse(kept.at) < 3_600_000;
+    if (same && gone.length === 0) return;
+    const lists = { ...this.#lists, ...(same ? {} : { [nodeId]: { at, jobs } }) };
+    for (const id of gone) delete lists[id];
+    this.#lists = lists;
+    writeJson(this.#path, this.#lists);
+  }
+}
+
+/** Where a schedule made from here lives, and its last run already told to the phone (its startedAt). */
+export interface ScheduleRecord {
+  nodeId: string;
+  reported?: string;
+}
+
+/**
+ * The schedules made from here, by id: only which PC to look on. What each one
+ * is stays on that PC (agent/schedule.ts schedule.json) and is read back from there.
+ * ponytail: only schedules made by this Lepons are listed and reported; one put there by hand or by another PC's Lepons is not.
+ */
+export class ScheduleStore {
+  readonly #path: string;
+  #records: Record<string, ScheduleRecord>;
+
+  constructor(path: string) {
+    this.#path = path;
+    this.#records = readJson<Record<string, ScheduleRecord>>(path, {});
+  }
+
+  list(): Array<[string, ScheduleRecord]> {
+    return Object.entries(this.#records);
+  }
+
+  get(id: string): ScheduleRecord | undefined {
+    return Object.hasOwn(this.#records, id) ? this.#records[id] : undefined;
+  }
+
+  set(id: string, record: ScheduleRecord | undefined): void {
+    const { [id]: _old, ...rest } = this.#records;
+    this.#records = record === undefined ? rest : { ...rest, [id]: record };
+    writeJson(this.#path, this.#records);
+  }
+}
+
+/** One run of a bot's job. "sent" until the agent's turn ends; "missed" a due time that passed while Lepons was off or the PC asleep (`startedAt` is that time). */
+export interface BotRunRecord {
+  jobId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: "sent" | "done" | "skipped" | "missed";
+  reason?: string;
+  answer?: string;
+  /** A missed run the person has run or let go. */
+  handled?: boolean;
+}
+
+const RUNS_KEPT = 50;
+
+/** The bots made here and their run history (userData/bots.json). Their profile files stay on the PC they run on. */
+export class BotStore {
+  readonly #path: string;
+  #bots: Bot[];
+  #runs: Record<string, BotRunRecord[]>;
+  /** Job ids waiting their turn behind a run, per bot: a restart tells them as interrupted. */
+  #queue: Record<string, string[]>;
+  /** A file of its own: written every minute, so the bots' file is written only when something in it changes. */
+  readonly #beatPath: string;
+  #heartbeat: number | undefined;
+
+  constructor(path: string) {
+    this.#path = path;
+    this.#beatPath = join(dirname(path), "bot-heartbeat.json");
+    // An older file is the plain list of bots.
+    const saved = readJson<Bot[] | { bots?: Bot[]; runs?: Record<string, BotRunRecord[]>; queue?: Record<string, string[]> }>(path, []);
+    this.#bots = Array.isArray(saved) ? saved : saved.bots ?? [];
+    this.#runs = Array.isArray(saved) ? {} : saved.runs ?? {};
+    this.#queue = Array.isArray(saved) ? {} : saved.queue ?? {};
+    const beat = readJson<unknown>(this.#beatPath, undefined);
+    this.#heartbeat = typeof beat === "number" ? beat : undefined;
+  }
+
+  #save(): void {
+    writeJson(this.#path, { bots: this.#bots, runs: this.#runs, ...(Object.keys(this.#queue).length > 0 ? { queue: this.#queue } : {}) });
+  }
+
+  /** When the bot scheduler last ticked (ms), as the file last heard. */
+  heartbeat(): number | undefined {
+    return this.#heartbeat;
+  }
+
+  beat(at: number): void {
+    this.#heartbeat = at;
+    writeJson(this.#beatPath, at);
+  }
+
+  list(): Bot[] {
+    return [...this.#bots];
+  }
+
+  get(id: string): Bot | undefined {
+    return this.#bots.find((bot) => bot.id === id);
+  }
+
+  set(bot: Bot): void {
+    this.#bots = this.#bots.some((each) => each.id === bot.id) ? this.#bots.map((each) => (each.id === bot.id ? bot : each)) : [...this.#bots, bot];
+    this.#save();
+  }
+
+  remove(id: string): void {
+    this.#bots = this.#bots.filter((bot) => bot.id !== id);
+    const { [id]: _runs, ...rest } = this.#runs;
+    this.#runs = rest;
+    const { [id]: _queue, ...queued } = this.#queue;
+    this.#queue = queued;
+    this.#save();
+  }
+
+  /** The queued job ids of every bot that has some. */
+  queue(): Record<string, string[]> {
+    return { ...this.#queue };
+  }
+
+  /** A bot's queued job ids; written only when they changed. */
+  setQueue(botId: string, ids: string[]): void {
+    if ((this.#queue[botId] ?? []).join("\n") === ids.join("\n")) return;
+    const { [botId]: _old, ...rest } = this.#queue;
+    this.#queue = ids.length > 0 ? { ...rest, [botId]: ids } : rest;
+    this.#save();
+  }
+
+  /** Oldest first. */
+  runs(botId: string): BotRunRecord[] {
+    return [...(this.#runs[botId] ?? [])];
+  }
+
+  addRun(botId: string, run: BotRunRecord): void {
+    this.#runs = { ...this.#runs, [botId]: [...(this.#runs[botId] ?? []), run].slice(-RUNS_KEPT) };
+    this.#save();
+  }
+
+  /** Changes the run that started at `startedAt` (its end, status, answer). */
+  updateRun(botId: string, startedAt: string, patch: Partial<BotRunRecord>): void {
+    const list = this.#runs[botId];
+    if (!list?.some((run) => run.startedAt === startedAt)) return;
+    this.#runs = { ...this.#runs, [botId]: list.map((run) => (run.startedAt === startedAt ? { ...run, ...patch } : run)) };
+    this.#save();
   }
 }
 

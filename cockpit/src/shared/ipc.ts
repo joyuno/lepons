@@ -5,6 +5,9 @@ import type { SessionStatus, TurnEnd } from "./status.ts";
 import type { BrowseResult } from "../browse/types.ts";
 import type { AgentKind, Executor } from "../agent/agents.ts";
 import type { Locale } from "../i18n/i18n.ts";
+import { botSlug, type Bot } from "../agent/bots.ts";
+import type { DescribeItem, OsJob } from "../agent/os-jobs.ts";
+import type { CodexAutomation, CodexCloudTask } from "../agent/codex-automations.ts";
 
 export type { AgentKind, Executor };
 
@@ -44,6 +47,12 @@ export const extraRoots = {
  * name already says, or something that is always the same -- and a field that
  * restates a known fact is a second place for it to be wrong.
  */
+/**
+ * A path "Open with Lepons" gave, on this PC: a folder already put on its list
+ * (`repoId`), or a file. `nodes` is the list after that, this PC on it.
+ */
+export type OpenWith = { folder: true; repoId: string; nodes: NodeConfig[] } | { folder: false; path: string; nodes: NodeConfig[] };
+
 export type NodeConfig =
   | ({ kind: "local" } & NodeCommon)
   | ({
@@ -137,10 +146,25 @@ export interface WorktreeDiff { files: Array<{ path: string; add: number; del: n
 
 /**
  * Identifies one terminal: a node, optionally scoped to a repository. A
- * folder's plain terminal, opened beside its agent, is a session of its own.
+ * folder's plain terminal, opened beside its agent, is a session of its own,
+ * and so is each bot of the folder.
  */
-export function sessionKey(nodeId: string, repoId: string | null, terminal = false): string {
+export function sessionKey(nodeId: string, repoId: string | null, terminal = false, bot?: string): string {
+  if (bot !== undefined && repoId !== null) return `${nodeId}::${repoId}::bot:${botSlug(bot)}`;
   return repoId === null ? nodeId : `${nodeId}::${repoId}${terminal ? "::terminal" : ""}`;
+}
+
+/** A session's project: its folder's key, the folder's own terminal and bots included. */
+export function projectOf(key: string): string {
+  const bot = key.indexOf("::bot:");
+  if (bot >= 0) return key.slice(0, bot);
+  return key.endsWith("::terminal") ? key.slice(0, -"::terminal".length) : key;
+}
+
+/** The bot a session key belongs to (its slug), if it is a bot's. */
+export function botOfKey(key: string): string | undefined {
+  const at = key.indexOf("::bot:");
+  return at < 0 ? undefined : key.slice(at + "::bot:".length);
 }
 
 /**
@@ -269,6 +293,92 @@ export type EditSaveResult =
  * is the rail's status word (shared/status.ts), worked out in the page (pet.ts),
  * so main learns it from here rather than working it out twice.
  */
+/**
+ * One schedule made from this app (agent/schedule.ts), as read back from its PC:
+ * "unreachable" when that PC could not be read now, "missing" when it no longer has it.
+ */
+export interface ScheduleRow {
+  id: string;
+  nodeId: string;
+  machine: string;
+  state: "ok" | "unreachable" | "missing";
+  name?: string;
+  folder?: string;
+  cron?: string;
+  /** The timetable in words. */
+  when?: string;
+  executor?: string;
+  agent?: string;
+  instructions?: string;
+  precheck?: string;
+  paused?: boolean;
+  /** A Windows task that runs only while its account is signed in (agent/schedule.ts WindowsLogon). */
+  signedInOnly?: boolean;
+  /** The end of the latest run's output. */
+  tail?: string;
+  /** `reason` "no-session": a Mac with no tmux server to start it in (agent/schedule.ts macLauncher). */
+  last?: { startedAt: string; endedAt: string; exitCode: number; skipped: boolean; reason?: string };
+}
+
+/** The 예약 작업 tab: the schedules, and each PC's folders a new one can go in. */
+export interface ScheduleList {
+  schedules: ScheduleRow[];
+  places: Array<{ nodeId: string; machine: string; folders: Array<{ id: string; label: string }> }>;
+}
+
+/** The tab's form: a new schedule names its PC and folder, an edit its id. `when` is what schedule_task takes. */
+export interface ScheduleForm {
+  id?: string;
+  nodeId?: string;
+  repoId?: string;
+  name?: string;
+  when: string;
+  instructions: string;
+  precheck?: string;
+  executor?: string;
+}
+
+export type ScheduleDone = { ok: true } | { ok: false; error: string };
+
+/** What a button on an existing job (launchd, cron, systemd, Task Scheduler) can do; edit takes a `when` as schedule_task words it. */
+export type OsJobDo = "pause" | "resume" | "run" | "log" | "edit";
+
+/** How one bot run ended: a push says only this and the bot's name. `answer` (the AI's last words) is for this window only. */
+export interface BotRun {
+  /** Which of its jobs, by id (one since edited away may be gone). */
+  jobId: string;
+  startedAt: string;
+  endedAt?: string;
+  state: "done" | "failed" | "skipped" | "missed";
+  /** Why it was skipped: busy, unreachable, timeout, open_failed. */
+  reason?: string;
+  answer?: string;
+}
+
+/** A bot in the 자동화 view, with when it next wakes, how its latest run ended, and its recent runs newest first. */
+export interface BotRow extends Bot {
+  nextRun?: string;
+  last?: BotRun;
+  runs?: BotRun[];
+  /** Due times passed while Lepons was off or the PC asleep, not yet run or let go: how many, and the latest. */
+  missed?: { count: number; at: string; jobId: string };
+}
+
+/** The bot form: a new bot names its PC and folder; an edit its id. Each job's `when` is what schedule_task takes. */
+export interface BotForm {
+  id?: string;
+  nodeId: string;
+  repoId: string;
+  name: string;
+  role: string;
+  executor?: string;
+  fresh?: boolean;
+  /** In run order; a kept job carries its id, so an edit keeps what is queued or due for it. */
+  jobs: Array<{ id?: string; when: string; instructions: string }>;
+  /** Existing OS jobs (OsJob ids) shown under this bot; absent keeps what it had. */
+  linked?: string[];
+}
+
 /** 내 LLM connections (agent/local-llm.ts), which folder's OpenCode runs on which by session key, and 내 API 키 without the keys. */
 export interface LlmSaved {
   llms: import("../agent/local-llm.ts").LocalLlm[];
@@ -358,6 +468,8 @@ export interface PhoneSession {
   /** A worktree's session: its original folder's label, and its own task name. */
   worktreeOf?: string;
   worktree?: string;
+  /** A bot's session: the renderer sends its slug (botOfKey), main swaps in the bot's name before the phone sees it. */
+  bot?: string;
 }
 
 /**
@@ -516,6 +628,8 @@ export interface CockpitApi {
   removeNode(id: string): Promise<NodeConfig[]>;
   /** Takes folders off the list, after asking once; the machine too if they were all it had. */
   removeRepos(nodeId: string, repoIds: string[]): Promise<NodeConfig[]>;
+  /** "Open with Lepons" from Explorer or Finder: what came before the page asked; later ones arrive through onOpenWith. */
+  takeOpenWith(): Promise<OpenWith[]>;
   /** Native folder picker; adds the chosen folder on this machine. */
   addLocalFolder(): Promise<{ nodes: NodeConfig[]; repoId?: string }>;
   /** Connects to user@host, reports what it found, and remembers it. */
@@ -567,14 +681,14 @@ export interface CockpitApi {
    * `resume` continues the folder's last conversation, or the one whose id it is, as a new session.
    * `terminal` opens the folder's plain terminal, beside its agent session.
    */
-  openSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState>;
+  openSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState>;
   /**
    * Like `openSession`, but for a tmux-backed node kills the remote session
    * first instead of reattaching to it -- the operator's deliberate way to
    * drop a conversation that has grown too long, rather than waiting on the
    * automatic idle reset.
    */
-  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string): Promise<SessionState>;
+  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState>;
   writeSession(key: string, data: string): void;
   resizeSession(key: string, cols: number, rows: number): void;
   /**
@@ -593,12 +707,13 @@ export interface CockpitApi {
    * spending. This kills the remote session too.
    */
   stopSession(nodeId: string, repoId: string | null): Promise<void>;
-  /** The session's internal workflow, parsed from its transcript on disk. */
-  sessionWorkflow(nodeId: string, repoId: string): Promise<SessionWorkflowResult>;
+  /** The session's internal workflow, parsed from its transcript on disk; `bot` (botOfKey) for a bot's session. */
+  sessionWorkflow(nodeId: string, repoId: string, bot?: string): Promise<SessionWorkflowResult>;
   /** A summary of the folder's conversation for another AI to carry on (handoffPrompt); none with nothing asked. */
   handoffText(nodeId: string, repoId: string): Promise<string | undefined>;
   /** How a quiet session's turn ended, from its record's tail; never rejects. `workedMs`: how long it had been busy. */
-  sessionTurn(nodeId: string, repoId: string, workedMs: number): Promise<TurnEnd>;
+  /** `bot`: a bot's own session, read by its own AI. */
+  sessionTurn(nodeId: string, repoId: string, workedMs: number, bot?: string): Promise<TurnEnd>;
   /** Starts the AI again in a terminal it has left, if it is sure to have left: a live AI would take the line as a message. */
   restartAgent(nodeId: string, repoId: string): Promise<void>;
   /** This folder's past Claude and Codex conversations, newest first (spec C-5); null when the PC could not be read. */
@@ -649,6 +764,46 @@ export interface CockpitApi {
   llmKeyRemove(id: string): Promise<LlmSaved>;
   /** A platform's chat models, asked with that key. */
   llmPlatformModels(platform: string, keyId: string): Promise<string[] | "refused" | "nokey" | undefined>;
+  /** 예약 작업 (settings): every schedule made from here, read back from its PC. */
+  scheduleList(): Promise<ScheduleList>;
+  /** A schedule's run logs, newest first. */
+  scheduleLogs(id: string): Promise<string[]>;
+  /** One run's log (its end); undefined when it cannot be read. */
+  scheduleLog(id: string, name: string): Promise<string | undefined>;
+  /** Makes or rewrites one, after the same question schedule_task asks. */
+  scheduleSave(form: ScheduleForm): Promise<ScheduleDone>;
+  /** Comments out or restores its crontab line, or disables or enables its task. */
+  schedulePause(id: string, paused: boolean): Promise<ScheduleDone>;
+  scheduleRemove(id: string): Promise<ScheduleDone>;
+  /** The bots made here, each with its next wake-up and latest run. */
+  botList(): Promise<BotRow[]>;
+  /** Makes or rewrites one, after the same kind of question schedule_task asks. */
+  botSave(form: BotForm): Promise<ScheduleDone>;
+  botRemove(id: string): Promise<ScheduleDone>;
+  botPause(id: string, paused: boolean): Promise<ScheduleDone>;
+  /** A PC's existing timetable jobs, read only. */
+  osJobs(nodeId: string): Promise<{ ok: true; jobs: OsJob[] } | { ok: false; error: string }>;
+  /** The last list each PC answered osJobs with, and when, by node id: drawn before the PCs answer again. */
+  osJobsCached(): Promise<Record<string, { at: string; jobs: OsJob[] }>>;
+  /** Claude routines as `claude -p "/schedule list"` prints them on that PC; shown as-is. */
+  routines(nodeId: string): Promise<{ ok: true; text: string } | { ok: false; error: string }>;
+  /** This PC's Codex timetables, read only: the Codex app's automations (error "missing": no app data) and Codex Cloud tasks. */
+  codexAutomations(): Promise<{
+    app: { ok: true; rows: CodexAutomation[] } | { ok: false; error: string };
+    cloud: { ok: true; tasks: CodexCloudTask[] } | { ok: false; error: string };
+  }>;
+  /** One of them: pause, resume, run or edit its time after the approval question; its log without one. */
+  osJobControl(nodeId: string, jobId: string, action: OsJobDo, when?: string): Promise<{ ok: true; output?: string } | { ok: false; error: string }>;
+  /** The names the person gave OS jobs, by `${nodeId}\n${jobId}`. */
+  osJobNames(): Promise<Record<string, string>>;
+  /** Gives an OS job a name of the person's own; "" takes it away. */
+  osJobRename(nodeId: string, jobId: string, name: string): Promise<void>;
+  /** The AI's one line per job, by item key: kept answers as they are, the rest (up to 20 of the items) in one Haiku call. A job it could not describe is left out; `failed`: the call got no answer. */
+  osJobDescribe(items: DescribeItem[], locale: string): Promise<{ lines: Record<string, string>; failed?: true }>;
+  /** Wakes a bot now with its first job's instructions. */
+  botRunNow(id: string): Promise<ScheduleDone>;
+  /** Clears a bot's missed-run notice; with `run`, first runs the job it missed once. */
+  botMissed(id: string, run: boolean): Promise<ScheduleDone>;
   /** Commits and changed files a worktree has beyond its base; null when git could not say. */
   worktreeChanges(nodeId: string, repoId: string): Promise<number | null>;
   /** The worktree's changes file by file, for comparing AIs side by side; null when git could not say. */
@@ -736,6 +891,7 @@ export interface CockpitApi {
    * Without this the window keeps whatever list it had at startup.
    */
   onNodes(handler: (nodes: NodeConfig[]) => void): void;
+  onOpenWith(handler: (opens: OpenWith[]) => void): void;
   /**
    * A share went down, failed a try at coming back, or came back. `nudge`
    * names the sessions to offer the lepons reconnect to: Claude sessions
@@ -895,6 +1051,8 @@ export const channels = {
   moveWindow: "window:move",
   listNodes: "nodes:list",
   addLocalFolder: "nodes:add-local",
+  takeOpenWith: "open-with:take",
+  openWith: "open-with:paths",
   addRemote: "nodes:add-remote",
   addRemoteFolder: "nodes:add-remote-folder",
   removeNode: "nodes:remove",
@@ -960,6 +1118,26 @@ export const channels = {
   llmKeyLock: "llm:key-lock",
   llmKeyReveal: "llm:key-reveal",
   llmPlatformModels: "llm:platform-models",
+  scheduleList: "schedule:list",
+  scheduleLogs: "schedule:logs",
+  scheduleLog: "schedule:log",
+  scheduleSave: "schedule:save",
+  schedulePause: "schedule:pause",
+  scheduleRemove: "schedule:remove",
+  botList: "bot:list",
+  botSave: "bot:save",
+  botRemove: "bot:remove",
+  botPause: "bot:pause",
+  osJobs: "osjobs:list",
+  osJobsCached: "osjobs:cached",
+  routines: "routines:list",
+  codexAutomations: "codex:automations",
+  osJobControl: "osjobs:control",
+  osJobNames: "osjobs:names",
+  osJobRename: "osjobs:rename",
+  osJobDescribe: "osjobs:describe",
+  botRunNow: "bot:run",
+  botMissed: "bot:missed",
   worktreeChanges: "worktree:changes",
   terminalMenu: "terminal:menu",
   terminalAction: "terminal:action",

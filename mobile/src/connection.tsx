@@ -15,6 +15,19 @@ import { bytesToHex, DEFAULT_SERVER, type QrPayload } from "./relay/protocol.ts"
 import * as store from "./store.ts";
 import { updateWidget, updateWidgetLink } from "./widget";
 
+/** Pickers this app has open (camera, photos, files); while one is up, going to the background keeps the link. */
+let picking = 0;
+
+/** Runs a system picker with the link kept open across it; see the AppState handler below. */
+export async function whilePicking<T>(work: () => Promise<T>): Promise<T> {
+  picking++;
+  try {
+    return await work();
+  } finally {
+    picking--;
+  }
+}
+
 export interface Connection {
   loaded: boolean;
   /** The PC in use: the paired PC this link, sign-in and screens are for. */
@@ -269,11 +282,14 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   }, [demo, pushOff, status.kind, token]);
 
   // Close the socket cleanly in the background; dial again on return. After a 4000 too, once per return and no loop: the device that took the place may be gone. Not after an error or a refusal.
+  // Not while a picker this app opened is up (whilePicking): on Android the camera, gallery and file pickers are other
+  // apps' screens, so the app went to the background, the link closed, and the upload right after it found none.
   useEffect(() => {
     let resume = false;
     const sub = AppState.addEventListener("change", (state) => {
       const c = client.current;
       if (!c) return;
+      if (state === "background" && picking > 0) return;
       if (state === "background") {
         if (c.status.kind === "replaced") resume = true;
         else if (!halted(c.status)) {

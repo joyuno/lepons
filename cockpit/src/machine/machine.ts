@@ -10,11 +10,12 @@ import { askHookDir } from "../agent/usage.ts";
 import { removeScript, transferScript } from "../browse/entry-ops.ts";
 import type { BrowseResult } from "../browse/types.ts";
 import { localStore, withRemoteStore, type FileStore } from "../main/edit-file.ts";
-import { latestCodexRollout, remoteRolloutScript } from "../workflow/codex.ts";
+import { codexRolloutFiles, codexRolloutTail, latestCodexRollout, remoteRolloutListScript, remoteRolloutScript, tailBytes } from "../workflow/codex.ts";
 import { localPast, parsePastListing, remoteClaudePastScript, remoteCodexPastScript } from "../workflow/past.ts";
 import { probeCommand, readWithProbe, type ProbedRead } from "../workflow/probe.ts";
 import { heldRecord, type HeldText } from "../workflow/held-record.ts";
-import { latestTranscript, latestTranscriptTail, projectSlug, remoteTranscriptTailScript, transcriptStamp } from "../workflow/transcript.ts";
+import { pickScript } from "../workflow/owner.ts";
+import { latestTranscript, latestTranscriptTail, parseFileList, projectSlug, remoteTranscriptListScript, remoteTranscriptTailScript, transcriptFiles, transcriptStamp, transcriptText } from "../workflow/transcript.ts";
 import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
 import { pickOpencodeSession } from "../workflow/opencode.ts";
 import { findScript, hiddenAllowed, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, stepsInside, viewable, viewableFiles, viewableFindScript, type Hidden, type PhoneFileEntry } from "../phone/docs.ts";
@@ -101,34 +102,42 @@ export interface Machine {
   /**
    * The end of the newest record an agent keeps for a folder (empty when it has
    * none yet), with this machine's clock. Undefined when it cannot be asked.
+   * Here and below, `bot`: that bot's record, by its name; none, a person's (owner.ts). OpenCode's are not told apart.
    */
-  recordTail(format: RecordFormat, folder: string): Promise<RecordTail | undefined>;
+  recordTail(format: RecordFormat, folder: string, bot?: string): Promise<RecordTail | undefined>;
   /**
    * The newest record an agent keeps for a folder, for what it says rather than
    * how it ends. Over SSH its last 500KB only: enough for recent activity without
    * shipping a whole session log on every poll, and a cut first line is fine
    * because the parsers skip what does not parse. Undefined when it has none.
    */
-  record(format: RecordFormat, folder: string): Promise<string | undefined>;
+  record(format: RecordFormat, folder: string, bot?: string): Promise<string | undefined>;
   /**
    * Claude's newest record for a folder, at least its last `bytes` (whole lines): all of it here, and over SSH
    * kept between reads, so a read fetches only what was written since (held-record.ts). `whole` when it is all there.
    */
-  claudeRecord(folder: string, bytes: number): Promise<HeldText | undefined>;
+  claudeRecord(folder: string, bytes: number, bot?: string): Promise<HeldText | undefined>;
   /**
    * A string that stays the same while that record does, so it need not be read
    * and parsed again. Undefined when it cannot tell: Codex's rollout is found only
    * by reading it, so it has none.
    */
-  recordStamp(format: RecordFormat, folder: string): Promise<string | undefined>;
+  recordStamp(format: RecordFormat, folder: string, bot?: string): Promise<string | undefined>;
+  /**
+   * Every record file an agent keeps for a folder, each with a mark that changes when the file does: two lists
+   * tell which file a run wrote. Undefined where files cannot be told apart (OpenCode keeps none) or listed.
+   */
+  recordFiles(format: RecordFormat, folder: string): Promise<Array<{ id: string; mark: string }> | undefined>;
+  /** One of those files, by its id; the end of it over SSH. */
+  recordFile(format: RecordFormat, folder: string, id: string): Promise<string | undefined>;
   /** The newest few question sets Claude's hook saved here (phone/ask.ts hookForm), newest first. Empty when none or unreachable. */
   askHooks(): Promise<AskHookFile[]>;
   /** Removes one of those, by its name. */
   dropAskHook(name: string): Promise<void>;
   /** The folder's past conversations of either agent, newest first; null when the machine cannot be asked. */
   past(folder: string, label: string): Promise<PastConversation[] | null>;
-  /** Which of these sessions are sure to have no AI left. Empty when the machine cannot be asked. */
-  agentsGone(probes: AgentProbe[]): Promise<string[]>;
+  /** Which of these sessions are sure to have no AI left; the rest have one. Undefined when the machine cannot be asked. */
+  agentsGone(probes: AgentProbe[]): Promise<string[] | undefined>;
 
   /** A regular file up to `maxBytes`, following a link. Undefined when too big or gone. */
   read(path: string, maxBytes: number): Promise<Buffer | undefined>;
@@ -257,21 +266,24 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
         [name, await readFile(join(root, name), "utf8").catch(() => undefined)] as const));
       return Object.fromEntries(entries.filter(([, text]) => text !== undefined)) as Manifests;
     },
-    recordTail: async (format, folder) => ({
-      tail: format === "claude" ? await latestTranscriptTail(folder) : format === "opencode" ? (await opencodeRecord(machine.run, folder, machine.windows)) ?? "" : (await latestCodexRollout(folder)) ?? "",
+    recordTail: async (format, folder, bot) => ({
+      tail: format === "claude" ? await latestTranscriptTail(folder, undefined, bot) : format === "opencode" ? (await opencodeRecord(machine.run, folder, machine.windows)) ?? "" : (await latestCodexRollout(folder, undefined, false, undefined, bot)) ?? "",
       now: Date.now(),
     }),
-    claudeRecord: async (folder) => {
-      const text = await latestTranscript(folder);
+    claudeRecord: async (folder, _bytes, bot) => {
+      const text = await latestTranscript(folder, undefined, bot);
       return text === undefined ? undefined : { text, whole: true };
     },
-    record: async (format, folder) => (format === "claude" ? latestTranscript(folder) : format === "opencode" ? opencodeRecord(machine.run, folder, machine.windows) : latestCodexRollout(folder)),
-    recordStamp: async (format, folder) => {
+    record: async (format, folder, bot) =>
+      format === "claude" ? latestTranscript(folder, undefined, bot) : format === "opencode" ? opencodeRecord(machine.run, folder, machine.windows) : latestCodexRollout(folder, undefined, false, undefined, bot),
+    recordFiles: async (format, folder) => (format === "claude" ? transcriptFiles(folder) : format === "codex" ? codexRolloutFiles(folder) : undefined),
+    recordFile: async (format, folder, id) => (format === "claude" ? transcriptText(folder, id) : format === "codex" ? codexRolloutTail(id) : undefined),
+    recordStamp: async (format, folder, bot) => {
       if (format === "opencode") {
         const session = await opencodeSession(machine.run, folder, machine.windows);
         return session && `${session.id}:${session.updated}`;
       }
-      return format === "claude" ? transcriptStamp(folder) : undefined;
+      return format === "claude" ? transcriptStamp(folder, undefined, bot) : undefined;
     },
     askHooks: async () => {
       const dir = join(homedir(), ...askHookDir.split("/"));
@@ -435,41 +447,54 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       const result = await reach.runRemoteStatus(options(), inLoginShell(`cd ${posixQuote(root)} && ${manifestScript()}`));
       return result ? parseManifestOutput(result.output) : undefined;
     },
-    recordTail: async (format, folder) => {
+    recordTail: async (format, folder, bot) => {
       if (!(await ready())) return undefined;
       if (format === "opencode") {
         const [clock, tail] = await Promise.all([run("date +%s"), opencodeRecord(run, folder, false)]);
         const now = Number(clock?.output.trim());
         return clock?.code === 0 && Number.isFinite(now) ? { tail: tail ?? "", now: now * 1000 } : undefined;
       }
-      const script = format === "claude" ? remoteTranscriptTailScript(folder) : remoteRolloutScript(rolloutCwd(folder));
+      const script = format === "claude" ? remoteTranscriptTailScript(folder, bot) : remoteRolloutScript(rolloutCwd(folder), bot);
       const output = await reach.runRemote(options(), `date +%s; ${script}`);
       const clock = /^(\d+)\r?\n/.exec(output ?? "");
       return clock ? { tail: output!.slice(clock[0].length), now: Number(clock[1]) * 1000 } : undefined;
     },
-    record: async (format, folder) => {
+    record: async (format, folder, bot) => {
       if (format === "opencode") return (await ready()) ? opencodeRecord(run, folder, false) : undefined;
       if (format === "codex") {
-        const script = remoteRolloutScript(rolloutCwd(folder));
+        const script = remoteRolloutScript(rolloutCwd(folder), bot);
         return (await pooled(script)) ?? (await reach.runRemote(options(), script));
       }
       if (node.home === "") return undefined;
       const dir = `${node.home}/.claude/projects/${projectSlug(folder)}`;
-      const script = `f=$(ls -t ${posixQuote(dir)}/*.jsonl 2>/dev/null | head -1); [ -n "$f" ] && tail -c 500000 "$f"`;
+      const script = `f=$(${pickScript(`${posixQuote(dir)}/*.jsonl`, bot)}); [ -n "$f" ] && tail -c 500000 "$f"`;
       return readWithProbe(
         reach.probeCache,
-        `${node.id}::${folder}`,
+        `${node.id}::${folder}\0${bot ?? ""}`,
         () => pooled(probeCommand(dir)),
         async () => (await pooled(script)) ?? (await reach.runRemote(options(), script)),
       );
     },
-    claudeRecord: async (folder, bytes) => {
+    claudeRecord: async (folder, bytes, bot) => {
       if (node.home === "") return undefined;
       const dir = `${node.home}/.claude/projects/${projectSlug(folder)}`;
-      const key = `${node.id}::${dir}`;
+      const key = `${node.id}::${dir}\0${bot ?? ""}`;
       let held = heldRecords.get(key);
-      if (!held) heldRecords.set(key, (held = heldRecord(dir)));
+      if (!held) heldRecords.set(key, (held = heldRecord(dir, bot)));
       return held(bytes, async (script) => (await pooled(script)) ?? (await reach.runRemote(options(), script)));
+    },
+    recordFiles: async (format, folder) => {
+      if (format === "opencode" || (format === "claude" && node.home === "")) return undefined;
+      const script = format === "claude" ? remoteTranscriptListScript(posixQuote(`${node.home}/.claude/projects/${projectSlug(folder)}`)) : remoteRolloutListScript(rolloutCwd(folder));
+      const output = (await pooled(script)) ?? (await reach.runRemote(options(), script));
+      return output === undefined ? undefined : parseFileList(output);
+    },
+    recordFile: async (format, folder, id) => {
+      // Only a path the listing could have given: under the agent's own folder, nothing a quote could break.
+      const root = format === "claude" ? `${node.home}/.claude/projects/${projectSlug(folder)}/` : format === "codex" ? `${node.home}/.codex/sessions/` : undefined;
+      if (root === undefined || node.home === "" || !id.startsWith(root) || id.includes("..") || /['\n\r]/.test(id) || !id.endsWith(".jsonl")) return undefined;
+      const script = `tail -c ${format === "claude" ? 2_000_000 : tailBytes} ${posixQuote(id)}`;
+      return (await pooled(script)) ?? (await reach.runRemote(options(), script));
     },
     recordStamp: async (format, folder) => {
       if (format === "opencode") {
@@ -493,10 +518,10 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
       return [...parsePastListing("claude", claude, label), ...parsePastListing("codex", codex, label)].sort((a, b) => b.at - a.at);
     },
     agentsGone: async (probes) => {
-      if (!(await ready())) return [];
+      if (!(await ready())) return undefined;
       // Timed: one PC whose rc file never lets go would stop the looks at every PC.
       const result = await reach.runRemoteStatus(options(), inLoginShell(tmuxPanesScript), probeTimeoutMs);
-      return result ? tmuxGone(result.output, probes) : [];
+      return result ? tmuxGone(result.output, probes) : undefined;
     },
 
     read: async (path, maxBytes) => {

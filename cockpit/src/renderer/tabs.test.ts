@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 
 import { bandOf, dropAllowed, dropZone, place, projectOf, projectOfFile, type LeafView } from "./tabs.ts";
 
-test("a folder's terminal belongs to the folder's project", () => {
+test("a folder's terminal and its bots belong to the folder's project", () => {
   assert.equal(projectOf("pc::a::terminal"), "pc::a");
+  assert.equal(projectOf("pc::a::bot:라피드-마케팅"), "pc::a");
   assert.equal(projectOf("pc::a"), "pc::a");
   assert.equal(projectOf("pc"), "pc");
 });

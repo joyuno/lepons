@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { SessionWorkflow, WorkflowItem } from "../shared/ipc.ts";
 import { cancelTurn, recentEvents, tailBytes } from "./codex.ts";
+import { ownerScan, owns, pickScript } from "./owner.ts";
 
 /**
  * Claude Code writes each session's full record to
@@ -21,39 +22,69 @@ export function transcriptDir(repoPath: string): string {
   return join(homedir(), ".claude", "projects", projectSlug(repoPath));
 }
 
-/** The newest transcript in `dir`, or undefined. */
-async function newestTranscript(dir: string): Promise<string | undefined> {
+/** The newest transcript in `dir` that is the bot `bot`'s, or with none a person's (owner.ts), or undefined. */
+async function newestTranscript(dir: string, bot: string | undefined): Promise<string | undefined> {
   let names: string[];
   try {
     names = await readdir(dir);
   } catch {
     return undefined;
   }
-  let best: { file: string; mtime: number } | undefined;
+  const files: Array<{ file: string; mtime: number }> = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
     const info = await stat(join(dir, name)).catch(() => undefined);
-    if (info && (!best || info.mtimeMs > best.mtime)) best = { file: join(dir, name), mtime: info.mtimeMs };
+    if (info) files.push({ file: join(dir, name), mtime: info.mtimeMs });
   }
-  return best?.file;
+  for (const { file } of files.sort((a, b) => b.mtime - a.mtime).slice(0, ownerScan)) if (await owns(file, bot)) return file;
+  return undefined;
 }
 
 /** Which transcript latestTranscript would read, and its size and time: the same string means the same text. */
-export async function transcriptStamp(repoPath: string, home = homedir()): Promise<string | undefined> {
-  const file = await newestTranscript(join(home, ".claude", "projects", projectSlug(repoPath)));
+export async function transcriptStamp(repoPath: string, home = homedir(), bot?: string): Promise<string | undefined> {
+  const file = await newestTranscript(join(home, ".claude", "projects", projectSlug(repoPath)), bot);
   const info = file === undefined ? undefined : await stat(file).catch(() => undefined);
   return info && `${file}\0${info.size}\0${info.mtimeMs}`;
 }
 
-/** The newest transcript for sessions started in `repoPath`, or undefined. */
-export async function latestTranscript(repoPath: string): Promise<string | undefined> {
-  const file = await newestTranscript(transcriptDir(repoPath));
+/** Every transcript of `repoPath` with a change mark (time and size): a run's own file is the one whose mark moved. */
+export async function transcriptFiles(repoPath: string, home = homedir()): Promise<Array<{ id: string; mark: string }>> {
+  const dir = join(home, ".claude", "projects", projectSlug(repoPath));
+  const found: Array<{ id: string; mark: string }> = [];
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (!name.endsWith(".jsonl")) continue;
+    const info = await stat(join(dir, name)).catch(() => undefined);
+    if (info) found.push({ id: join(dir, name), mark: `${info.mtimeMs}:${info.size}` });
+  }
+  return found;
+}
+
+/** One transcript of `repoPath` by the id a listing gave; undefined for any other path. */
+export async function transcriptText(repoPath: string, id: string, home = homedir()): Promise<string | undefined> {
+  const dir = join(home, ".claude", "projects", projectSlug(repoPath));
+  return id.startsWith(dir) && id.endsWith(".jsonl") && !id.includes("..") ? readFile(id, "utf8").catch(() => undefined) : undefined;
+}
+
+/** The same listing on a node: one `path<TAB>size<TAB>mtime` line each. */
+export const remoteTranscriptListScript = (dir: string): string =>
+  `for f in ${dir}/*.jsonl; do [ -f "$f" ] && printf '%s\\t%s\\t%s\\n' "$f" "$(wc -c <"$f")" "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"; done`;
+
+/** A listing script's lines as files with marks. */
+export const parseFileList = (output: string): Array<{ id: string; mark: string }> =>
+  output.split("\n").flatMap((line) => {
+    const [id, size, time] = line.replace(/\r$/, "").split("\t");
+    return id && size && time ? [{ id, mark: `${time}:${size}` }] : [];
+  });
+
+/** The newest transcript for sessions started in `repoPath`, the bot `bot`'s or with none a person's, or undefined. */
+export async function latestTranscript(repoPath: string, home = homedir(), bot?: string): Promise<string | undefined> {
+  const file = await newestTranscript(join(home, ".claude", "projects", projectSlug(repoPath)), bot);
   return file === undefined ? undefined : readFile(file, "utf8").catch(() => undefined);
 }
 
 /** The end of that transcript: empty when there is none yet. Throws when it cannot be read. */
-export async function latestTranscriptTail(repoPath: string, home = homedir()): Promise<string> {
-  const file = await newestTranscript(join(home, ".claude", "projects", projectSlug(repoPath)));
+export async function latestTranscriptTail(repoPath: string, home = homedir(), bot?: string): Promise<string> {
+  const file = await newestTranscript(join(home, ".claude", "projects", projectSlug(repoPath)), bot);
   if (file === undefined) return "";
   const handle = await open(file, "r");
   try {
@@ -68,8 +99,8 @@ export async function latestTranscriptTail(repoPath: string, home = homedir()): 
 }
 
 /** The same on a node: prints nothing when there is none. The slug needs no quoting. */
-export const remoteTranscriptTailScript = (repoPath: string): string =>
-  `f=$(ls -t "$HOME"/.claude/projects/${projectSlug(repoPath)}/*.jsonl 2>/dev/null | head -1); [ -z "$f" ] || tail -c ${tailBytes} "$f"`;
+export const remoteTranscriptTailScript = (repoPath: string, bot?: string): string =>
+  `f=$(${pickScript(`"$HOME"/.claude/projects/${projectSlug(repoPath)}/*.jsonl`, bot)}); [ -z "$f" ] || tail -c ${tailBytes} "$f"`;
 
 /** What Claude Code writes when the operator stops a turn: an array's text block in every record counted (15 of 15, 2.1.268-2.1.317). */
 const interrupted = (text: unknown): boolean => typeof text === "string" && text.trimStart().startsWith("[Request interrupted");

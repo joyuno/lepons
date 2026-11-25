@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scratchDir } from "../scratch-dir.ts";
 
-import { GrantStore, IdSetStore, SaltStore, TokenStore, openSecret, preferredSharePort, sealSecret, type SecretBox } from "./stores.ts";
+import { BotStore, GrantStore, IdSetStore, JobCacheStore, SaltStore, TextMapStore, TokenStore, openSecret, preferredSharePort, sealSecret, writeJson, type SecretBox } from "./stores.ts";
 
 const scratch = () => join(scratchDir("lepons-store-"), "store.json");
 
@@ -108,4 +109,66 @@ test("a relay key is sealed by the OS where it can be, and opens only there", ()
   assert.equal(plain, `plain:${raw.toString("base64")}`);
   assert.deepEqual(openSecret(plain, box(false)), raw);
   assert.equal(openSecret("other", box(true)), undefined);
+});
+
+// bots.json is written often; a write cut off part way must not read back as no bots at all.
+test("a write that fails part way leaves the old file whole", () => {
+  const path = scratch();
+  const store = new BotStore(path);
+  store.set({ id: "b1", name: "bot", nodeId: "n", repoId: "r", folder: "/f", executor: "claude", role: "", fresh: false, jobs: [] });
+  mkdirSync(`${path}.tmp`);
+  assert.throws(() => store.set({ id: "b2", name: "two", nodeId: "n", repoId: "r", folder: "/f", executor: "claude", role: "", fresh: false, jobs: [] }));
+  assert.deepEqual(new BotStore(path).list().map((bot) => bot.id), ["b1"]);
+  store.beat(5);
+  assert.equal(new BotStore(path).heartbeat(), 5, "the heartbeat is a file of its own");
+  assert.ok(!readFileSync(path, "utf8").includes("heartbeat"));
+});
+
+// A virus scanner on Windows holds a just-written file for a moment.
+test("a move refused for a moment is tried again; one refused for good leaves the old file", () => {
+  const path = scratch();
+  const held = () => { throw Object.assign(new Error("held"), { code: "EPERM" }); };
+  let refusals = 2;
+  writeJson(path, { v: 1 }, (from, to) => (refusals-- > 0 ? held() : renameSync(from, to)));
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { v: 1 });
+  assert.throws(() => writeJson(path, { v: 2 }, held), /held/);
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { v: 1 });
+});
+
+test("a job's given name survives a restart; an empty one removes it", () => {
+  const path = scratch();
+  new TextMapStore(path).set("pc\nlaunchd:/x.plist", "백업");
+  const reread = new TextMapStore(path);
+  assert.deepEqual(reread.all(), { "pc\nlaunchd:/x.plist": "백업" });
+  assert.equal(reread.get("constructor"), undefined);
+  reread.set("pc\nlaunchd:/x.plist", "");
+  assert.deepEqual(new TextMapStore(path).all(), {});
+});
+
+test("each PC's last job list survives a restart and is replaced by the next", () => {
+  const path = scratch();
+  const job = { id: "cron:x", source: "cron" as const, label: "x", command: "x", enabled: true };
+  new JobCacheStore(path).set("mac", "2026-11-25T01:00:00.000Z", [job]);
+  const again = new JobCacheStore(path);
+  assert.deepEqual(again.all(), { mac: { at: "2026-11-25T01:00:00.000Z", jobs: [job] } });
+  again.set("mac", "2026-11-25T02:00:00.000Z", []);
+  assert.deepEqual(new JobCacheStore(path).all(), { mac: { at: "2026-11-25T02:00:00.000Z", jobs: [] } });
+});
+
+test("the same job list again is not written within the hour, and PCs no longer configured are dropped", () => {
+  const path = scratch();
+  const job = { id: "cron:x", source: "cron" as const, label: "x", command: "x", enabled: true };
+  const store = new JobCacheStore(path);
+  store.set("mac", "2026-11-25T01:00:00.000Z", [job]);
+  store.set("pc", "2026-11-25T01:00:00.000Z", []);
+  writeFileSync(path, "{}");
+  // Unchanged within the hour: no write (the file stays as it was put).
+  store.set("mac", "2026-11-25T01:30:00.000Z", [job]);
+  assert.equal(readFileSync(path, "utf8"), "{}");
+  // An hour on, the same list is written with its new time.
+  store.set("mac", "2026-11-25T02:00:00.000Z", [job]);
+  assert.equal(new JobCacheStore(path).all().mac?.at, "2026-11-25T02:00:00.000Z");
+  // Known ids given: "pc" is not configured any more and goes.
+  store.set("mac", "2026-11-25T02:10:00.000Z", [job], ["mac"]);
+  assert.deepEqual(Object.keys(new JobCacheStore(path).all()), ["mac"]);
 });

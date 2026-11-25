@@ -4,8 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { renderMarkdown, selectionSource } from "./markdown.ts";
 
-import { resolvePath, typedPaths } from "../shared/term-paths.ts";
-import { localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
+import { fileLinkPath, resolvePath, typedPaths } from "../shared/term-paths.ts";
+import { botOfKey, localNodeId, machineLabel, osName, sessionKey } from "../shared/ipc.ts";
 import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
 import { treeHits } from "./tree-search.ts";
@@ -24,6 +24,7 @@ import type {
   DialogRequest,
   MapState,
   NodeConfig,
+  OpenWith,
   PassphraseRequest,
   PhoneSession,
   PhoneSettingsView,
@@ -42,7 +43,7 @@ import { formatDate, locales, setLocale, t, isLocale, type Locale } from "../i18
 import { runTour, type TourStep } from "./tour.ts";
 import { cellChanges, dividerMove, EASE, FAST, MID, openingBox, paneChange, placeChanges, play, stillWanted, type Box } from "./motion.ts";
 import { newActivity, onMenu, onOutput, onTick, onTurnEnd, petMood, type Activity, type PetMood, type PetSession } from "./pet.ts";
-import { pcFailReason, pcState, sessionStatus, turnMark, turnsEnded, type PcState, type TurnEnd } from "../shared/status.ts";
+import { isTerminalReport, pcFailReason, pcState, sessionStatus, turnMark, turnsEnded, type PcState, type TurnEnd } from "../shared/status.ts";
 import { between, moved } from "./reorder.ts";
 import { positionAt, thumbOf, type TmuxView } from "./tmux-bar.ts";
 import { livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
@@ -59,6 +60,8 @@ import { relayLamp, relayRow } from "./relay-state.ts";
 import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
+import { automationEscape, initAutomation, showAutomation } from "./automation.ts";
+import type { BotRow } from "../shared/ipc.ts";
 import { agentLogos, platformLogos } from "./agent-logos.ts";
 import { pathsAt, urlsAt } from "./wrapped-url.ts";
 import type { MapInput } from "./workflowmap/model.ts";
@@ -92,6 +95,7 @@ const splitDownButton = el<HTMLButtonElement>("splitDown");
 const mapHost = el<HTMLDivElement>("map");
 const guideHost = el<HTMLDivElement>("guide");
 const workflowHost = el<HTMLDivElement>("workflow");
+const automationHost = el<HTMLDivElement>("automation");
 
 let nodes: NodeConfig[] = [];
 let activeKey: string | undefined;
@@ -942,7 +946,8 @@ async function removeFolders(nodeId: string, repoIds: string[]): Promise<void> {
   const still = nodes.find((candidate) => candidate.id === nodeId);
   const gone = still ? repoIds.filter((id) => !still.repos.some((candidate) => candidate.id === id)) : repoIds;
   if (!still) closeTerminalsFor(nodeId);
-  else forgetSessions((key) => gone.some((id) => key === sessionKey(nodeId, id) || key === sessionKey(nodeId, id, true)));
+  // projectOf: the folder's terminal and its bots go with it.
+  else forgetSessions((key) => gone.some((id) => projectOf(key) === sessionKey(nodeId, id)));
   // Cancelled, the pick stays to be changed; done, the mode is over.
   if (gone.length > 0 && railPick?.nodeId === nodeId) railPick = undefined;
   renderRail();
@@ -1257,7 +1262,7 @@ async function mergeIntoOriginal(node: NodeConfig, repo: RepoConfig, ask: boolea
 async function worktreeGone(nodeId: string, repoId: string, done: Promise<NodeConfig[]>): Promise<void> {
   nodes = await done;
   if (!nodes.find((node) => node.id === nodeId)?.repos.some((repo) => repo.id === repoId)) {
-    forgetSessions((key) => key === sessionKey(nodeId, repoId) || key === sessionKey(nodeId, repoId, true));
+    forgetSessions((key) => projectOf(key) === sessionKey(nodeId, repoId));
   }
   renderRail();
 }
@@ -1310,7 +1315,13 @@ function showRailMoved(was: Map<string, number>): void {
 }
 
 function renderRail(): void {
-  el<HTMLButtonElement>("openBroadcast").hidden = liveSessions().length < 2;
+  // Always there, beside the bots: with fewer than two sessions open it has nothing to send to.
+  const broadcast = el<HTMLButtonElement>("openBroadcast");
+  broadcast.disabled = liveSessions().length < 2;
+  broadcast.dataset.why = broadcast.disabled ? t("broadcast.needTwo") : "";
+  // fitRailTabs keeps the words-or-icons tooltip; this one only says why it is off.
+  if (broadcast.disabled) broadcast.title = broadcast.dataset.why;
+  else if (broadcast.title === t("broadcast.needTwo")) broadcast.title = "";
   const railWas = railSpots();
   rail.replaceChildren();
   // Favourites first, from whichever PC; never folded, gone when empty. Each
@@ -1738,9 +1749,28 @@ function terminalFor(key: string) {
     const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(url);
     showTipAt(found?.node.kind === "ssh" && local ? t("link.openRemote", { machine: machineLabel(found.node) }) : t("link.open"), event);
   };
+  // A printed path, or one a program marked up as a file:// link: a file opens in a tab of this pane's column, on the
+  // session's PC; a folder opens in Explorer or Finder on this PC, and another PC's is shown in the rail's tree, as no
+  // file manager here can show it. Relative to the session's folder.
+  const openPrintedPath = (event: MouseEvent, printed: string, folder?: boolean) => {
+    const found = findByKey(key);
+    if (!found) return;
+    const path = resolvePath(found.repo.path, found.node.home, printed);
+    // Checked first, so a path that is not there says so, with the full path it looked at.
+    void cockpit.locateFile(found.node.id, path, found.repo.path, folder).then((located) => {
+      if (!located.ok) return showTipAt(located.error, event);
+      if (!located.folder) return openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
+      if (found.node.kind === "local") return void cockpit.openFolder(found.node.id, located.path).then((problem) => problem && showTipAt(problem, event));
+      if (!revealFolder(found.node, found.repo, located.path)) showTipAt(t("files.folderOutside", { path: located.path }), event);
+    });
+  };
   const openUrl = (event: MouseEvent, text: string) => {
     const found = findByKey(key);
     if (!(event.ctrlKey || event.metaKey) || !found) return;
+    // Claude Code marks the files it names up as file:// links (OSC 8), and tmux passes them on: a remote pane's
+    // file is that PC's, not this one's, so it goes the way a printed path does, not to a browser here.
+    const file = fileLinkPath(text);
+    if (file !== undefined) return openPrintedPath(event, file);
     void cockpit.openLink(found.node.id, text).then((problem) => {
       if (problem) return showTipAt(problem, event);
       const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:(\d+))?/i.exec(text);
@@ -1799,15 +1829,7 @@ function terminalFor(key: string) {
         hover: (event) => showTipAt(t(match.folder ? "link.openPath" : "link.openFile"), event),
         leave: () => hideTip(),
         activate: (event, printed) => {
-          if (!(event.ctrlKey || event.metaKey)) return;
-          const path = resolvePath(found.repo.path, found.node.home, printed);
-          // Checked first, so a path that is not there says so, with the full path it looked at.
-          void cockpit.locateFile(found.node.id, path, found.repo.path, match.folder).then((located) => {
-            if (!located.ok) return showTipAt(located.error, event);
-            if (!located.folder) return openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
-            if (found.node.kind === "local") return void cockpit.openFolder(found.node.id, located.path).then((problem) => problem && showTipAt(problem, event));
-            if (!revealFolder(found.node, found.repo, located.path)) showTipAt(t("files.folderOutside", { path: located.path }), event);
-          });
+          if (event.ctrlKey || event.metaKey) openPrintedPath(event, printed, match.folder);
         },
       })));
     },
@@ -2007,8 +2029,8 @@ function terminalFor(key: string) {
     // The operator answering is what ends a wait.
     activityOf(key).waiting = false;
     // A kept tmux selection is let go first, or the keys went to tmux's copy
-    // mode rather than the agent. Mouse and focus reports are not typing.
-    if (!/^\x1b\[(<|I$|O$)/.test(data) && isKept()) letGo();
+    // mode rather than the agent. Mouse, focus and other terminal reports are not typing.
+    if (!isTerminalReport(data) && isKept()) letGo();
     send(data);
   });
   term.onResize(({ cols, rows }) => cockpit.resizeSession(key, cols, rows));
@@ -2473,9 +2495,11 @@ function cellRange(row: IBufferLine | undefined, y: number): (index: number, len
   });
 }
 
-function findByKey(key: string): { node: NodeConfig; repo: NodeConfig["repos"][number]; terminal: boolean } | undefined {
+function findByKey(key: string): { node: NodeConfig; repo: NodeConfig["repos"][number]; terminal: boolean; bot?: string } | undefined {
+  const bot = botOfKey(key);
   for (const node of nodes) {
     for (const repo of node.repos) {
+      if (bot !== undefined && sessionKey(node.id, repo.id, false, bot) === key) return { node, repo, terminal: false, bot };
       if (sessionKey(node.id, repo.id) === key) return { node, repo, terminal: false };
       if (sessionKey(node.id, repo.id, true) === key) return { node, repo, terminal: true };
     }
@@ -2746,7 +2770,7 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
       mcpRestart.delete(restartKey);
       const found = findByKey(restartKey);
       const executor = sessionExecutors.get(restartKey);
-      if (found && executor) void restartPaneSession(found.node.id, found.repo.id, { executor, resume: true });
+      if (found && executor) void restartPaneSession(found.node.id, found.repo.id, { executor, resume: true, ...(found.bot !== undefined ? { bot: found.bot } : {}) });
     });
     header.append(apply);
   }
@@ -2898,7 +2922,7 @@ function tabButton(leaf: PaneLeaf, tab: PaneTab, index: number): HTMLButtonEleme
   if (tab.kind === "session") {
     const found = findByKey(tab.key);
     const executor = sessionExecutors.get(tab.key) ?? (found?.terminal ? "shell" : found?.node.agent);
-    name.textContent = executor === "shell" || !executor ? t("session.shell") : agents[executor].label;
+    name.textContent = found?.bot !== undefined ? botsByKey.get(tab.key)?.name ?? found.bot : executor === "shell" || !executor ? t("session.shell") : agents[executor].label;
     // The session's lamp, kept current by paintLamps(): amber while it waits.
     const lamp = document.createElement("span");
     lamp.className = "lamp";
@@ -3508,7 +3532,7 @@ async function refreshWorkflowGraphData(machines: NodeConfig[]): Promise<void> {
 async function loadWorkflow(key: string): Promise<void> {
   const found = findByKey(key);
   if (!found || found.terminal || workflowFetches.has(key)) return;
-  const result = await cockpit.sessionWorkflow(found.node.id, found.repo.id);
+  const result = await cockpit.sessionWorkflow(found.node.id, found.repo.id, found.bot);
   workflowFetches.set(key, { at: Date.now(), result });
   workflowMap.refresh();
 }
@@ -4376,12 +4400,15 @@ async function stopSession(node: NodeConfig, repo: RepoConfig): Promise<void> {
  * A terminal never splits a pane of its own. With no folder (repoId null) it
  * is that PC's own terminal, in its home folder.
  */
-async function activate(nodeId: string, repoId: string | null, terminal = false): Promise<void> {
-  const key = sessionKey(nodeId, repoId, terminal);
+async function activate(nodeId: string, repoId: string | null, terminal = false, bot?: string): Promise<void> {
+  const key = sessionKey(nodeId, repoId, terminal, bot);
   showView("terminal");
   // Before anything is opened: with no room, nothing starts on that machine.
   if (!placeTab(projectOf(key), { kind: "session", key })) return;
-  await showPlaced(nodeId, repoId, terminal, () => (terminal || repoId === null ? "shell" : chooseExecutor(nodeId, repoId)));
+  // A bot's AI is the bot's own: nothing to ask.
+  const ask = () => bot !== undefined ? botsByKey.get(key)?.executor ?? sessionExecutors.get(key) ?? nodes.find((node) => node.id === nodeId)?.agent
+    : terminal || repoId === null ? "shell" : chooseExecutor(nodeId, repoId);
+  await showPlaced(nodeId, repoId, terminal, ask, undefined, bot);
 }
 
 const sessionRunning = (key: string) => {
@@ -4406,8 +4433,8 @@ async function dropProject(nodeId: string, repoId: string, paneId: string, zone:
 }
 
 /** A session's tab is in place: shows it, and opens the session with what `ask` says, unless it is running. */
-async function showPlaced(nodeId: string, repoId: string | null, terminal: boolean, ask: () => Executor | undefined | Promise<Executor | undefined>, firstPrompt?: string): Promise<void> {
-  const key = sessionKey(nodeId, repoId, terminal);
+async function showPlaced(nodeId: string, repoId: string | null, terminal: boolean, ask: () => Executor | undefined | Promise<Executor | undefined>, firstPrompt?: string, bot?: string): Promise<void> {
+  const key = sessionKey(nodeId, repoId, terminal, bot);
   activeKey = key;
   activityOf(key).waiting = false;
   refreshUsageOf(key);
@@ -4428,8 +4455,9 @@ async function showPlaced(nodeId: string, repoId: string | null, terminal: boole
   states.set(key, { kind: "connecting" });
   saveLayout();
   renderRail();
-  const resume = resumeChosen();
-  const opened = await cockpit.openSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), terminal, firstPrompt);
+  // A bot runs without permission questions and never takes up the person's conversation (spec).
+  const resume = bot === undefined ? resumeChosen() : false;
+  const opened = await cockpit.openSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bot === undefined ? bypassChosen() : true, terminal, firstPrompt, bot);
   states.set(key, opened);
   renderRail();
   if (opened.kind === "ready") view.term.focus();
@@ -4447,19 +4475,21 @@ async function restartPaneSession(
   repoId: string | null,
   // Given when the choice is already made -- reopening to pick up a share
   // keeps the agent and its conversation, so there is nothing to ask.
-  preset?: { executor: Executor; resume: boolean | string; terminal?: boolean; firstPrompt?: string },
+  // `bot`: a bot's own session (its name or slug), never the folder's plain one.
+  preset?: { executor: Executor; resume: boolean | string; terminal?: boolean; firstPrompt?: string; bot?: string },
 ): Promise<void> {
   const executor = preset?.executor ?? (repoId === null ? "shell" : await chooseExecutor(nodeId, repoId));
   if (!executor) return;
-  const key = sessionKey(nodeId, repoId, preset?.terminal);
+  const bot = preset?.bot;
+  const key = sessionKey(nodeId, repoId, preset?.terminal, bot);
   sessionExecutors.set(key, executor);
   saveLayout();
   const view = terminalFor(key);
   view.term.reset();
   states.set(key, { kind: "connecting" });
   renderRail();
-  const resume = preset?.resume ?? resumeChosen();
-  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bypassChosen(), preset?.terminal, preset?.firstPrompt);
+  const resume = bot !== undefined ? false : preset?.resume ?? resumeChosen();
+  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bot !== undefined || bypassChosen(), preset?.terminal, preset?.firstPrompt, bot);
   states.set(key, restarted);
   renderRail();
   if (restarted.kind === "ready") view.term.focus();
@@ -4574,7 +4604,7 @@ async function reopen(key: string): Promise<void> {
   const executor = sessionExecutors.get(key);
   if (nodeId === undefined || !executor) return;
   sessionNotes.delete(key);
-  await restartPaneSession(nodeId, found?.repo.id ?? null, { executor, resume: true, ...(found?.terminal !== false ? { terminal: true } : {}) });
+  await restartPaneSession(nodeId, found?.repo.id ?? null, { executor, resume: true, ...(found?.terminal !== false ? { terminal: true } : {}), ...(found?.bot !== undefined ? { bot: found.bot } : {}) });
 }
 
 /**
@@ -4680,7 +4710,7 @@ function showToast(text: string, ms = 8000): void {
 
 // --- views --------------------------------------------------------------
 
-type View = "terminal" | "map" | "guide" | "workflow";
+type View = "terminal" | "map" | "guide" | "workflow" | "automation";
 
 /** When the workflow map was last closed: a session with steps since then is "New" on it. */
 let workflowSeenAt = Date.now();
@@ -4753,7 +4783,7 @@ const workflowMap = createWorkflowMap(workflowHost, el<HTMLButtonElement>("waiti
   },
   goTo(key) {
     const found = findByKey(key);
-    if (found) void activate(found.node.id, found.repo.id, found.terminal);
+    if (found) void activate(found.node.id, found.repo.id, found.terminal, found.bot);
   },
   question: questionOf,
   history: (key) => {
@@ -4763,17 +4793,28 @@ const workflowMap = createWorkflowMap(workflowHost, el<HTMLButtonElement>("waiti
   translate: (text) => cockpit.translate(text, currentLocale),
 });
 
+/** Back to the terminals from any other view, as a second press on a view's button does. */
+function backToTerminal(): void {
+  showView("terminal");
+  refitVisiblePanes();
+}
+el<HTMLButtonElement>("viewBack").addEventListener("click", backToTerminal);
+
 // Capture, on window, as Ctrl+, is: a focused terminal would otherwise take the key.
 window.addEventListener("keydown", (event) => {
   const toggle = (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.code === "KeyM";
-  // Not while an IME is composing: its Esc cancels the composition, not the map.
-  const back = event.key === "Escape" && activeView === "workflow" && !event.isComposing && event.keyCode !== 229;
+  // Not while an IME is composing: its Esc cancels the composition, not the view. Nor
+  // while typing in a field (a bot's form), where Esc is the field's.
+  const typing = (event.target as Element | null)?.closest?.("input, textarea:not(.xterm-helper-textarea), [contenteditable]:not([contenteditable=false])");
+  const back = event.key === "Escape" && ["workflow", "automation", "map"].includes(activeView) && !typing && !event.isComposing && event.keyCode !== 229;
   if ((!toggle && !back) || document.querySelector("dialog[open]")) return;
   event.preventDefault();
   event.stopPropagation();
-  // Esc steps back inside the map first (list, focus, panel); then it leaves.
-  if (back && workflowMap.escape()) return;
-  el<HTMLButtonElement>("openWorkflow").click();
+  // Esc steps back inside the view first (the map's list, focus, panel; a bot's page); then it
+  // leaves as the view's own button would. The share map has none: it goes to the terminals.
+  if (back && (activeView === "workflow" ? workflowMap.escape() : activeView === "automation" && automationEscape())) return;
+  if (back && activeView === "map") backToTerminal();
+  else el<HTMLButtonElement>(back && activeView === "automation" ? "openBots" : "openWorkflow").click();
 }, true);
 
 function showView(view: View): void {
@@ -4782,6 +4823,7 @@ function showView(view: View): void {
   guideHost.hidden = view !== "guide";
   if (activeView === "workflow" && view !== "workflow") workflowSeenAt = Date.now();
   workflowHost.hidden = view !== "workflow";
+  automationHost.hidden = view !== "automation";
   updateSplitLimits();
   // Files open in panes stay open across views, as terminals do: their
   // overlays hide with the terminal panel (CSS) and only need lining up
@@ -4789,13 +4831,16 @@ function showView(view: View): void {
   if (view === "terminal") positionFileOverlays();
   el<HTMLButtonElement>("openMap").classList.toggle("on", view === "map");
   el<HTMLButtonElement>("openWorkflow").classList.toggle("on", view === "workflow");
+  el<HTMLButtonElement>("openBots").classList.toggle("on", view === "automation");
   activeView = view;
   zoomBar.hidden = view !== "map";
+  el<HTMLButtonElement>("viewBack").hidden = view === "terminal";
   showZoom();
   setWorkflowWatching(view === "workflow");
   workflowMap.setVisible(view === "workflow");
   // One round of reads on opening; the timer keeps them fresh while it stays open.
   if (view === "workflow") void refreshWorkflowGraphData(nodes);
+  if (view === "automation") showAutomation();
 }
 
 /** Which view is on screen. */
@@ -4942,6 +4987,7 @@ el<HTMLButtonElement>("openWorkflow").addEventListener("click", () => {
   if (activeView === "workflow") {
     if (beforeWorkflow === "map") el<HTMLButtonElement>("openMap").click();
     else if (beforeWorkflow === "guide") void openGuide();
+    else if (beforeWorkflow === "automation") showView("automation");
     else {
       showView("terminal");
       refitVisiblePanes();
@@ -5127,6 +5173,50 @@ function liveSessions(): string[] {
  */
 const broadcastDialog = el<HTMLDialogElement>("broadcastDialog");
 const broadcastText = el<HTMLTextAreaElement>("broadcastText");
+/** Where a second press on the 봇 button goes back to. */
+let beforeAutomation: View = "terminal";
+// The 자동화 view, a toggle like the workflow button: bots, every PC's timetable jobs, Claude routines.
+el<HTMLButtonElement>("openBots").addEventListener("click", () => {
+  if (activeView === "automation") {
+    if (beforeAutomation === "map") el<HTMLButtonElement>("openMap").click();
+    else if (beforeAutomation === "guide") void openGuide();
+    else if (beforeAutomation === "workflow") el<HTMLButtonElement>("openWorkflow").click();
+    else {
+      showView("terminal");
+      refitVisiblePanes();
+    }
+    return;
+  }
+  beforeAutomation = activeView;
+  showView("automation");
+});
+/** The bots by their session key: a tab shows the name (the key holds only the slug), and reopening one knows its AI. */
+const botsByKey = new Map<string, BotRow>();
+function botsChanged(bots: BotRow[]): void {
+  const names = (map: Map<string, BotRow>) => JSON.stringify([...map].map(([key, bot]) => [key, bot.name]));
+  const before = names(botsByKey);
+  botsByKey.clear();
+  for (const bot of bots) botsByKey.set(sessionKey(bot.nodeId, bot.repoId, false, bot.name), bot);
+  if (names(botsByKey) !== before) renderPanes();
+}
+/** A bot's own session as a tab of its folder's pane, opened if it is not running. */
+const goToBot = (bot: BotRow) => void activate(bot.nodeId, bot.repoId, false, bot.name);
+initAutomation(automationHost, {
+  pcs: () => [...nodes].sort((a, b) => Number(b.kind === "local") - Number(a.kind === "local")).map((node) => ({
+    nodeId: node.id, label: machineLabel(node), live: node.kind === "local" || pcStateOf(node) === "live",
+    folders: node.repos.map((repo) => ({ id: repo.id, label: repo.label, path: repo.path })),
+  })),
+  lamp: statusLamp,
+  openFile: (nodeId, repoId, path) => {
+    const node = nodes.find((each) => each.id === nodeId);
+    const repo = node?.repos.find((each) => each.id === repoId);
+    if (node) openFileInPane(node, path, path.slice(path.lastIndexOf("/") + 1), repo);
+  },
+  goToBot,
+  botsChanged,
+});
+// Tabs of bot sessions restored at start show the bot's name, not its slug.
+void cockpit.botList().then(botsChanged, () => undefined);
 el<HTMLButtonElement>("openBroadcast").addEventListener("click", () => {
   const list = el<HTMLDivElement>("broadcastList");
   list.replaceChildren();
@@ -5398,8 +5488,9 @@ function mountFileTab(file: PaneFile): void {
   if (!node) return;
   const kind = fileKind(file.name);
   // Anything that may be text opens straight into the editor; startEdit falls
-  // back to the read-only view for what cannot be edited.
-  if (kind === "image" || kind === "pdf") void fillFileOverlay(file, node);
+  // back to the read-only view for what cannot be edited. Markdown opens
+  // rendered, to be read; its header's Edit button opens the editor.
+  if (kind === "image" || kind === "pdf" || kind === "markdown") void fillFileOverlay(file, node);
   else void startEdit(file, true);
 }
 
@@ -5526,7 +5617,7 @@ async function fillFileOverlay(file: PaneFile, node: NodeConfig): Promise<void> 
   overlay.append(note);
   const fail = (message: string): void => {
     note.textContent = message;
-    // Too big to preview is not too big to have: a download has no 5MB cap.
+    // Too big to preview is not too big to have: a download has no 10MB cap.
     const save = document.createElement("button");
     save.type = "button";
     save.className = "railBtn";
@@ -6323,6 +6414,45 @@ cockpit.onRepoAction(async (action, nodeId, repoId) => {
   // Off the list, not off the disk -- main asks first, and says so.
   await removeFolders(node.id, [repo.id]);
 });
+// --- "Open with Lepons" from Explorer or Finder (main/open-with.ts) ---------
+
+/**
+ * A folder opens as a click on its row does: its pane, and the AI picker
+ * unless it is already running. A file of a listed folder joins that
+ * folder's pane; any other file gets a pane of its own, with no AI.
+ */
+function openWithLepons(opens: OpenWith[]): void {
+  for (const open of opens) {
+    nodes = open.nodes;
+    const node = nodes.find((candidate) => candidate.id === localNodeId);
+    if (!node) continue;
+    if (open.folder) void activate(node.id, open.repoId);
+    else if (node.repos.some((repo) => isUnder(open.path, repo.path))) openFileInPane(node, open.path, baseName(open.path));
+    else openInNewPane(node, open.path);
+  }
+  renderRail();
+}
+
+/** A file in a new pane -- an empty one, else one split off -- as openToSide does. */
+function openInNewPane(node: NodeConfig, path: string): void {
+  if (activeView !== "terminal") showView("terminal");
+  const name = baseName(path);
+  // Already open: shown where it is.
+  if (workspace.files().some((file) => file.nodeId === node.id && file.path === path)) return openFileInPane(node, path, name);
+  const empty = workspace.leaves().find((leaf) => leaf.project === null);
+  const beside = empty ? undefined : [workspace.focused, ...workspace.leaves().map((leaf) => leaf.id)].find((id) => autoSplitWay(id) !== null);
+  if (!empty && beside === undefined) return showToast(t("openWith.noRoom"), 6000);
+  const leaf = empty ?? workspace.split(beside!, autoSplitWay(beside!)!);
+  const file: PaneFile = { nodeId: node.id, path, name };
+  workspace.addTab(leaf, projectOfFile(node.repos, node.id, path), { kind: "file", file });
+  workspace.focus(leaf.id);
+  mountFileTab(file);
+  activeKey = undefined;
+  renderPanes();
+  renderRail();
+}
+cockpit.onOpenWith(openWithLepons);
+
 cockpit.onFileAction(async (action, nodeId, path, isDirectory) => {
   const node = nodes.find((candidate) => candidate.id === nodeId);
   if (!node) return;
@@ -6508,29 +6638,30 @@ function applyStaticText(): void {
     if (key !== undefined) element.textContent = t(key);
   }
   settingsButton.title = t("settings.title");
+  el<HTMLButtonElement>("viewBack").title = t("view.backHint");
   document.documentElement.lang = currentLocale;
   fitRailTabs();
 }
 
-const railTabs = document.querySelector<HTMLElement>(".railTabs");
+const railTabRows = [...document.querySelectorAll<HTMLElement>(".railTabs")];
 /**
- * The rail's 공유 맵 and 워크플로우: words beside their icons while both fit on
- * one line, icons alone once a word would wrap and break the button's shape
- * (the word then in the tooltip). The folded rail hides them (index.html).
+ * The rail's tool rows (한번에 보내기 and 봇, 공유 맵 and 워크플로우): words beside
+ * their icons while every one fits on one line, icons alone once a word would
+ * wrap and break the button's shape (the word then in the tooltip). The rows
+ * switch together, so they keep one look. The folded rail hides them (index.html).
  */
 function fitRailTabs(): void {
-  if (!railTabs) return;
-  railTabs.classList.remove("iconOnly");
-  const tabs = [...railTabs.querySelectorAll<HTMLElement>(".railTab")];
+  for (const row of railTabRows) row.classList.remove("iconOnly");
+  const tabs = railTabRows.flatMap((row) => [...row.querySelectorAll<HTMLElement>(".railTab")]);
   const iconOnly = tabs.some((tab) => tab.scrollWidth > tab.clientWidth);
-  railTabs.classList.toggle("iconOnly", iconOnly);
+  for (const row of railTabRows) row.classList.toggle("iconOnly", iconOnly);
   for (const tab of tabs) {
     const label = tab.querySelector<HTMLElement>("[data-i18n]")?.textContent ?? "";
     tab.setAttribute("aria-label", label);
-    tab.title = iconOnly ? label : "";
+    tab.title = tab.dataset.why || (iconOnly ? label : "");
   }
 }
-if (railTabs) new ResizeObserver(fitRailTabs).observe(railTabs);
+for (const row of railTabRows) new ResizeObserver(fitRailTabs).observe(row);
 
 type Theme = "dark" | "light";
 
@@ -6885,7 +7016,8 @@ function noteLimits(): void {
     const note: NonNullable<ReturnType<typeof sessionNotes.get>> = {
       text: `${spent ? t("limit.near", { agent: short, used: Math.round(spent.usedPercent) }) : t("limit.hit", { agent: short })}${reset}`,
       actions: [
-        [t("limit.switch"), () => void addAgentInWorktree(node.id, repo.id, "change")],
+        // Switching restarts the folder's own session; a bot keeps its AI, so it only gets the note.
+        ...(found.bot === undefined ? [[t("limit.switch"), () => void addAgentInWorktree(node.id, repo.id, "change")] as [string, () => void]] : []),
         [t("common.close"), () => {
           limitClosed.set(key, resetsAt);
           noteLimits();
@@ -6959,7 +7091,7 @@ function showPet(on: boolean): void {
 }
 cockpit.onPetClicked(() => {
   const found = petKey ? findByKey(petKey) : undefined;
-  if (found) void activate(found.node.id, found.repo.id, found.terminal);
+  if (found) void activate(found.node.id, found.repo.id, found.terminal, found.bot);
 });
 if (petShown) cockpit.petShow(true);
 
@@ -6971,7 +7103,7 @@ function turnEnded(key: string): void {
     const note = new Notification(`${machineLabel(found.node)} · ${found.repo.label}`, { body: t("rail.waiting") });
     note.onclick = () => {
       cockpit.toFront();
-      void activate(found.node.id, found.repo.id, found.terminal);
+      void activate(found.node.id, found.repo.id, found.terminal, found.bot);
     };
   }
   justEnded.add(key);
@@ -6987,7 +7119,7 @@ async function askTurnEnd(key: string, activity: Activity): Promise<void> {
   const ready = () => states.get(key)?.kind === "ready";
   const end: TurnEnd = !found || found.terminal || !ready()
     ? "unknown"
-    : await cockpit.sessionTurn(found.node.id, found.repo.id, Date.now() - activity.workSince).catch((): TurnEnd => "unknown");
+    : await cockpit.sessionTurn(found.node.id, found.repo.id, Date.now() - activity.workSince, found.bot).catch((): TurnEnd => "unknown");
   // A session that dropped ended no turn: read as asking, it would ring once it reconnects.
   // Nor does a shell's output once the AI has gone.
   if (onTurnEnd(activity, ready() && !activity.agentGone ? end : "quiet", asked, Date.now())) turnEnded(key);
@@ -7035,7 +7167,7 @@ function snapshotSessions(told = true): PhoneSession[] {
     const original = found.repo.worktree && found.node.repos.find((repo) => repo.id === found.repo.worktree!.of);
     return [{
       ...(original ? { worktreeOf: original.label, worktree: found.repo.label } : {}),
-      key, nodeId: found.node.id, repoId: found.repo.id, terminal: found.terminal,
+      key, nodeId: found.node.id, repoId: found.repo.id, terminal: found.terminal, ...(found.bot !== undefined ? { bot: found.bot } : {}),
       pc: machineLabel(found.node), folder: found.repo.label, ...(status === "shellOnly" ? { mood: "done" as const, agentGone: true } : { mood: status }), ...(turn ? { turn } : {}), ...(preview === undefined ? {} : { preview }), ...(pane ? { pane } : {}),
       ...(status === "waiting" && meta?.asks ? { asks: meta.asks } : {}), ...(meta?.ask && status !== "shellOnly" ? { ask: meta.ask, ...(meta.askUser ? { askUser: true as const } : {}) } : {}), ...(meta?.limited ? { limited: true as const } : {}),
       ...(autoAnswers.has(key) ? { auto: { at: autoAnswers.get(key)!.at, n: autoAnswers.get(key)!.n, option: autoAnswers.get(key)!.option } } : {}),
@@ -7528,8 +7660,7 @@ async function startTour(): Promise<void> {
       step("split", () => splitRightButton),
       step("map", byId("openMap")),
       step("workflow", byId("openWorkflow")),
-      // Only while it is on the rail: two or more sessions open.
-      ...(el<HTMLButtonElement>("openBroadcast").hidden ? [] : [step("broadcast", byId("openBroadcast"))]),
+      step("broadcast", byId("openBroadcast")),
       step("phone", byId("phoneButton")),
       step("settings", byId("settingsButton")),
       step("pet", byId("settingsButton")),
@@ -7666,7 +7797,7 @@ async function offerRestore(saved: SavedLayout, clean: boolean): Promise<void> {
     renderRail();
     const view = terminalFor(key);
     const opened = await cockpit.openSession(found.node.id, found.repo.id, view.term.cols, view.term.rows, executor, true,
-      localStorage.getItem("bypassPermissions") === "1", found.terminal);
+      found.bot !== undefined || localStorage.getItem("bypassPermissions") === "1", found.terminal, undefined, found.bot);
     states.set(key, opened);
     renderRail();
     return { key, opened, executor };
@@ -7724,4 +7855,6 @@ cockpit.listNodes().then(async (loaded) => {
   } else {
     localStorage.setItem("tourDone", "1");
   }
+  // Last, so a restored layout does not replace the pane it opens in.
+  openWithLepons(await cockpit.takeOpenWith());
 });

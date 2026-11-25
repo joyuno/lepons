@@ -1,7 +1,7 @@
 import type { AccountState as PcAccountState, PhoneEvents, ReplyOf } from "../../../cockpit/src/phone/contract.ts";
 import type { tokenStatsOf } from "./token-stats.ts";
 import type { AccountState, Mood, PcState, StepKind } from "./types.ts";
-import type { accountsOf, commandsOf, filesOf, screenOf, stateOf, WorkflowChange, workflowOf } from "./validate.ts";
+import type { accountsOf, botsOf, commandsOf, filesOf, screenOf, stateOf, WorkflowChange, workflowOf } from "./validate.ts";
 
 /*
  * A compile-time test, never imported at run time: what the app needs at run
@@ -32,4 +32,5 @@ export const shapesMatch: [
   Same<Read<typeof commandsOf>, ReplyOf<"GET /api/commands">["commands"]>,
   Fits<Stats, Read<typeof tokenStatsOf>>,
   Fits<Stats["days"][number], Read<typeof tokenStatsOf>["days"][number]>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Same<Read<typeof botsOf>, ReplyOf<"GET /api/bots">["bots"]>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];

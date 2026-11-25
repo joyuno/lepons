@@ -7,7 +7,7 @@ import { PhoneAuth } from "../../../cockpit/src/phone/auth.ts";
 import { createPhoneApi, usageSummary, type PhoneDeps } from "../../../cockpit/src/phone/server.ts";
 import { folderLister } from "./folder-list.ts";
 import { tokenStatsOf } from "./token-stats.ts";
-import { accountsOf, commandsOf, filesOf, screenOf, stateOf, workflowOf } from "./validate.ts";
+import { accountsOf, botsOf, commandsOf, filesOf, screenOf, stateOf, workflowOf } from "./validate.ts";
 
 const path =(relative: string) => fileURLToPath(new URL(relative, import.meta.url)).replaceAll("\\", "/");
 const contract = path("../../../cockpit/src/phone/contract.ts");
@@ -75,7 +75,7 @@ test("what the real server sends, every optional field filled, the phone's reade
     pane: { n: 1, tab: 0, shown: true }, steps: ["prompt" as const, "action" as const, "subagent" as const],
     summary: { goal: "g", now: { at: 5, kind: "action" as const, text: "t" }, result: "r", progress: { files: 1, fileNames: ["a.ts"], reads: 2, commands: 3, subagents: 1, running: 1, since: 4 } },
     subagents: [{ label: "l", running: false, since: 1, doneAt: 2, result: "r" }],
-    agentName: "Claude Code", mainFree: true, worktreeOf: "lepons", worktree: "로그인 수정",
+    agentName: "Claude Code", mainFree: true, worktreeOf: "lepons", worktree: "로그인 수정", bot: "라피드",
     auto: { at: 1_800_000_000_000, n: 2, option: "SQLite (Recommended)" },
     ask: {
       id: "0a1b2c3d", question: "Which?", tabs: [{ label: "A", done: true }, { label: "Submit", done: false }], tab: 1,
@@ -113,6 +113,16 @@ test("what the real server sends, every optional field filled, the phone's reade
     tokenStats: async () => stats,
     directory: async () => entries,
     signedIn: () => {},
+    // Every optional field of a bot filled, its session open.
+    bots: () => [{
+      bot: {
+        id: "b-1", name: "정리봇", fresh: true, paused: false, jobs: [{ id: "j-1", when: { minute: 0, hour: 9, days: [1, 3] }, cron: "0 9 * * 1,3", instructions: "글감 모으기" }],
+        nextRun: "2026-11-26T00:00:00.000Z", last: { jobId: "j-1", startedAt: "2026-11-25T00:00:00.000Z", state: "missed" },
+        runs: [{ jobId: "j-1", startedAt: "2026-11-25T00:00:00.000Z", state: "missed" }, { jobId: "j-1", startedAt: "2026-11-24T00:00:00.000Z", endedAt: "2026-11-24T00:30:00.000Z", state: "skipped", reason: "busy" }],
+        missed: { count: 2, at: "2026-11-25T00:00:00.000Z", jobId: "j-1" },
+      },
+      key, nodeId, pc: "이 PC", folder: "a", executor: "Claude Code", busy: "running", profile: ".lepons/bots/정리봇.md",
+    }],
   } as unknown as PhoneDeps, auth);
   api.usage(usageSummary({ claude: { fiveHour: { usedPercent: 10, resetsAt: 100 }, week: { usedPercent: 20, resetsAt: 200 } } }, { claude: "Claude" }, 0));
   const ask = (path: string) => api.call({ method: "GET", path, token });
@@ -136,6 +146,10 @@ test("what the real server sends, every optional field filled, the phone's reade
     assert.deepEqual(filesOf(await body(`/api/files?s=${id}`)), ["a.ts"]);
     assert.deepEqual(tokenStatsOf(await body("/api/token-stats")), stats);
     assert.deepEqual(await folderLister(ask as never, id)(""), entries);
+    const bots = await body("/api/bots");
+    const [bot] = bots.bots as Array<{ sessionId: unknown; profilePath?: unknown; last: unknown; missed: unknown }>;
+    assert.ok(bot?.sessionId === id && bot.profilePath && bot.last && bot.missed, "the bot's optional fields are all there");
+    assert.deepEqual(botsOf(bots), bots.bots);
 
     const first = api.watch(token, id, { send() {}, end() {} })!.first;
     assert.deepEqual(screenOf(first.find(([name]) => name === "screen")?.[1]), screen);

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { toDataURL } from "qrcode";
 
 import { agents, isAgentKind, type Executor } from "../agent/agents.ts";
+import { botProfilePath, type Bot } from "../agent/bots.ts";
 import { t } from "../i18n/i18n.ts";
 import { hashPassword, PhoneAuth } from "../phone/auth.ts";
 import type { Machine } from "../machine/machine.ts";
@@ -16,7 +17,7 @@ import { askForm, formFits, hookForm } from "../phone/ask.ts";
 import { PHONE_EVENTS } from "../phone/contract.ts";
 import { phoneMayOpen, viewable } from "../phone/docs.ts";
 import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/outside.ts";
-import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
+import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, schedulePush, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
 import type { OutputRing } from "../phone/screen.ts";
 import { auditLine, createPhoneApi, sessionId, type PhoneApi, type PhoneDeps } from "../phone/server.ts";
 import { claudeBuiltins, codexBuiltins, mergeCommands, opencodeBuiltins } from "../phone/suggest.ts";
@@ -26,7 +27,7 @@ import { relayBridge } from "../relay/bridge.ts";
 import { RelayClient, type RelaySocket, type RelayStatus } from "../relay/client.ts";
 import { DEFAULT_SERVER, encodeQr, generateKeyPair, keyPairFromPrivate, newPairingSecret, newRoomId, validServer, type KeyPair } from "../relay/protocol.ts";
 import type { Session } from "../session/state.ts";
-import { channels, machineLabel, type NodeConfig, type PhoneAnswerResult, type PhoneAskForm, type PhoneSession, type PhoneSettingsView, type SessionWorkflowResult } from "../shared/ipc.ts";
+import { botOfKey, channels, machineLabel, sessionKey, type BotRow, type NodeConfig, type PhoneAnswerResult, type PhoneAskForm, type PhoneSession, type PhoneSettingsView, type SessionWorkflowResult } from "../shared/ipc.ts";
 import { pcState } from "../shared/status.ts";
 import type { agentAccounts } from "./setup-info.ts";
 import { openSecret, PhoneStore, sealSecret, type NodeStore, type SecretBox } from "./stores.ts";
@@ -42,13 +43,27 @@ export interface PhoneHostDeps {
   screens: ReadonlyMap<string, { ring: OutputRing; cols: number; rows: number }>;
   sessionExecutor: ReadonlyMap<string, Executor>;
   shareOutages: ReadonlyMap<string, unknown>;
-  /** When this PC was last typed on. */
+  /** When this PC was last typed on, by session key (the bots' scheduler waits for quiet). */
+  lastInputAt: Map<string, number>;
   readTokenStats: PhoneDeps["tokenStats"];
-  workflowOf(nodeId: string, repoId: string, full?: boolean, before?: number): Promise<SessionWorkflowResult>;
+  workflowOf(nodeId: string, repoId: string, full?: boolean, before?: number, bot?: string): Promise<SessionWorkflowResult>;
   accountsOf(node: NodeConfig): ReturnType<typeof agentAccounts>;
   machineOf(node: NodeConfig): Machine;
   /** Ends a session here and on its PC; throws when the PC cannot be told. */
   stopSessionKey(nodeId: string, key: string, anyway: true): Promise<boolean>;
+  /** A bot's name from the slug in its session key. */
+  botName?(nodeId: string, repoId: string, slug: string): string | undefined;
+  /** The bots, and the 자동화 view's own buttons for them (index.ts): what the phone's 봇 tab reads and asks. */
+  bots: {
+    /** As the 자동화 view lists them (index.ts botRow). */
+    list(): BotRow[];
+    busy(id: string): "running" | "waiting" | undefined;
+    run(id: string, jobId?: string): Promise<void>;
+    pause(id: string, paused: boolean): void;
+    settleMissed(id: string, run: boolean): Promise<void>;
+    /** Opens the bot's session (one open per session at a time: index.ts openOrRestart). */
+    open(bot: Bot): Promise<unknown>;
+  };
   /** Takes folders off the list, unasked: the asking was done where this was called from. */
 }
 
@@ -66,6 +81,8 @@ export interface PhoneHost {
   deps: PhoneDeps;
   /** Takes the relay link down when the app quits. */
   stop(): void;
+  /** A scheduled run's result to the paired phone (schedulePush). */
+  scheduleRan(id: string, title: string, body: string): void;
   /** 숨김 폴더 보기: dot-named files and folders listed too, all but the secret ones (docs.ts hiddenAllowed). */
   showHidden(): boolean;
   /**
@@ -86,7 +103,7 @@ export interface TwoFactor {
 
 /** The phone side of the app: pushes, what a phone may read, pairing and the relay link, and their IPC handlers. */
 export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
-  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey } = deps;
+  const { userData, window, ipcMain, safeStorage, nodes, sessions, screens, sessionExecutor, shareOutages, lastInputAt, readTokenStats, workflowOf, accountsOf, machineOf, stopSessionKey } = deps;
 
   // The sessions as the window sees them (see PhoneSession). A session that
   // turns to "waiting" here is the same turn the desktop notification fires
@@ -138,6 +155,11 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     const executor = sessionExecutor.get(key) ?? node.agent;
     return isAgentKind(executor) ? agents[executor].can.transcript : null;
   };
+  /** Whose record a session reads: its bot's, by name, or with none a person's. */
+  const recordOwner = (key: string, place: { node: NodeConfig; repo: { id: string } }) => {
+    const slug = botOfKey(key);
+    return slug === undefined ? undefined : deps.botName?.(place.node.id, place.repo.id, slug) ?? slug;
+  };
   /** Each session's last read workflow and its record's stamp: an unchanged record is not read or parsed again. */
   const phoneFlows = new Map<string, { stamp: string; result: SessionWorkflowResult }>();
   /**
@@ -172,7 +194,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const found = async (): Promise<{ form: PhoneAskForm; drop?: () => void } | undefined> => {
         const hooked = hookForm(await machine.askHooks().catch(() => []), place.repo.path, machine.windows);
         if (fits(hooked?.form)) return { form: hooked.form, drop: () => void machine.dropAskHook(hooked.name).catch(() => undefined) };
-        const jsonl = await machine.record("claude", place.repo.path).catch(() => undefined);
+        const jsonl = await machine.record("claude", place.repo.path, recordOwner(key, place)).catch(() => undefined);
         const form = jsonl === undefined ? undefined : askForm(jsonl);
         return fits(form) ? { form } : undefined;
       };
@@ -310,6 +332,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       const form = askForms.get(session.key)?.form;
       return {
         ...session,
+        ...(session.bot ? { bot: deps.botName?.(session.nodeId, session.repoId, session.bot) ?? session.bot } : {}),
         ...(session.ask && form ? { ask: { ...session.ask, form } } : {}),
         ...(phoneDeps.isAgent(session.key) && isAgentKind(kind) ? { agentName: agents[kind].label } : {}),
         ...(session.mood === "working" && mainFree.has(session.key) && sessions.get(session.key)?.state.kind === "ready" ? { mainFree: true } : {}),
@@ -335,6 +358,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (session?.state.kind !== "ready") return false;
       const [first, ...rest] = pieces;
       session.write(first!);
+      lastInputAt.set(key, Date.now());
       // After the text has landed, or the agent reads the Enter as part of it.
       if (rest.length > 0) setTimeout(() => sessions.get(key)?.write(rest.join("")), 300);
       void appendFile(join(userData, "phone-audit.log"), auditLine(new Date(), key, pieces)).catch(() => undefined);
@@ -369,14 +393,14 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     workflow: async (key, before) => {
       const session = phoneSessions.find((candidate) => candidate.key === key);
       if (!session || session.terminal) return { ok: false, reason: "no_transcript" };
-      if (before !== undefined) return workflowOf(session.nodeId, session.repoId, true, before).catch(() => ({ ok: false as const, reason: "no_transcript" as const }));
+      if (before !== undefined) return workflowOf(session.nodeId, session.repoId, true, before, botOfKey(session.key)).catch(() => ({ ok: false as const, reason: "no_transcript" as const }));
       const place = phoneSessionPlace(key);
       const format = place && recordFormat(key, place.node);
-      const stamp = place && format ? await machineOf(place.node).recordStamp(format, place.repo.path).catch(() => undefined) : undefined;
+      const stamp = place && format ? await machineOf(place.node).recordStamp(format, place.repo.path, recordOwner(key, place)).catch(() => undefined) : undefined;
       const kept = phoneFlows.get(key);
       if (stamp !== undefined && kept?.stamp === stamp) return kept.result;
       // Stamped before the read: a record that moves between the two is only read once more.
-      const result = await workflowOf(session.nodeId, session.repoId, true).catch(() => ({ ok: false as const, reason: "no_transcript" as const }));
+      const result = await workflowOf(session.nodeId, session.repoId, true, undefined, botOfKey(session.key)).catch(() => ({ ok: false as const, reason: "no_transcript" as const }));
       if (stamp !== undefined && result.ok) phoneFlows.set(key, { stamp, result });
       else phoneFlows.delete(key);
       return result;
@@ -417,7 +441,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (!places) return undefined;
       if (places.some(outsideSecret)) return "secret";
       const machine = machineOf(place.node);
-      const record = await machine.record(format, place.repo.path).catch(() => undefined);
+      const record = await machine.record(format, place.repo.path, recordOwner(key, place)).catch(() => undefined);
       if (!record || !printedIn(record, printed)) return undefined;
       const found = await readOutside(machine, places, 20 * 1024 * 1024).catch(() => undefined);
       if (typeof found !== "object") return found;
@@ -504,6 +528,30 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     openTerminal: (nodeId, repoId) => {
       if (!window.isDestroyed()) window.webContents.send(channels.phoneTerminal, nodeId, repoId);
     },
+    // The 자동화 view's bots by name only: their PC's label, their folder's, their AI's. The profile file only where
+    // the phone's viewer would open it (숨김 폴더 보기), as it lives in .lepons/.
+    bots: () => deps.bots.list().map((bot) => {
+      const node = nodes.list().find((one) => one.id === bot.nodeId);
+      const busy = deps.bots.busy(bot.id);
+      return {
+        bot, key: sessionKey(bot.nodeId, bot.repoId, false, bot.name), nodeId: bot.nodeId, pc: node ? machineLabel(node) : "",
+        folder: node?.repos.find((repo) => repo.id === bot.repoId)?.label ?? bot.folder.split(/[\\/]/).pop() ?? "",
+        executor: agents[bot.executor]?.label ?? bot.executor,
+        ...(busy ? { busy } : {}),
+        ...(showHidden() ? { profile: botProfilePath(bot.folder, bot.name).slice(bot.folder.length + 1) } : {}),
+      };
+    }),
+    runBot: (id, jobId) => deps.bots.run(id, jobId),
+    pauseBot: (id, paused) => deps.bots.pause(id, paused),
+    settleMissed: (id, run) => deps.bots.settleMissed(id, run),
+    // Not over one up or connecting: an open would close and reopen it. One still being opened (a run's, an earlier
+    // press's) is joined where opens are made (index.ts openOrRestart).
+    openBot: (id) => {
+      const bot = deps.bots.list().find((one) => one.id === id);
+      if (!bot) return;
+      const kind = sessions.get(sessionKey(bot.nodeId, bot.repoId, false, bot.name))?.state.kind;
+      if (kind !== "ready" && kind !== "connecting") void deps.bots.open(bot).catch(() => undefined);
+    },
     // What the AI accounts tab shows, for every PC; kept a minute like the suggestions.
     accounts: () => phoneCached("accounts", () => Promise.all(nodes.list().map(async (node) => ({
       pc: machineLabel(node),
@@ -525,7 +573,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     const free = await Promise.all(working.map(async ({ key }) => {
       const place = phoneSessionPlace(key);
       const format = place && recordFormat(key, place.node);
-      return place && format && await readTurnOver(() => machineOf(place.node).recordTail(format, place.repo.path), format) ? [key] : [];
+      return place && format && await readTurnOver(() => machineOf(place.node).recordTail(format, place.repo.path, recordOwner(key, place)), format) ? [key] : [];
     }));
     const next = new Set(free.flat().filter((key) => started - (mainToldAt.get(key) ?? -Infinity) >= MAIN_TOLD_MS));
     const same = next.size === mainFree.size && [...next].every((key) => mainFree.has(key));
@@ -722,6 +770,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     api,
     deps: phoneDeps,
     showHidden,
+    scheduleRan: (id, title, body) => sendPush((to) => schedulePush(to, id, title, body)),
     twoFactor: {
       ready: () => phoneView().totpReady,
       // Five wrong codes and it stops listening for five minutes: six digits are few, and the window asking may not be the owner's.

@@ -92,6 +92,14 @@ export async function savePcs(pcs: readonly Pc[], active: string | undefined): P
 /** Forgets one PC's sign-in; with the last PC gone, also what was typed, opened and placed on the map. The phone's own key stays. */
 export async function forgetPc(id: string, last: boolean): Promise<void> {
   await del(`token_${id}`);
+  // Its PCs' names in the sessions tab's order go with it.
+  if (loadPcOrder(id).length > 0) {
+    const { [id]: _gone, ...rest } = pcOrders ?? {};
+    pcOrders = rest;
+    try {
+      pcOrderFile().writeSync(JSON.stringify(pcOrders));
+    } catch {}
+  }
   if (!last) return;
   await drafts.clear();
   forgetOpened();
@@ -177,4 +185,29 @@ export function saveMapSpot(pc: string, id: string, spot: Spot): MapSpots {
     spotsFile().writeSync(JSON.stringify(mapSpots));
   } catch {}
   return mapSpots;
+}
+
+/**
+ * The sessions tab's PC order, per paired PC, as moved in 편집: each PC by its opaque id (its label from a PC older
+ * than that). A file, like the map's spots.
+ */
+const pcOrderFile = () => new File(Paths.document, "pc-order.json");
+let pcOrders: Record<string, string[]> | undefined;
+export function loadPcOrder(pairing: string): string[] {
+  if (!pcOrders) {
+    try {
+      pcOrders = JSON.parse(pcOrderFile().textSync()) as Record<string, string[]>;
+    } catch {
+      pcOrders = {};
+    }
+  }
+  const saved = pcOrders[pairing];
+  return Array.isArray(saved) ? saved.filter((key) => typeof key === "string") : [];
+}
+export function savePcOrder(pairing: string, order: string[]): void {
+  loadPcOrder(pairing);
+  pcOrders = { ...pcOrders, [pairing]: order };
+  try {
+    pcOrderFile().writeSync(JSON.stringify(pcOrders));
+  } catch {}
 }

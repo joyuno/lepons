@@ -3,7 +3,7 @@ import { File } from "expo-file-system";
 import { launchCameraAsync, launchImageLibraryAsync, requestCameraPermissionsAsync } from "expo-image-picker";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
 
-import type { Connection } from "@/connection";
+import { whilePicking, type Connection } from "@/connection";
 import { previewOrShare } from "@/phone/native-preview";
 
 /** The PC's cap (cockpit/src/phone/server.ts MAX_UPLOAD). */
@@ -23,15 +23,21 @@ export const PICK_LIMIT = 10;
  */
 export async function pick(kind: "camera" | "photo" | "file"): Promise<Picked[] | "denied"> {
   if (kind === "file") {
-    const picked = await getDocumentAsync({ copyToCacheDirectory: true, multiple: true });
+    const picked = await whilePicking(() => getDocumentAsync({ copyToCacheDirectory: true, multiple: true }));
     return picked.canceled ? [] : picked.assets.slice(0, PICK_LIMIT).map((asset) => ({ uri: asset.uri, name: asset.name, image: /^image\//.test(asset.mimeType ?? "") }));
   }
-  if (kind === "camera" && !(await requestCameraPermissionsAsync()).granted) return "denied";
+  // The permission question is a system screen too: on Android it also sends the app to the background.
+  if (kind === "camera" && !(await whilePicking(() => requestCameraPermissionsAsync())).granted) return "denied";
   // Under 1, the picker encodes the photo again: an iPhone's HEIC comes out a JPEG the AI can read.
   const options = { mediaTypes: ["images" as const], quality: 0.8 };
-  const picked = kind === "camera"
-    ? await launchCameraAsync(options)
-    : await launchImageLibraryAsync({ ...options, allowsMultipleSelection: true, selectionLimit: PICK_LIMIT, orderedSelection: true });
+  // On Android 9 and older the camera also needs storage, asked for here; a "no" to it is a "no" to the camera.
+  const picked = await whilePicking(() => kind === "camera"
+    ? launchCameraAsync(options)
+    : launchImageLibraryAsync({ ...options, allowsMultipleSelection: true, selectionLimit: PICK_LIMIT, orderedSelection: true })).catch((error: unknown) => {
+    if (kind === "camera" && /rejected permissions/i.test(String((error as Error | undefined)?.message))) return "denied" as const;
+    throw error;
+  });
+  if (picked === "denied") return "denied";
   // "image" and the extension it has now (.jpg): the chat shows it as @image.jpg, not the picker's long file name.
   return picked.canceled ? [] : picked.assets.slice(0, PICK_LIMIT).map((asset) => ({
     uri: asset.uri,

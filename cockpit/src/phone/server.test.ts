@@ -2,7 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 
 import { hashPassword, PhoneAuth } from "./auth.ts";
-import { auditLine, createPhoneApi, inputFor, MAX_INPUT, MAX_UPLOAD, sessionId, uploadName, usageSummary, type ApiReply, type PhoneApi, type PhoneDeps } from "./server.ts";
+import { auditLine, createPhoneApi, inputFor, MAX_INPUT, MAX_UPLOAD, sessionId, uploadName, usageSummary, type ApiReply, type BotSource, type PhoneApi, type PhoneDeps } from "./server.ts";
 import { base32Encode, stepOf, totpAt } from "./totp.ts";
 import type { PhoneSession } from "../shared/ipc.ts";
 
@@ -73,7 +73,39 @@ const deps: PhoneDeps = {
     pushTokens.push(token);
     pushDone.push(done);
   },
+  bots: () => botSources,
+  runBot: async (id, jobId) => {
+    botCalls.push(["run", id, jobId]);
+    if (id === "b2") throw new Error("busy: this bot is already on a run");
+  },
+  pauseBot: (id, paused) => void botCalls.push(["pause", id, paused]),
+  settleMissed: async (id, run) => void botCalls.push(["missed", id, run]),
+  openBot: (id) => void botCalls.push(["open", id]),
 };
+const longJob = "가".repeat(100);
+// As index.ts botRow gives them: runs newest first, the one still sent left out, answers and ends kept for the PC's own view.
+const missedRun = { jobId: "j1", startedAt: "2026-11-25T00:00:00.000Z", state: "missed" } as const;
+const botSources: BotSource[] = [
+  {
+    bot: { id: "b1", name: "정리봇", fresh: true, jobs: [
+      { id: "j1", when: { minute: 0, hour: 9 }, cron: "0 9 * * *", instructions: "  지난 하루 글감 모으기\n둘째 줄은 안 보여요" },
+      { id: "j2", when: { minute: 30, hour: 8, days: [1] }, cron: "30 8 * * 1", instructions: longJob },
+    ],
+    runs: [
+      missedRun,
+      { jobId: "gone", startedAt: "2026-11-24T00:00:00.000Z", endedAt: "2026-11-24T00:30:00.000Z", state: "skipped", reason: "busy" },
+      { jobId: "j1", startedAt: "2026-11-23T00:00:00.000Z", endedAt: "2026-11-23T00:10:00.000Z", state: "done", answer: "AI가 쓴 답" },
+    ],
+    last: missedRun, missed: { count: 2, at: missedRun.startedAt, jobId: "j1" }, nextRun: "2026-11-26T00:00:00.000Z" },
+    key: "local::C:/work/web", nodeId: "local", pc: "이 PC", folder: "web", executor: "Claude Code", profile: ".lepons/bots/정리봇.md",
+  },
+  { bot: { id: "b2", name: "리포트", fresh: false, jobs: [{ id: "k1", when: { minute: 5 }, cron: "5 * * * *", instructions: "x" }], runs: [] }, key: "local::C:/work/api::bot:리포트", nodeId: "local", pc: "이 PC", folder: "api", executor: "Codex", busy: "running" },
+  { bot: { id: "b3", name: "멈춘봇", fresh: false, paused: true, jobs: [{ id: "m1", when: { minute: 5 }, cron: "5 * * * *", instructions: "x" }],
+    runs: [{ jobId: "m1", startedAt: "2026-11-25T00:00:00.000Z", state: "missed" }], last: { jobId: "m1", startedAt: "2026-11-25T00:00:00.000Z", state: "missed" },
+    missed: { count: 1, at: "2026-11-25T00:00:00.000Z", jobId: "m1" } }, key: "local::C:/work/api::bot:멈춘봇", nodeId: "local", pc: "이 PC", folder: "api", executor: "Codex" },
+  { bot: { id: "b4", name: "빈봇", fresh: false, jobs: [], missed: { count: 1, at: "2026-11-25T00:00:00.000Z", jobId: "gone" } }, key: "local::C:/work/api::bot:빈봇", nodeId: "local", pc: "이 PC", folder: "api", executor: "Codex" },
+];
+const botCalls: unknown[][] = [];
 const writes: Array<[string, string[]]> = [];
 const answered: Array<[string, string, unknown]> = [];
 const kept: string[] = [];
@@ -588,4 +620,65 @@ test("a question told to wait from the phone: the PC hears which session, nothin
   assert.deepEqual(kept.at(-1), "local::C:/work/web");
   assert.equal((await post("/api/auto-keep", { s: "nope" }, token)).status, 404);
   assert.equal((await post("/api/auto-keep", { s: web })).status, 401);
+});
+
+test("the 봇 tab: each bot's state, jobs and runs in words and codes, never a run's answer or a path", async () => {
+  const token = await signIn();
+  const { bots } = (await get("/api/bots", token)).body as { bots: Array<Record<string, unknown>> };
+  assert.deepEqual(bots[0], {
+    id: "b1", name: "정리봇", pc: "이 PC", pcId: sessionId("pc\0local"), folder: "web", executor: "Claude Code", fresh: true, paused: false,
+    state: "missed", next: "2026-11-26T00:00:00.000Z",
+    last: { at: "2026-11-25T00:00:00.000Z", status: "missed" },
+    missed: { count: 2, at: "2026-11-25T00:00:00.000Z", jobId: "j1" },
+    jobs: [
+      { id: "j1", when: { minute: 0, hour: 9 }, text: "지난 하루 글감 모으기" },
+      { id: "j2", when: { minute: 30, hour: 8, days: [1] }, text: `${"가".repeat(79)}…` },
+    ],
+    // Newest first, as the 자동화 view has them; one edited away has no job text, and no answer or end reaches the phone.
+    runs: [
+      { at: "2026-11-25T00:00:00.000Z", status: "missed", jobText: "지난 하루 글감 모으기" },
+      { at: "2026-11-24T00:00:00.000Z", status: "skipped", reason: "busy" },
+      { at: "2026-11-23T00:00:00.000Z", status: "done", jobText: "지난 하루 글감 모으기" },
+    ],
+    profilePath: ".lepons/bots/정리봇.md",
+    sessionId: sessionId("local::C:/work/web"),
+  });
+  assert.deepEqual(bots.slice(0, 3).map((bot) => [bot.state, bot.sessionId === null, bot.last, bot.missed]), [
+    ["missed", false, bots[0]!.last, bots[0]!.missed],
+    ["running", true, null, null],
+    ["paused", true, { at: "2026-11-25T00:00:00.000Z", status: "missed" }, { count: 1, at: "2026-11-25T00:00:00.000Z", jobId: "m1" }],
+  ]);
+  assert.equal("profilePath" in bots[1]!, false);
+  const json = JSON.stringify(bots);
+  assert.equal(json.includes("AI가 쓴 답") || json.includes("C:/work") || json.includes("둘째 줄") || json.includes("endedAt") || json.includes("cron"), false);
+  assert.equal((await get("/api/bots")).status, 401);
+});
+
+test("the bot buttons: a known bot and job only, busy and paused told apart, the session's id to open", async () => {
+  const token = await signIn();
+  const ask = (path: string, body: Record<string, unknown>) => post(path, body, token).then((reply) => [reply.status, reply.body]);
+  botCalls.length = 0;
+  for (const path of ["/api/bots/run", "/api/bots/pause", "/api/bots/missed", "/api/bots/open"]) {
+    assert.deepEqual(await ask(path, { id: "nope", paused: true, run: true }), [404, { error: "bot" }], path);
+    assert.deepEqual(await ask(path, { id: 1 }), [404, { error: "bot" }], path);
+    assert.equal((await api.call({ method: "POST", path, token, body: "bad" })).status, 400);
+    assert.equal((await post(path, { id: "b1" })).status, 401);
+  }
+  assert.deepEqual(await ask("/api/bots/run", { id: "b1", jobId: "nope" }), [404, { error: "job" }]);
+  assert.deepEqual(await ask("/api/bots/run", { id: "b1" }), [200, { ok: true }]);
+  assert.deepEqual(await ask("/api/bots/run", { id: "b1", jobId: "j2" }), [200, { ok: true }]);
+  assert.deepEqual(await ask("/api/bots/run", { id: "b2" }), [409, { error: "busy" }]);
+  assert.deepEqual(await ask("/api/bots/run", { id: "b3" }), [409, { error: "paused" }]);
+  assert.deepEqual(await ask("/api/bots/pause", { id: "b1", paused: "yes" }), [400, { error: "paused" }]);
+  assert.deepEqual(await ask("/api/bots/pause", { id: "b1", paused: true }), [200, { ok: true }]);
+  assert.deepEqual(await ask("/api/bots/missed", { id: "b1" }), [400, { error: "run" }]);
+  assert.deepEqual(await ask("/api/bots/missed", { id: "b1", run: true }), [200, { ok: true }]);
+  assert.deepEqual(await ask("/api/bots/missed", { id: "b3", run: true }), [409, { error: "paused" }]);
+  assert.deepEqual(await ask("/api/bots/missed", { id: "b3", run: false }), [200, { ok: true }]);
+  assert.deepEqual(await ask("/api/bots/missed", { id: "b4", run: true }), [404, { error: "job" }], "nothing to run");
+  assert.deepEqual(await ask("/api/bots/open", { id: "b2" }), [200, { sessionId: sessionId("local::C:/work/api::bot:리포트") }]);
+  assert.deepEqual(botCalls, [
+    ["run", "b1", undefined], ["run", "b1", "j2"], ["run", "b2", undefined],
+    ["pause", "b1", true], ["missed", "b1", true], ["missed", "b3", false], ["open", "b2"],
+  ]);
 });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { dropFolder, findPaths, resolvePath, typedPaths } from "./term-paths.ts";
+import { dropFolder, fileLinkPath, findPaths, resolvePath, typedPaths } from "./term-paths.ts";
 
 const paths = (line: string) => findPaths(line).map((found) => found.path);
 
@@ -68,4 +68,11 @@ test("dropped paths are typed quoted where the shell needs it", () => {
 test("a drop folder is in the other PC's temp", () => {
   assert.equal(dropFolder("/home/me", false, "ab12cd34"), "/tmp/lepons-drop-ab12cd34");
   assert.equal(dropFolder("C:/Users/me/", true, "ab12cd34"), "C:/Users/me/AppData/Local/Temp/lepons-drop-ab12cd34");
+});
+
+test("fileLinkPath: the path in a file:// link, its host dropped; anything else is no file", () => {
+  assert.equal(fileLinkPath("file:///Users/me/repo/src/a.ts"), "/Users/me/repo/src/a.ts");
+  assert.equal(fileLinkPath("file://yuno-MacBook-Pro.local/Users/me/%EC%82%B0%EC%B6%9C%EB%AC%BC/b.md"), "/Users/me/산출물/b.md");
+  assert.equal(fileLinkPath("file:///C:/Users/me/repo/a.md"), "C:/Users/me/repo/a.md");
+  assert.equal(fileLinkPath("https://example.com/a.ts"), undefined);
 });

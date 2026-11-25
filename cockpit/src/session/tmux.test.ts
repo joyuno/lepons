@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { sessionKey } from "../shared/ipc.ts";
 import { RESUME_WINDOW_SECONDS, sessionSweep, tmuxCommand, parseTmuxScroll, tmuxKillCommand, tmuxScope, tmuxScrollCommand, tmuxSearchPattern, tmuxSessionName } from "./tmux.ts";
 
 // Turning a session off has to end the one on screen. The scope carries the
@@ -159,4 +160,10 @@ test("a remote pane's search: copy mode, the text searched literally, the view r
   assert.equal(tmuxSearchPattern("a\\b"), "a\\\\b");
   assert.equal(tmuxSearchPattern("end;"), "end[;]");
   assert.match("x 1+1=2? y", new RegExp(tmuxSearchPattern("1+1=2?")), "the escaped text finds itself");
+});
+
+// A bot's tmux session is not the folder's: same repo, different name.
+test("a bot's tmux session differs from the folder's", () => {
+  const bot = tmuxSessionName(tmuxScope(sessionKey("n", "r", false, "라피드"), "claude"));
+  assert.notEqual(bot, tmuxSessionName(tmuxScope(sessionKey("n", "r"), "claude")));
 });

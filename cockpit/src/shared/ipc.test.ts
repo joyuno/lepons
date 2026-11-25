@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { machineLabel, osName } from "./ipc.ts";
+import { botOfKey, machineLabel, osName, sessionKey } from "./ipc.ts";
 import type { NodeConfig } from "./ipc.ts";
 
 const ssh = (destination: string): NodeConfig => ({
@@ -45,4 +45,22 @@ test("a PC's OS for the map: this PC's from the platform, another's only when co
   assert.equal(osName(local, ""), undefined);
   assert.equal(osName({ ...ssh("me@box"), windows: true } as NodeConfig, "MacIntel"), "Windows");
   assert.equal(osName(ssh("me@box"), "Win32"), undefined, "a Mac and a Linux box are not told apart");
+});
+
+// A bot is a session beside the folder's own: same folder, its own key, so
+// opening one never reattaches to (or closes) the folder's normal session.
+test("a bot's key is its own and carries its slug", () => {
+  const key = sessionKey("n", "r", false, "라피드");
+  assert.notEqual(key, sessionKey("n", "r"));
+  assert.ok(key.endsWith("::bot:라피드"));
+  assert.equal(botOfKey(key), "라피드");
+  assert.equal(botOfKey("n::r"), undefined);
+  assert.equal(botOfKey("n::r::terminal"), undefined);
+});
+
+// Reopening, restarting and activating a bot tab rebuild its key from the slug the key holds.
+test("a bot's key rebuilt from its slug is the same key, never the folder's", () => {
+  const key = sessionKey("n", "r", false, "라피드 마케팅");
+  assert.equal(sessionKey("n", "r", false, botOfKey(key)), key);
+  assert.notEqual(sessionKey("n", "r", false, botOfKey(key)), sessionKey("n", "r"));
 });

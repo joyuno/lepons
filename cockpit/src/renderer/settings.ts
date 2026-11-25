@@ -12,6 +12,7 @@ import { FONT_FAMILIES, FONT_SIZE, settingsTabs, type SettingsTab, type ThemeCho
 import { LLM_PLATFORMS, type LlmPlatform } from "../agent/local-llm.ts";
 import type { LlmKey } from "../main/llm-keys.ts";
 import { platformLogos } from "./agent-logos.ts";
+import { buttons, line } from "./automation.ts";
 
 /**
  * The settings window: one tab per setting down the left, that setting on
@@ -177,25 +178,6 @@ function radio(group: string, label: string, checked: boolean, pick: () => void)
   input.addEventListener("change", pick);
   row.append(input, label);
   return row;
-}
-
-function buttons(...list: Array<[label: string, click: () => void]>): HTMLDivElement {
-  const row = document.createElement("div");
-  row.className = "setButtons";
-  for (const [label, click] of list) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.addEventListener("click", click);
-    row.append(button);
-  }
-  return row;
-}
-
-function line(text: string): HTMLParagraphElement {
-  const p = document.createElement("p");
-  p.textContent = text;
-  return p;
 }
 
 /** One agent: its name, a state badge and the one button that moves it forward. */

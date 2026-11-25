@@ -52,6 +52,12 @@ function fullRing(end: string): string {
   return ring.bytes().toString("utf8");
 }
 
+test("a bot's session reaches the phone with the bot's name", async (t) => {
+  const { get } = setup(t, { sessions: () => [{ key: `${KEY}::bot:라피드`, nodeId: "local", repoId: "a", terminal: false, pc: "이 PC", folder: "a", mood: "idle", bot: "라피드" }] });
+  const { sessions } = (await get("/api/state")).body as { sessions: Array<{ bot?: string }> };
+  assert.equal(sessions[0]!.bot, "라피드");
+});
+
 test("a full screen used to be lost whole; its tail now reaches the phone, and what the phone reads off it", (t) => {
   const end = "\r\n❯ 1. Yes\r\n  2. No\r\n";
   const data = fullRing(end);

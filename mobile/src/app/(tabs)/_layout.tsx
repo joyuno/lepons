@@ -3,7 +3,7 @@ import { Redirect, router } from "expo-router";
 import { Tabs } from "expo-router/js-tabs";
 import { SymbolView, type AndroidSymbol, type SFSymbol } from "expo-symbols";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Appearance, Pressable, Text, useColorScheme, View, type ColorValue } from "react-native";
+import { Animated, Appearance, Platform, Pressable, Text, useColorScheme, View, type ColorValue } from "react-native";
 
 import { pcLabel, useConnection } from "@/connection";
 import { t } from "@/i18n";
@@ -13,10 +13,12 @@ import { tappedList, tappedPc, tappedSession } from "@/push";
 import { saveScheme } from "@/store";
 import { DemoBadge, font, Lamp, size, space, useTheme } from "@/ui";
 
-/** A tab's mark: an SF Symbol on iOS (filled when selected), a Material Symbol on Android. */
+/** A tab's mark: an SF Symbol on iOS (filled when selected), on Android the Material Symbol closest to it (SF Symbols are Apple's alone). */
 const icon = (ios: SFSymbol, iosFocused: SFSymbol, android: AndroidSymbol) =>
   ({ color, focused }: { color: unknown; focused: boolean }) => (
-    <SymbolView name={{ ios: focused ? iosFocused : ios, android }} tintColor={color as string} size={24} />
+    // On Android the symbol is a font glyph, and a box only as big as its size clipped its edges (an LG V40 showed it):
+    // a little room around it, the glyph the same size.
+    <SymbolView name={{ ios: focused ? iosFocused : ios, android }} tintColor={color as string} size={24} style={Platform.OS === "android" ? { width: 28, height: 28 } : undefined} />
   );
 
 /** A tab's word, heavier when selected. A label drawn here has no spoken name of its own, so each tab states one. */
@@ -157,11 +159,12 @@ export default function TabsLayout() {
         options={{
           title: t.sessions,
           tabBarAccessibilityLabel: t.sessions,
-          tabBarIcon: icon("list.bullet.rectangle", "list.bullet.rectangle.fill", "list"),
+          tabBarIcon: icon("list.bullet.rectangle", "list.bullet.rectangle.fill", "list_alt"),
           ...(waiting > 0 ? { tabBarBadge: waiting, tabBarBadgeStyle: { backgroundColor: p.live, color: p.onLive, transform: [{ scale: badgeScale as unknown as number }] } } : {}),
         }}
       />
-      <Tabs.Screen name="map" options={{ title: t.map, tabBarAccessibilityLabel: t.map, tabBarIcon: icon("point.3.connected.trianglepath.dotted", "point.3.filled.connected.trianglepath.dotted", "hub") }} />
+      <Tabs.Screen name="bots" options={{ title: t.bots, tabBarAccessibilityLabel: t.bots, tabBarIcon: icon("cpu", "cpu.fill", "smart_toy") }} />
+      <Tabs.Screen name="map" options={{ title: t.map, tabBarAccessibilityLabel: t.map, tabBarIcon: icon("point.3.connected.trianglepath.dotted", "point.3.filled.connected.trianglepath.dotted", "share") }} />
     </Tabs>
   );
 }

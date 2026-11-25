@@ -266,3 +266,15 @@ test("messages the agent joined into one row all land", () => {
   const list = [{ item: { kind: "user", text: "하나", at: 1 }, after: 0 }, { item: { kind: "user", text: "둘", at: 2 }, after: 0 }] as unknown as Waiting[];
   assert.equal(stillWaiting(list, [{ kind: "user", text: "하나\n둘", at: 5 }]).length, 0);
 });
+
+test("a long paste the PC typed in two pieces lands: the bubble goes once the transcript shows it", async () => {
+  const { chatFrom } = await import("./chat.ts");
+  const { unpasted } = await import("./pasted.ts");
+  const sent = "drwx------    2 admin  staff       64 Nov  6 12:40:30 2026 lepons-phone-outside-duRHmb\ndrwx------    3 admin  staff       96 Nov  1 03:35:07 2026 lepons-phone-test-w9PlWb";
+  // As Claude Code wrote it down: each typed piece its own paste, the second starting mid-word.
+  const row = "\n\n<pasted_content id=\"4b13\">\ndrwx------    2 admin  staff       64 Nov  6 12:40:30 2026 lepons-phone-outside-duRHmb drwx-\n</pasted_content id=\"4b13\">\n\n\n<pasted_content id=\"4b13\">\n-----    3 admin  staff       96 Nov  1 03:35:07 2026 lepons-phone-test-w9PlWb\n</pasted_content id=\"4b13\">";
+  const items = chatFrom([{ kind: "prompt", text: row, at: 2000 }]).map((item) => (item.kind === "user" ? { ...item, text: unpasted(item.text) } : item));
+  assert.equal(items[0]?.kind === "user" && items[0].text.includes("<pasted_content"), false);
+  const one: Waiting = { item: { kind: "user", text: sent, at: 1000 }, after: 1000, timer: setTimeout(() => undefined, 0) };
+  assert.deepEqual(stillWaiting([one], items), []);
+});

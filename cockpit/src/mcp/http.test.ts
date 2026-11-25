@@ -5,7 +5,8 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 import { startMcpEndpoint, type McpEndpoint } from "./http.ts";
 import { wireRepoId, type RepoCatalog, type SharedRepo } from "./catalog.ts";
-import type { DelegationHub } from "./server.ts";
+import type { BotRequest, BotUpdate, DelegationHub, ScheduleRequest } from "./server.ts";
+import { installSchedule, type ScheduleMachine } from "../agent/schedule.ts";
 import type { AgentKind } from "../agent/agents.ts";
 import { MemoryKnownHosts } from "../ssh/known-hosts.ts";
 
@@ -41,6 +42,41 @@ const hub: DelegationHub = {
   },
   check: async (id) =>
     id === "d-test" ? { ok: true, report: "status: ready\n• 작업 중" } : { ok: false, error: `unknown_delegation: ${id}` },
+  // The real install, against a machine that records every touch, with the operator saying no.
+  schedule: async (request) => {
+    scheduled.push(request);
+    const installed = await installSchedule(recorder, "/home/me", {
+      id: "s-test", folder: repo.root, when: request.when, cron: request.cron, command: "claude -p", instructions: request.instructions, name: "요약", executor: "claude",
+    }, async () => false);
+    return installed.ok ? { ok: true, id: "s-test", detail: "" } : { ok: false, error: installed.error };
+  },
+  schedules: async () => ({ ok: true, report: "No schedules." }),
+  unschedule: async (id) => ({ ok: false, error: `unknown_schedule: ${id}` }),
+  bot: async (request) => {
+    botCalls.push(request);
+    return { ok: false, error: "refused: the operator said no to this bot" };
+  },
+  bots: async () => ({ ok: true, report: "No bots." }),
+  updateBot: async (request) => {
+    updateCalls.push(request);
+    return { ok: false, error: "refused: the operator said no to this bot" };
+  },
+};
+
+const botCalls: BotRequest[] = [];
+const updateCalls: BotUpdate[] = [];
+
+const scheduled: ScheduleRequest[] = [];
+/** Every call a schedule makes on its machine. */
+const touched: string[] = [];
+const recorder: ScheduleMachine = {
+  windows: false,
+  run: async (command) => { touched.push(`run ${command}`); return { code: 0, output: "" }; },
+  makeDirs: async (path) => { touched.push(`mkdir ${path}`); },
+  overwrite: async (path) => { touched.push(`write ${path}`); return { ok: true }; },
+  readText: async (path) => { touched.push(`read ${path}`); return { ok: true, contents: undefined }; },
+  list: async (path) => { touched.push(`list ${path}`); return { ok: true, path, entries: [] }; },
+  read: async (path) => { touched.push(`read ${path}`); return undefined; },
 };
 
 let endpoint: McpEndpoint;
@@ -100,7 +136,69 @@ test("the token opens the tool surface", async () => {
   await client.close();
 
   const names = tools.map((tool) => tool.name).sort();
-  assert.deepEqual(names, ["check_delegation", "delegate_task", "list_repos", "read_file", "search_repo"]);
+  assert.deepEqual(names, [
+    "check_delegation", "create_bot", "delegate_task", "list_bots", "list_repos", "list_schedules", "read_file", "remove_schedule", "schedule_task", "search_repo", "update_bot",
+  ]);
+});
+
+test("a schedule the operator refuses writes nothing on the machine", async () => {
+  const client = await connectClient(endpoint.token);
+  try {
+    const result = await client.callTool({
+      name: "schedule_task",
+      arguments: { repo: repo.wireId, when: "weekdays 9:00", instructions: "어제 바뀐 것을 요약해 줘" },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /refused/);
+    assert.equal(scheduled.at(-1)?.cron, "0 9 * * 1,2,3,4,5", "the hub gets the timetable already normalised");
+    assert.deepEqual(touched, [], "nothing was written, run or even read before the yes");
+  } finally {
+    await client.close();
+  }
+});
+
+test("a bot the operator refuses writes nothing, and a bad timetable never reaches the hub", async () => {
+  const client = await connectClient(endpoint.token);
+  try {
+    const result = await client.callTool({
+      name: "create_bot",
+      arguments: { repo: repo.wireId, name: "리뷰어", role: "PR을 살핀다", jobs: [{ when: "daily 9:00", instructions: "어제 PR을 본다" }] },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /refused/);
+    assert.equal(botCalls.at(-1)?.jobs[0]?.when, "daily 9:00");
+    assert.equal(botCalls.at(-1)?.fresh, true, "a new conversation each run unless asked otherwise");
+    assert.deepEqual(touched, [], "nothing was written before the yes");
+    const before = botCalls.length;
+    const bad = await client.callTool({
+      name: "create_bot", arguments: { repo: repo.wireId, name: "x", role: "y", jobs: [{ when: "*/5 * * * *", instructions: "z" }] },
+    });
+    assert.equal(bad.isError, true);
+    assert.equal(botCalls.length, before);
+    const listed = await client.callTool({ name: "list_bots", arguments: {} });
+    assert.match((listed.content as Array<{ text: string }>)[0]!.text, /No bots/);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a timetable more often than hourly is refused before the hub hears of it", async () => {
+  const client = await connectClient(endpoint.token);
+  const before = scheduled.length;
+  try {
+    const result = await client.callTool({
+      name: "schedule_task", arguments: { repo: repo.wireId, when: "*/5 * * * *", instructions: "ping" },
+    });
+    assert.equal(result.isError, true);
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /too_often/);
+    assert.equal(scheduled.length, before);
+    const listed = await client.callTool({ name: "list_schedules", arguments: {} });
+    assert.match((listed.content as Array<{ text: string }>)[0]!.text, /No schedules/);
+    const removed = await client.callTool({ name: "remove_schedule", arguments: { id: "s-none" } });
+    assert.equal(removed.isError, true);
+  } finally {
+    await client.close();
+  }
 });
 
 test("a delegation reaches the hub only for a repository the caller can see", async () => {
@@ -212,5 +310,32 @@ test("a preferred port the OS refuses falls back instead of failing", async (t) 
     assert.ok(fallback.port > 0);
   } finally {
     await fallback.close();
+  }
+});
+
+test("create_bot passes fresh: false through when asked", async () => {
+  const client = await connectClient(endpoint.token);
+  try {
+    await client.callTool({ name: "create_bot", arguments: { repo: repo.wireId, name: "이어서", role: "r", fresh: false, jobs: [] } });
+    assert.equal(botCalls.at(-1)?.fresh, false);
+  } finally {
+    await client.close();
+  }
+});
+
+test("update_bot goes to the hub with only the fields given; a bad timetable never does", async () => {
+  const client = await connectClient(endpoint.token);
+  try {
+    const result = await client.callTool({ name: "update_bot", arguments: { id: "b-1", role: "새 역할" } });
+    assert.equal(result.isError, true);
+    assert.match((result.content as Array<{ text: string }>)[0]!.text, /refused/);
+    assert.deepEqual(updateCalls.at(-1), { id: "b-1", role: "새 역할" });
+    assert.deepEqual(touched, [], "nothing was written before the yes");
+    const before = updateCalls.length;
+    const bad = await client.callTool({ name: "update_bot", arguments: { id: "b-1", jobs: [{ when: "*/5 * * * *", instructions: "z" }] } });
+    assert.equal(bad.isError, true);
+    assert.equal(updateCalls.length, before);
+  } finally {
+    await client.close();
   }
 });

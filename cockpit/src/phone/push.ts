@@ -110,6 +110,11 @@ export function donePush(to: string, body: string) {
   return { to, title: "Lepons", body, data: { open: "sessions" }, channelId: "done", interruptionLevel: "passive", ttl: TTL_S, ...one };
 }
 
+/** A scheduled run's result (agent/schedule.ts): quiet like "all done", one slot per schedule so a PC back from a night off shows each. */
+export function schedulePush(to: string, id: string, title: string, body: string) {
+  return { ...donePush(to, body), title, collapseId: `lepons-${id}`, tag: `lepons-${id}` };
+}
+
 export const COALESCE_MS = 60_000;
 /** While someone is looking, how often to see whether they left with a question unanswered. */
 export const LOOK_AGAIN_MS = 15_000;

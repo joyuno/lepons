@@ -666,7 +666,7 @@ test("a local machine goes to the Trash it was given, and says when that fails",
   assert.deepEqual(await machine.remove("/x"), { ok: false, reason: "failed", detail: "bin is full" });
 });
 
-test("a PC over SSH answers for its tmux sessions in one command, and silence says nobody is gone", async () => {
+test("a PC over SSH answers for its tmux sessions in one command, and silence says nothing", async () => {
   const asked: string[] = [];
   let reply: { code: number; output: string } | undefined = { code: 0, output: "lepons-a 0\n@tmux 0\n" };
   let limit: number | undefined;
@@ -681,5 +681,5 @@ test("a PC over SSH answers for its tmux sessions in one command, and silence sa
   assert.ok(asked[0]!.includes("list-panes -a"));
   assert.ok(limit !== undefined, "an rc file that never ends must not hold up every later look");
   reply = undefined;
-  assert.deepEqual(await machine.agentsGone(probes), []);
+  assert.equal(await machine.agentsGone(probes), undefined);
 });

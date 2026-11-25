@@ -1,5 +1,6 @@
+import type { When } from "../agent/schedule.ts";
 import type { TokenStats } from "../agent/token-stats.ts";
-import type { PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflow, SessionWorkflowResult } from "../shared/ipc.ts";
+import type { BotRun, PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflow, SessionWorkflowResult } from "../shared/ipc.ts";
 import type { PcState } from "../shared/status.ts";
 import type { PhoneFileEntry } from "./docs.ts";
 import type { CommandSuggestion } from "./suggest.ts";
@@ -45,6 +46,8 @@ export interface PhoneSessionView {
   /** A worktree's session: the original folder's name, and the task's. */
   worktreeOf?: string;
   worktree?: string;
+  /** A bot's session: the bot's name. */
+  bot?: string;
   /** 자리 비움 기본 답: when the PC answers the question on screen by itself (epoch ms), and with which option. POST /api/auto-keep holds it. */
   auto?: { at: number; n: number; option: string };
 }
@@ -77,6 +80,46 @@ export interface PhoneState {
   folders?: PhoneFolder[];
   /** Absent when the PC has no usage reading. */
   usage?: PhoneUsage;
+}
+
+/** When a bot's job comes due, as the PC keeps it (agent/schedule.ts): the phone words it in its own language. */
+export type { When };
+
+/** How a bot's run ended. `reason` is the scheduler's code for a skip (busy, unreachable, paused, ...), never the AI's answer. */
+export type PhoneBotRunStatus = BotRun["state"];
+export interface PhoneBotRun { at: string; status: PhoneBotRunStatus; reason?: string; jobText?: string }
+
+/** Paused; a run typed and not ended; a run waiting for its session; a missed due time not yet settled; none of these. */
+export type PhoneBotState = "running" | "waiting" | "idle" | "paused" | "missed";
+
+/** A bot made in the PC's 자동화 view, as the phone's 봇 tab shows it. No paths but `profilePath`, relative to its folder. */
+export interface PhoneBot {
+  id: string;
+  name: string;
+  /** Its PC: the label, and the opaque id PhonePc has. */
+  pc: string;
+  pcId: string;
+  /** The folder's name, not its path. */
+  folder: string;
+  /** Its AI as the PC names it ("Claude Code"). */
+  executor: string;
+  /** A new conversation each run, not carrying on. */
+  fresh: boolean;
+  paused: boolean;
+  state: PhoneBotState;
+  /** Its next due time (ISO) within a week, paused or not; null when there is none. */
+  next: string | null;
+  last: { at: string; status: PhoneBotRunStatus; reason?: string } | null;
+  /** Due times passed while the PC or Lepons was off, not yet run or let go: how many, the latest, and its job. */
+  missed: { count: number; at: string; jobId: string } | null;
+  /** In the bot's order, its priority. `text`: the instructions' first line, cut at 80. */
+  jobs: Array<{ id: string; when: When; text: string }>;
+  /** The last ten, newest first. `jobText` is absent for a job since edited away. */
+  runs: PhoneBotRun[];
+  /** Its role and memory file, relative to its folder: only when the phone may open it (the PC's 숨김 폴더 보기), through `sessionId`. */
+  profilePath?: string;
+  /** Its session's id while it is in the list. */
+  sessionId: string | null;
 }
 
 /** A sign-in as the phone sees it: signed in, out, cannot tell, or not installed. */
@@ -156,6 +199,15 @@ export interface PhoneRoutes {
   "POST /api/close": { body: { s: string }; reply: { ok: true; here?: true } };
   /** A photo or file for `s`'s AI: the bytes in the message's `bin`, `n` its name on the phone; where the PC saved it. */
   "POST /api/upload": { query: "s&n"; reply: { path: string } };
+  /** The PC's bots, as its 자동화 view lists them. A PC older than this answers 404 "not found". */
+  "GET /api/bots": { reply: { bots: PhoneBot[] } };
+  /** 지금 실행: `jobId`, else its first job; it still waits for a quiet session. 409 "busy" while a run is under way, "paused" while paused. */
+  "POST /api/bots/run": { body: { id: string; jobId?: string }; reply: Ok };
+  "POST /api/bots/pause": { body: { id: string; paused: boolean }; reply: Ok };
+  /** The missed notice settled: its job run once (`run`), or let go. */
+  "POST /api/bots/missed": { body: { id: string; run: boolean }; reply: Ok };
+  /** The bot's session, opened on the PC unless it is running (as 세션으로 가기 opens it); its id, which reaches the list a moment later. */
+  "POST /api/bots/open": { body: { id: string }; reply: { sessionId: string } };
   /**
    * Opens the live stream (PhoneEvents); `s` also starts it with that session's
    * screen. `live=1` with it asks for that session's output in batches, and for "flow".

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { pcFailReason, pcState, sessionStatus, turnMark, turnsEnded } from "./status.ts";
+import { pcFailReason, pcState, sessionStatus, turnMark, turnsEnded, isTerminalReport } from "./status.ts";
 import type { SessionState } from "../session/state.ts";
 
 const closed = (reason: string): SessionState => ({ kind: "closed", reason } as SessionState);
@@ -80,4 +80,11 @@ test("a turn ends when a working session goes waiting, done or idle", () => {
   ] as const;
   assert.deepEqual(turnsEnded(before, now), ["a", "b", "c"]);
   assert.deepEqual(turnsEnded(new Map(), now), [], "nothing seen before, nothing ended");
+});
+
+test("terminal reports are not typing; keys and text are", () => {
+  for (const report of ["\x1b[I", "\x1b[O", "\x1b[<0;10;5M", "\x1b[?1;2c", "\x1b[>0;276;0c", "\x1b[12;40R", "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\"]) {
+    assert.equal(isTerminalReport(report), true, JSON.stringify(report));
+  }
+  for (const typed of ["a", "\r", "\x1b[A", "\x1b[3~", "\x1b", "/clear", "\x1b[1;5D"]) assert.equal(isTerminalReport(typed), false, JSON.stringify(typed));
 });

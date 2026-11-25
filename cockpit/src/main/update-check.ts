@@ -12,12 +12,14 @@ import { patchAssetName } from "./app-patch.ts";
  */
 export const LATEST_RELEASE_URL = "https://api.github.com/repos/joyuno/lepons/releases/latest";
 const RELEASE_PAGES = "https://github.com/joyuno/lepons/releases/";
+// A plain page, not the API: it is not rate limited and redirects to the latest tag's page.
+const LATEST_RELEASE_PAGE = "https://github.com/joyuno/lepons/releases/latest";
 const RELEASE_DOWNLOADS = "https://github.com/joyuno/lepons/releases/download/";
 
 export type UpdateCheck =
   | { kind: "newer"; latest: string; url: string; installer?: ReleaseFile; patch?: ReleaseFile }
   | { kind: "current"; latest: string }
-  | { kind: "failed"; detail: string };
+  | { kind: "failed"; detail: string; resetAt?: number };
 
 /**
  * True when `candidate` is a later x.y.z than `current`. A test build
@@ -61,6 +63,33 @@ function verifiedAsset(assets: unknown, wanted: (name: string) => boolean): Rele
   return undefined;
 }
 
+/**
+ * The API said no (anonymous callers get 60 an hour per address, then 403).
+ * The latest-release page still answers: read the version off the address it
+ * lands on. There is no asset list there, so only the page is offered.
+ */
+async function viaReleasePage(refused: Response, current: string, get: (url: string) => Promise<Response>): Promise<UpdateCheck> {
+  const detail = `HTTP ${refused.status}`;
+  try {
+    const page = await get(LATEST_RELEASE_PAGE);
+    const tag = page.ok ? /^https:\/\/github\.com\/joyuno\/lepons\/releases\/tag\/([^/?#]+)$/.exec(page.url)?.[1] : undefined;
+    if (tag) {
+      const latest = decodeURIComponent(tag).replace(/^v/, "");
+      return isNewer(latest, current) ? { kind: "newer", latest, url: page.url } : { kind: "current", latest };
+    }
+  } catch {
+    // Same as the page not answering: report the API's refusal below.
+  }
+  // As GitHub's docs say: retry-after (seconds from now) when given, else the reset time only when none are left.
+  // A 403 with neither is some other refusal, said as it is.
+  const reset = Number(refused.headers.get("x-ratelimit-reset"));
+  const wait = Number(refused.headers.get("retry-after"));
+  const resetAt = wait > 0 ? Date.now() + wait * 1000 : refused.headers.get("x-ratelimit-remaining") === "0" && reset > 0 ? reset * 1000 : 0;
+  return refused.status === 403 || refused.status === 429
+    ? { kind: "failed", detail, ...(resetAt > 0 ? { resetAt: Math.max(resetAt, Date.now()) } : {}) }
+    : { kind: "failed", detail };
+}
+
 export async function checkForUpdate(
   current: string,
   // GitHub refuses API requests that carry no User-Agent.
@@ -74,7 +103,7 @@ export async function checkForUpdate(
 ): Promise<UpdateCheck> {
   try {
     const response = await get(LATEST_RELEASE_URL);
-    if (!response.ok) return { kind: "failed", detail: `HTTP ${response.status}` };
+    if (!response.ok) return await viaReleasePage(response, current, get);
     type Release = { tag_name?: unknown; html_url?: unknown; assets?: unknown } | null;
     let release: Release;
     try {

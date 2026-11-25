@@ -5,15 +5,13 @@
  * A project is a folder on a PC -- `sessionKey(node, repo)` -- or the PC alone
  * for a file outside every listed folder. A pane holds one project's tabs.
  */
-import { sessionKey } from "../shared/ipc.ts";
+import { projectOf, sessionKey } from "../shared/ipc.ts";
+
+export { projectOf };
 
 export interface LeafView { id: string; project: string | null; tabs: number }
 export type Placement = { pane: string } | { split: string } | { blocked: true };
 
-/** A session's project: its folder's key, the folder's own terminal included. */
-export function projectOf(key: string): string {
-  return key.endsWith("::terminal") ? key.slice(0, -"::terminal".length) : key;
-}
 
 /** The deepest listed folder holding `path`; the machine itself when none does. */
 export function projectOfFile(repos: ReadonlyArray<{ id: string; path: string }>, nodeId: string, path: string): string {

@@ -14,6 +14,7 @@ import { useConnection, useTermSize } from "@/connection";
 import { fmt, t } from "@/i18n";
 import { Appear, Crossfade, ms, Press, TypingDots, useReducedMotion } from "@/motion";
 import { chatFrom, type ChatItem } from "@/phone/chat";
+import { unpasted } from "@/phone/pasted";
 import { firstDrawn, sameRow, stillAtBottom, type Flow } from "@/phone/chat-rows";
 import { LinkNotice } from "@/link-notice";
 import { fetchFile, openInViewer, openPrinted, printedFolder } from "@/open-file";
@@ -348,7 +349,8 @@ function ChatView(props: { id: string; flow: Flow | undefined; working: boolean;
   const [anchor, setAnchor] = useState<string | undefined>();
   const { items, runs } = useMemo(() => {
     const events = props.flow ? typedEvents(props.flow.events) : [];
-    return { items: chatFrom(events), runs: toolLabels(events) };
+    // The prompt as typed, not as Claude Code filed a paste (pasted.ts): drawn so, and matched to its bubble so.
+    return { items: chatFrom(events).map((item) => (item.kind === "user" ? { ...item, text: unpasted(item.text) } : item)), runs: toolLabels(events) };
   }, [props.flow]);
   const keys = useMemo(() => chatKeys(items), [items]);
   const start = firstDrawn(keys, anchor, CHAT_PAGE);
@@ -767,6 +769,9 @@ const TERM = { bg: "#11161d", bar: "#0b0f14", fg: "#cdd6e0", dim: "#6e7681", lin
  * from the chat: no keys, no menu, nothing of the agent's. What is typed shows at the end of
  * the screen with a cursor, as in a terminal, but reaches the PC only when it is sent.
  */
+/** About what the PC sends (its last 60 KB, cockpit/src/phone/server.ts MAX_SCREEN_JSON), so all of it can be scrolled back to. */
+const TERM_LINES = 1000;
+
 function TerminalView({ id }: { id: string }) {
   const c = useConnection();
   const { c: p, s } = useSessionTheme();
@@ -778,7 +783,10 @@ function TerminalView({ id }: { id: string }) {
   const [note, setNote] = useState("");
   const [typing, setTyping] = useState(false);
   const scroll = useRef<ScrollViewInstance>(null);
+  /** Following the newest line; only the person's own scrolling turns it off or on. */
   const atBottom = useRef(true);
+  const viewport = useRef(0);
+  const contentHeight = useRef(0);
   const colors = useRef({ ansi: ansiDark, fg: TERM.fg, bg: TERM.bg });
 
   useEffect(() => {
@@ -810,7 +818,7 @@ function TerminalView({ id }: { id: string }) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const paint = () => {
       timer = undefined;
-      if (term) setLines(termLines(term, colors.current));
+      if (term) setLines(termLines(term, colors.current, TERM_LINES));
     };
     const schedule = () => {
       timer ??= setTimeout(paint, 150);
@@ -819,7 +827,7 @@ function TerminalView({ id }: { id: string }) {
       const screen = screenOf(data);
       if (!screen) return;
       term?.dispose();
-      term = new Terminal({ cols: screen.cols, rows: screen.rows, scrollback: 500, allowProposedApi: true });
+      term = new Terminal({ cols: screen.cols, rows: screen.rows, scrollback: TERM_LINES, allowProposedApi: true });
       term.write(screen.data, schedule);
     });
     const offOutput = c.on("output", (data) => {
@@ -840,6 +848,9 @@ function TerminalView({ id }: { id: string }) {
     const line = text;
     setText("");
     setNote("");
+    // What was just typed and its answer are what the person looks at next.
+    atBottom.current = true;
+    toEnd();
     const back = (why: string) => {
       setNote(why);
       setText((now) => now || line);
@@ -853,8 +864,11 @@ function TerminalView({ id }: { id: string }) {
     }
   };
 
-  const follow = () => {
-    if (atBottom.current) scroll.current?.scrollToEnd({ animated: false });
+  // To the prompt by the heights the events give, not scrollToEnd: while the keyboard moves, scrollToEnd measured the old
+  // height and left the newest lines, the prompt among them, under the keyboard (the chat does the same, above).
+  const toEnd = () => scroll.current?.scrollTo({ y: Math.max(0, contentHeight.current - viewport.current), animated: false });
+  const atEnd = (e: { contentOffset: { y: number }; layoutMeasurement: { height: number }; contentSize: { height: number } }) => {
+    atBottom.current = e.contentOffset.y + e.layoutMeasurement.height >= e.contentSize.height - 24;
   };
   // Made again only when the screen changes, not on every key typed below it.
   const screen = useMemo(() => lines.map((runs, i) => (
@@ -876,12 +890,18 @@ function TerminalView({ id }: { id: string }) {
         style={{ flex: 1, backgroundColor: TERM.bg }}
         contentContainerStyle={{ padding: space.md }}
         keyboardShouldPersistTaps="handled"
-        scrollEventThrottle={100}
-        onScroll={({ nativeEvent: e }) => {
-          atBottom.current = e.contentOffset.y + e.layoutMeasurement.height >= e.contentSize.height - 24;
+        scrollToOverflowEnabled
+        // Only the person's own scrolling decides it: a jump made by new output or the keyboard must not stop the following.
+        onScrollEndDrag={({ nativeEvent: e }) => atEnd(e)}
+        onMomentumScrollEnd={({ nativeEvent: e }) => atEnd(e)}
+        onContentSizeChange={(_w, h) => {
+          contentHeight.current = h;
+          if (atBottom.current) toEnd();
         }}
-        onContentSizeChange={follow}
-        onLayout={follow}
+        onLayout={({ nativeEvent: { layout } }) => {
+          viewport.current = layout.height;
+          if (atBottom.current) toEnd();
+        }}
       >
         {termId === null ? <Text style={[s.empty, { color: TERM.dim }]}>{t.terminalFailed}</Text>
         : !ready ? <Text style={[s.empty, { color: TERM.dim }]}>{t.terminalOpening}</Text>
@@ -902,7 +922,7 @@ function TerminalView({ id }: { id: string }) {
             style={{ flex: 1, minHeight: 44, paddingVertical: space.sm, fontFamily: mono, fontSize: size.callout, color: TERM.fg }}
             value={text}
             onChangeText={setText}
-            onFocus={() => { setTyping(true); atBottom.current = true; follow(); }}
+            onFocus={() => { setTyping(true); atBottom.current = true; toEnd(); }}
             onBlur={() => setTyping(false)}
             onSubmitEditing={() => void submit()}
             submitBehavior="submit"
@@ -1463,7 +1483,8 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
     try {
       picked = await pick(kind);
     } catch {
-      setNote({ text: t.attachFailed, bad: true });
+      // Nothing went to the PC: the camera or a picker did not open.
+      setNote({ text: kind === "camera" ? t.cameraFailed : t.attachFailed, bad: true });
       return;
     }
     if (picked === "denied") {

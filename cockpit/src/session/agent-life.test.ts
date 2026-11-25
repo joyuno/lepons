@@ -1,9 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { confirmGone, shellsAlone, spacedLooks, tmuxGone } from "./agent-life.ts";
+import { agentSettled, confirmGone, recordLook, shellsAlone, spacedLooks, tmuxGone } from "./agent-life.ts";
 
 const shells = [{ key: "a", pid: 10 }, { key: "b", pid: 20 }];
+
+test("an AI is settled only once a look after its current launch found it, and not after one that lists it gone", () => {
+  const seen = new Map<string, number>();
+  assert.equal(agentSettled(seen, "a", 100, false), false, "never looked at");
+  recordLook(seen, new Map([["a", 100]]), []);
+  assert.equal(agentSettled(seen, "a", 100, false), true);
+  assert.equal(agentSettled(seen, "a", 100, true), false, "known gone");
+  assert.equal(agentSettled(seen, "a", undefined, false), false, "no watch");
+  // Relaunched while a look was out: that look saw the launch before.
+  recordLook(seen, new Map([["a", 100]]), []);
+  assert.equal(agentSettled(seen, "a", 200, false), false, "a relaunch racing a look");
+  recordLook(seen, new Map([["a", 200]]), []);
+  assert.equal(agentSettled(seen, "a", 200, false), true);
+  // A look that could not be made changes nothing either way.
+  recordLook(seen, new Map([["a", 200]]), undefined);
+  assert.equal(agentSettled(seen, "a", 200, false), true, "a failed look");
+  // The first read listing it gone unsettles it, before the re-read confirms.
+  recordLook(seen, new Map([["a", 200]]), ["a"]);
+  assert.equal(agentSettled(seen, "a", 200, false), false, "gone in a first read");
+});
 
 test("a shell with no child has lost its AI; one with any child has not", async () => {
   assert.deepEqual(await shellsAlone(shells, async () => "20\r\n", "win32"), ["a"]);
@@ -12,7 +32,7 @@ test("a shell with no child has lost its AI; one with any child has not", async 
 });
 
 test("a process list that cannot be read says nothing", async () => {
-  assert.deepEqual(await shellsAlone(shells, async () => { throw new Error("no powershell"); }, "win32"), []);
+  assert.deepEqual(await shellsAlone(shells, async () => { throw new Error("no powershell"); }, "win32"), undefined);
 });
 
 test("only sessions with a process here are asked about, and nothing is run for none", async () => {
@@ -46,12 +66,12 @@ test("no tmux server running means every session is gone", () => {
 });
 
 test("a failure that is not tmux saying so tells nothing", () => {
-  assert.deepEqual(tmuxGone("bash: tmux: command not found\n@tmux 127\n", tmuxProbes), []);
-  assert.deepEqual(tmuxGone("error connecting to /tmp/tmux-1000/default (Permission denied)\n@tmux 1\n", tmuxProbes), []);
-  assert.deepEqual(tmuxGone("", tmuxProbes), [], "the shell never got as far as the marker");
-  assert.deepEqual(tmuxGone("lepons-api-claude-bfbe0f34 0\n", tmuxProbes), [], "cut off before the marker");
-  assert.deepEqual(tmuxGone("tmux: error while loading shared libraries: libevent-2.1.so.7: cannot open shared object file: No such file or directory\n@tmux 127\n", tmuxProbes), [], "a tmux that cannot start, with its server still up");
-  assert.deepEqual(tmuxGone("bash: /opt/bin/tmux: No such file or directory\n@tmux 127\n", tmuxProbes), [], "a tmux that moved");
+  assert.deepEqual(tmuxGone("bash: tmux: command not found\n@tmux 127\n", tmuxProbes), undefined);
+  assert.deepEqual(tmuxGone("error connecting to /tmp/tmux-1000/default (Permission denied)\n@tmux 1\n", tmuxProbes), undefined);
+  assert.deepEqual(tmuxGone("", tmuxProbes), undefined, "the shell never got as far as the marker");
+  assert.deepEqual(tmuxGone("lepons-api-claude-bfbe0f34 0\n", tmuxProbes), undefined, "cut off before the marker");
+  assert.deepEqual(tmuxGone("tmux: error while loading shared libraries: libevent-2.1.so.7: cannot open shared object file: No such file or directory\n@tmux 127\n", tmuxProbes), undefined, "a tmux that cannot start, with its server still up");
+  assert.deepEqual(tmuxGone("bash: /opt/bin/tmux: No such file or directory\n@tmux 127\n", tmuxProbes), undefined, "a tmux that moved");
 });
 
 test("an rc file's title with no newline does not hide the first pane", () => {

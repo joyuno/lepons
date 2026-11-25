@@ -1,4 +1,5 @@
 import { posixQuote } from "../session/state.ts";
+import { pickScript } from "./owner.ts";
 
 /** What heldRecord gives: whole lines from the record's end back, and whether they go back to its start. */
 export interface HeldText { text: string; whole: boolean }
@@ -6,13 +7,13 @@ export interface HeldText { text: string; whole: boolean }
 type Run = (script: string) => Promise<string | undefined>;
 
 /**
- * The newest Claude record in a folder on another machine, kept here and grown: each read fetches only what
+ * The newest Claude record in a folder on another machine, the bot `bot`'s or with none a person's (owner.ts), kept here and grown: each read fetches only what
  * was written since the one before, and earlier parts only as far back as `bytes` asks. The whole
  * record is often tens of MB, mostly tool output; the phone's newest 50 events fit in a few.
  * Held as whole lines from byte `start` to byte `end` of the file, so pieces join where lines do.
  * `run` gives a command's output, or undefined when the machine cannot be asked.
  */
-export function heldRecord(dir: string): (bytes: number, run: Run) => Promise<HeldText | undefined> {
+export function heldRecord(dir: string, bot?: string): (bytes: number, run: Run) => Promise<HeldText | undefined> {
   let held: { file: string; start: number; end: number; text: string } | undefined;
   /** Bytes [from, to) of the file, starting at the first line that begins after `from` (unless from is 0): that start, then the text. */
   const range = (file: string, from: number, to: number) => {
@@ -37,7 +38,7 @@ export function heldRecord(dir: string): (bytes: number, run: Run) => Promise<He
   async function read(bytes: number, run: Run): Promise<HeldText | undefined> {
     const known = held;
     const grow = known ? `if [ "$f" = ${posixQuote(known.file)} ] && [ $s -ge ${known.end} ]; then tail -c +${known.end + 1} "$f" | head -c $((s-${known.end})); fi` : "true";
-    const output = await run(`{ f=$(ls -t ${posixQuote(dir)}/*.jsonl | head -1); [ -n "$f" ] || exit 0; s=$(wc -c < "$f" | tr -d ' '); printf '%s\\n%s\\n' "$f" "$s"; ${grow}; } 2>/dev/null`);
+    const output = await run(`{ f=$(${pickScript(`${posixQuote(dir)}/*.jsonl`, bot)}); [ -n "$f" ] || exit 0; s=$(wc -c < "$f" | tr -d ' '); printf '%s\\n%s\\n' "$f" "$s"; ${grow}; } 2>/dev/null`);
     if (output === undefined) return undefined;
     const [file, rest] = split(output);
     const [sizeLine, added] = split(rest);

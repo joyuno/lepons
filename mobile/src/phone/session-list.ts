@@ -1,6 +1,6 @@
 import { byUrgency, underOriginals, type Mood, type PcState } from "./types.ts";
 
-type Session = { id: string; pc: string; folder: string; mood: Mood; agentGone?: boolean; worktreeOf?: string; worktree?: string };
+type Session = { id: string; pc: string; folder: string; mood: Mood; agentGone?: boolean; worktreeOf?: string; worktree?: string; bot?: string };
 type Folder = { id: string; pc: string; folder: string; worktreeOf?: string };
 type Pc = { id?: string; label: string; state: PcState };
 
@@ -14,10 +14,11 @@ export interface ListGroup<S, F> { pc: string; state?: PcState; pcId?: string; r
  * its open sessions by urgency, then its closed ones -- each worktree under
  * its original folder, open or closed. A worktree whose original is not in
  * its PC's part (waiting above, say) stands on its own. PCs keep the PC's order.
+ * A bot's session lives under the 봇 tab: here only while it waits for an answer.
  */
 export function sessionList<S extends Session, F extends Folder>(sessions: readonly S[], folders: readonly F[], pcs: readonly Pc[]) {
   const waiting = underOriginals(sessions.filter((one) => one.mood === "waiting"));
-  const rest = byUrgency(sessions.filter((one) => one.mood !== "waiting"));
+  const rest = byUrgency(sessions.filter((one) => one.mood !== "waiting" && !one.bot));
   const labels = [...new Set([...pcs.map((pc) => pc.label), ...rest.map((one) => one.pc), ...folders.map((one) => one.pc)])];
   const groups = labels.flatMap((label): Array<ListGroup<S, F>> => {
     const entries = [

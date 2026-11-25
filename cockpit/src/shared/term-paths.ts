@@ -35,6 +35,21 @@ function withoutParticle(text: string): string {
   return particle.length > 1 || !/\p{Script=Hangul}/u.test(before) ? text.slice(0, -particle.length) : text;
 }
 
+/**
+ * The path in a file:// link a program marked up (OSC 8): Claude Code links the files it names that way. The host,
+ * when there is one, is the PC the session runs on, so it is dropped; "/C:/x" is a Windows path. Undefined for any
+ * other address.
+ */
+export function fileLinkPath(url: string): string | undefined {
+  if (!/^file:\/\//i.test(url)) return undefined;
+  try {
+    const path = decodeURIComponent(new URL(url).pathname);
+    return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `folder` is what it looks like, not what it is: a file may have no extension (/usr/bin/node). Its `path` has no slash at the end. */
 export function findPaths(line: string): Array<{ index: number; text: string; path: string; folder?: true }> {
   const files = [...line.matchAll(pathPattern)].flatMap((match) => {

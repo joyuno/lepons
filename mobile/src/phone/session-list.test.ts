@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sessionList } from "./session-list.ts";
+import { folderName } from "./types.ts";
+import { stateOf } from "./validate.ts";
 import type { Mood } from "./types.ts";
 
 const s = (id: string, pc: string, folder: string, mood: Mood, worktreeOf?: string) => ({ id, pc, folder, mood, ...(worktreeOf ? { worktreeOf, worktree: folder } : {}) });
@@ -32,4 +34,16 @@ test("a worktree whose original is not in its PC's part stands alone; a PC with 
   assert.deepEqual(groups.map((group) => group.pc), ["A"]);
   assert.deepEqual(groups[0]!.rows.map((row) => [row.kind, row.nested]), [["session", false]]);
   assert.equal(groups[0]!.state, undefined);
+});
+
+test("a bot's session is kept by the reader, named for its bot, and listed only while it waits (the 봇 tab has it)", () => {
+  const state = stateOf({ sessions: [
+    { id: "ab", pc: "A", folder: "app", mood: "idle", agent: true, bot: "라피드" },
+    { id: "cd", pc: "A", folder: "app", mood: "waiting", agent: true, bot: "정리봇" },
+    { id: "ef", pc: "A", folder: "app", mood: "idle", agent: true },
+  ], pcs: [], folders: [] });
+  assert.equal(state!.sessions[0]!.bot, "라피드");
+  const { waiting, groups } = sessionList(state!.sessions, [], []);
+  assert.deepEqual(waiting.map(({ session }) => folderName(session)), ["정리봇 · app"]);
+  assert.deepEqual(groups[0]!.rows.map((row) => row.kind === "session" && row.session.id), ["ef"]);
 });

@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import type { PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
+import type { BotRow, BotRun, PhoneAnswer, PhoneAnswerResult, PhoneSession, SessionWorkflowResult, WorkflowItem } from "../shared/ipc.ts";
 import type { PcState } from "../shared/status.ts";
 import { answersOf } from "./answer.ts";
 import { passwordMatches, type PhoneAuth } from "./auth.ts";
 import type { CommandSuggestion } from "./suggest.ts";
-import type { AccountState, PhoneEvent, PhoneEvents, PhoneFailure, PhoneRoute, PhoneScreen, PhoneSessionView, PhonePc, PhoneState, PhoneUsage, PhoneUsageWindow, QueryName, ReplyOf, Unproven } from "./contract.ts";
+import type { AccountState, PhoneBot, PhoneEvent, PhoneEvents, PhoneFailure, PhoneRoute, PhoneScreen, PhoneSessionView, PhonePc, PhoneState, PhoneUsage, PhoneUsageWindow, QueryName, ReplyOf, Unproven } from "./contract.ts";
 import { extensionOf, safePath, viewTypes, type PhoneFileEntry } from "./docs.ts";
 import { validPushToken } from "./push.ts";
 import { inputFor } from "./input.ts";
@@ -124,6 +124,59 @@ export interface PhoneDeps {
   signedIn(count: number): void;
   /** The paired phone's Expo push token, already checked; undefined forgets it. `done`: the all-done push is wanted. */
   pushToken(token: string | undefined, done: boolean): void;
+  /** The bots made on this PC and what its scheduler is doing for each (main/bot-scheduler.ts). */
+  bots(): BotSource[];
+  /** The 자동화 view's own buttons (main/index.ts). runBot and settleMissed throw "busy: ..." while a run is under way. */
+  runBot(id: string, jobId?: string): Promise<void>;
+  pauseBot(id: string, paused: boolean): void;
+  settleMissed(id: string, run: boolean): Promise<void>;
+  /** Opens the bot's session on its PC unless it is running, as 세션으로 가기 does. */
+  openBot(id: string): void;
+}
+
+/** One bot as main hands it over: the 자동화 view's row of it (index.ts botRow), and where it is. botView makes the phone's PhoneBot of it. */
+export interface BotSource {
+  bot: Pick<BotRow, "id" | "name" | "fresh" | "paused" | "jobs" | "nextRun" | "last" | "runs" | "missed">;
+  /** Its session's key (sessionKey's). */
+  key: string;
+  nodeId: string;
+  pc: string;
+  folder: string;
+  executor: string;
+  busy?: "running" | "waiting";
+  /** The profile file relative to the folder, when the phone may open it. */
+  profile?: string;
+}
+
+/** The first line of a job's instructions, at most 80 characters. */
+const jobLine = (text: string): string => {
+  const chars = [...(text.trim().split("\n")[0] ?? "").trim()];
+  return chars.length > 80 ? `${chars.slice(0, 79).join("")}…` : chars.join("");
+};
+
+/**
+ * What the phone is told of a bot: the 자동화 view's row less what is not the phone's -- a run's answer, its end, paths
+ * -- with each run's job by its first line. `open`: its session is in the list.
+ */
+export function botView(source: BotSource, open: boolean): PhoneBot {
+  const { bot } = source;
+  const run = ({ startedAt, state, reason }: BotRun) => ({ at: startedAt, status: state, ...(reason ? { reason } : {}) });
+  const text = (jobId: string) => {
+    const job = bot.jobs.find((one) => one.id === jobId);
+    return job ? { jobText: jobLine(job.instructions) } : {};
+  };
+  return {
+    id: bot.id, name: bot.name, pc: source.pc, pcId: sessionId(`pc\0${source.nodeId}`), folder: source.folder, executor: source.executor,
+    fresh: bot.fresh, paused: bot.paused === true,
+    state: bot.paused ? "paused" : source.busy ?? (bot.missed ? "missed" : "idle"),
+    next: bot.nextRun ?? null,
+    last: bot.last ? run(bot.last) : null,
+    missed: bot.missed ? { ...bot.missed } : null,
+    jobs: bot.jobs.map((job) => ({ id: job.id, when: job.when, text: jobLine(job.instructions) })),
+    runs: (bot.runs ?? []).slice(0, 10).map((each) => ({ ...run(each), ...text(each.jobId) })),
+    ...(source.profile ? { profilePath: source.profile } : {}),
+    sessionId: open ? sessionId(source.key) : null,
+  };
 }
 
 const moodOrder: PhoneSession["mood"][] = ["waiting", "failed", "working", "done", "idle"];
@@ -254,6 +307,7 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         ...(session.mainFree ? { mainFree: true } : {}),
         ...(session.worktreeOf === undefined ? {} : { worktreeOf: session.worktreeOf, ...(session.worktree === undefined ? {} : { worktree: session.worktree }) }),
         ...(session.auto ? { auto: session.auto } : {}),
+        ...(session.bot ? { bot: session.bot } : {}),
       }))
       .sort((a, b) => moodOrder.indexOf(a.mood) - moodOrder.indexOf(b.mood)),
     pcs: pcList().map(({ id, label, state }): PhonePc => ({ id, label, state })),
@@ -586,6 +640,51 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
       if (result === "bad") return fail(400, "answers");
       liveInput(key);
       return ok(at, result);
+    }
+
+    // The 봇 tab: the 자동화 view's list and its buttons, by the bot's id.
+    if (at === "GET /api/bots") {
+      const open = new Set(deps.sessions().map((session) => session.key));
+      return ok(at, { bots: deps.bots().map((source) => botView(source, open.has(source.key))) });
+    }
+    if (at === "POST /api/bots/run" || at === "POST /api/bots/pause" || at === "POST /api/bots/missed" || at === "POST /api/bots/open") {
+      if (body === "bad") return fail(400, "body");
+      const fields = (body ?? {}) as Unproven<"POST /api/bots/run"> & Unproven<"POST /api/bots/pause"> & Unproven<"POST /api/bots/missed">;
+      const found = typeof fields.id === "string" ? deps.bots().find((one) => one.bot.id === fields.id) : undefined;
+      if (!found) return fail(404, "bot");
+      const { id } = found.bot;
+      /** A run under way refuses another: the phone says so, as the PC does. */
+      const running = async (start: () => Promise<void>) => {
+        try {
+          await start();
+          return ok("POST /api/bots/run", { ok: true });
+        } catch (error) {
+          return /^busy/.test(error instanceof Error ? error.message : "") ? fail(409, "busy") : fail(500, "run");
+        }
+      };
+      if (at === "POST /api/bots/open") {
+        deps.openBot(id);
+        return ok(at, { sessionId: sessionId(found.key) });
+      }
+      if (at === "POST /api/bots/pause") {
+        if (typeof fields.paused !== "boolean") return fail(400, "paused");
+        deps.pauseBot(id, fields.paused);
+        return ok(at, { ok: true });
+      }
+      // Paused, a run would only be called off (the PC offers none either).
+      if (at === "POST /api/bots/missed") {
+        if (typeof fields.run !== "boolean") return fail(400, "run");
+        if (fields.run && found.bot.paused) return fail(409, "paused");
+        // Its missed job, or its first if an edit took that away: none at all is nothing to run.
+        if (fields.run && found.bot.jobs.length === 0) return fail(404, "job");
+        return running(() => deps.settleMissed(id, fields.run as boolean));
+      }
+      at satisfies "POST /api/bots/run";
+      const jobId = fields.jobId;
+      if (jobId !== undefined && !found.bot.jobs.some((job) => job.id === jobId)) return fail(404, "job");
+      if (found.bot.jobs.length === 0) return fail(404, "job");
+      if (found.bot.paused) return fail(409, "paused");
+      return running(() => deps.runBot(id, jobId as string | undefined));
     }
 
     // Every route is served above but the stream, which is the bridge's.

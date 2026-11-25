@@ -6,7 +6,14 @@
     <atom:link href="https://lepons.app/rss.xml" rel="self" type="application/rss+xml"/>
     <description>여러 PC의 AI 코딩 세션(Claude Code, Codex 등)을 한 화면에서 보고 폰으로 이어서 답하는 무료 앱 Lepons의 소식이에요.</description>
     <language>ko</language>
-    <lastBuildDate>Mon, 23 Nov 2026 17:00:00 +0900</lastBuildDate>
+    <lastBuildDate>Wed, 25 Nov 2026 19:00:00 +0900</lastBuildDate>
+    <item>
+      <title>Lepons 1.11.0: 봇과 자동화 화면, 모든 PC의 예약 작업 한곳에서</title>
+      <link>https://lepons.app/#download</link>
+      <guid isPermaLink="false">lepons-1.11.0</guid>
+      <pubDate>Wed, 25 Nov 2026 19:00:00 +0900</pubDate>
+      <description>이름과 역할이 있는 봇이 정해 둔 시각마다 PC의 세션에서 할 일을 하고 끝나면 폰으로 알려 줘요. 자동화 화면에서는 봇과 모든 PC의 예약 작업, Claude 루틴, Codex 자동 실행을 한곳에서 보고 멈추거나 바로 실행할 수 있어요. 알아보기 어려운 작업 이름은 읽기 쉽게 정리하고 출처를 표시해요. 폰 앱 1.0.6에는 봇 탭이 생겨요. 탐색기에서 "Lepons로 열기"도 할 수 있어요.</description>
+    </item>
     <item>
       <title>Lepons 1.10.18: 줄바뀐 경로 열기, 원격 칸 반복 출력 수정, 폰 여러 장 첨부</title>
       <link>https://lepons.app/#download</link>
