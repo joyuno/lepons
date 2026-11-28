@@ -1,7 +1,8 @@
 import { getDocumentAsync } from "expo-document-picker";
 import { File } from "expo-file-system";
-import { launchCameraAsync, launchImageLibraryAsync, requestCameraPermissionsAsync } from "expo-image-picker";
+import { getCameraPermissionsAsync, launchCameraAsync, launchImageLibraryAsync, requestCameraPermissionsAsync } from "expo-image-picker";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
+import { Platform } from "react-native";
 
 import { whilePicking, type Connection } from "@/connection";
 import { previewOrShare } from "@/phone/native-preview";
@@ -19,7 +20,8 @@ export const PICK_LIMIT = 10;
 /**
  * A photo just taken, or several from the library or the files (the system's
  * pickers tick and untick them); empty when the person backed out, "denied"
- * when the camera may not be used. The library and file pickers ask no permission.
+ * when the camera is blocked: no question will be shown, only Settings can turn it on.
+ * The library and file pickers ask no permission.
  */
 export async function pick(kind: "camera" | "photo" | "file"): Promise<Picked[] | "denied"> {
   if (kind === "file") {
@@ -27,7 +29,13 @@ export async function pick(kind: "camera" | "photo" | "file"): Promise<Picked[] 
     return picked.canceled ? [] : picked.assets.slice(0, PICK_LIMIT).map((asset) => ({ uri: asset.uri, name: asset.name, image: /^image\//.test(asset.mimeType ?? "") }));
   }
   // The permission question is a system screen too: on Android it also sends the app to the background.
-  if (kind === "camera" && !(await whilePicking(() => requestCameraPermissionsAsync())).granted) return "denied";
+  // A question closed with Back is a backing out: the next tap asks again, so no Settings notice for it.
+  // Android reports it like a blocked camera (canAskAgain false), but a camera never asked about before cannot be blocked yet.
+  if (kind === "camera") {
+    const first = Platform.OS === "android" && (await getCameraPermissionsAsync()).status === "undetermined";
+    const camera = await whilePicking(() => requestCameraPermissionsAsync());
+    if (!camera.granted) return camera.canAskAgain || first ? [] : "denied";
+  }
   // Under 1, the picker encodes the photo again: an iPhone's HEIC comes out a JPEG the AI can read.
   const options = { mediaTypes: ["images" as const], quality: 0.8 };
   // On Android 9 and older the camera also needs storage, asked for here; a "no" to it is a "no" to the camera.

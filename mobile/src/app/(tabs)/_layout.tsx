@@ -8,6 +8,7 @@ import { Animated, Appearance, Platform, Pressable, Text, useColorScheme, View, 
 import { pcLabel, useConnection } from "@/connection";
 import { t } from "@/i18n";
 import { ms, useLive } from "@/motion";
+import { linkWord } from "@/phone/link";
 import { badgePops, POP_PEAK, thereAndBack } from "@/phone/motion";
 import { tappedList, tappedPc, tappedSession } from "@/push";
 import { saveScheme } from "@/store";
@@ -89,7 +90,9 @@ export default function TabsLayout() {
   if (!c.demo && !(c.pairing && c.signedIn)) return <Redirect href={c.pairing ? "/login" : "/"} />;
   const kind = c.status.kind;
   const connectionLamp = c.demo || kind === "connected" ? "live" : kind === "connecting" || kind === "waiting" || kind === "confirm" ? "connecting" : "failed";
-  const connectionLabel = c.demo ? t.connected : t[kind === "confirm" ? "connecting" : kind];
+  // Read at each draw, not every second (useLinkWord): a second's tick would draw the whole tab navigator again.
+  const word = c.demo ? undefined : linkWord(c.status, c.dialingSince === undefined ? 0 : Date.now() - c.dialingSince);
+  const connectionLabel = word ? t[word] : kind === "connected" || c.demo ? t.connected : t.connecting;
   const title = (text: unknown, lamp?: boolean) => (
     <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
       <Text style={{ ...font.bold, color: p.text, fontSize: size.screen }}>{text as string}</Text>
@@ -164,7 +167,8 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen name="bots" options={{ title: t.bots, tabBarAccessibilityLabel: t.bots, tabBarIcon: icon("cpu", "cpu.fill", "smart_toy") }} />
-      <Tabs.Screen name="map" options={{ title: t.map, tabBarAccessibilityLabel: t.map, tabBarIcon: icon("point.3.connected.trianglepath.dotted", "point.3.filled.connected.trianglepath.dotted", "share") }} />
+      {/* Mounted with the tabs, not on first open: the map's web view takes about a second to start, done while home is shown. */}
+      <Tabs.Screen name="map" options={{ lazy: false, title: t.map, tabBarAccessibilityLabel: t.map, tabBarIcon: icon("point.3.connected.trianglepath.dotted", "point.3.filled.connected.trianglepath.dotted", "share") }} />
     </Tabs>
   );
 }

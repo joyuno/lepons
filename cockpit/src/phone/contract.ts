@@ -138,10 +138,13 @@ export type PcAccounts = Array<{ pc: string; agents: Array<{ name: string; state
  */
 export const PHONE_EVENTS = { local: 80, remote: 50 };
 
-/** `keep`: how many newest events the phone holds, cutting the oldest off after `after` (a PC before it: 80). */
-export type WorkflowChange = { same: true } | (SessionWorkflow & { v: string; after?: number; keep?: number });
+/** A record read as the phone gets it: the model the chat chip shows stays on the PC (the phone app checks these keys exactly). */
+type PhoneWorkflow = Omit<SessionWorkflow, "model">;
 
-export type WorkflowReply = ({ ok: true } & SessionWorkflow) | Extract<SessionWorkflowResult, { ok: false }> | WorkflowChange;
+/** `keep`: how many newest events the phone holds, cutting the oldest off after `after` (a PC before it: 80). */
+export type WorkflowChange = { same: true } | (PhoneWorkflow & { v: string; after?: number; keep?: number });
+
+export type WorkflowReply = ({ ok: true } & PhoneWorkflow) | Extract<SessionWorkflowResult, { ok: false }> | WorkflowChange;
 
 export interface PhoneScreen { data: string; cols: number; rows: number }
 

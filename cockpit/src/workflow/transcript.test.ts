@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { parseTranscript, projectSlug } from "./transcript.ts";
+import { heldPictures, parseTranscript, projectSlug, transcriptId } from "./transcript.ts";
+import type { WorkflowItem } from "../shared/ipc.ts";
 
 // The slug rule was read off the real directory Claude Code created for this
 // very repository, not inferred from documentation.
@@ -314,4 +315,103 @@ test("what a cancelled turn did stays, marked on its last row; the turn before i
   assert.deepEqual(events.map((e) => [e.kind, e.kind !== "prompt" && e.cancelled === true]), [
     ["prompt", false], ["note", false], ["prompt", false], ["note", true], ["prompt", false], ["action", true], ["prompt", false], ["subagent", true],
   ]);
+});
+
+const call = (id: string, name: string, input: object) =>
+  line({ type: "assistant", timestamp: "2026-08-04T01:00:01.000Z", message: { content: [{ type: "tool_use", id, name, input }] } });
+const answered = (id: string, at: string, failed = false) =>
+  line({ type: "user", timestamp: at, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "x", ...(failed ? { is_error: true } : {}) }] } });
+const calls = [
+  user("go"),
+  call("b", "Bash", { command: "npm test\nmore", description: "run the tests" }),
+  answered("b", "2026-08-04T01:00:05.000Z", true),
+  call("r", "Read", { file_path: "/a/b/c.ts" }),
+  answered("r", "2026-08-04T01:00:06.000Z"),
+  call("e", "Edit", { file_path: "/a/b/d.ts" }),
+  call("t", "TodoWrite", { todos: [] }),
+].join("\n");
+
+test("a full read keeps each tool call's kind, target and result", () => {
+  const action = parseTranscript(calls, true).events.find((event) => event.kind === "action");
+  assert.deepEqual(action?.kind === "action" && action.steps, [
+    { tool: "command", target: "npm test", result: "failed", endAt: Date.parse("2026-08-04T01:00:05.000Z"), output: "x" },
+    { tool: "read", target: "c.ts", result: "done", endAt: Date.parse("2026-08-04T01:00:06.000Z"), output: "x" },
+    { tool: "edit", target: "d.ts" },
+  ]);
+});
+
+test("an unfinished command keeps its whole text, capped, for the chat's question card; its target stays the first line", () => {
+  const steps = (record: string) => {
+    const action = parseTranscript(record, true).events.find((event) => event.kind === "action");
+    return action?.kind === "action" ? action.steps : undefined;
+  };
+  assert.deepEqual(steps([user("go"), call("b", "Bash", { command: "npm test" }), answered("b", "2026-08-04T01:00:05.000Z"), call("p", "Bash", { command: "cd build\nrm -rf dist" })].join("\n")), [
+    { tool: "command", target: "npm test", result: "done", endAt: Date.parse("2026-08-04T01:00:05.000Z"), output: "x" },
+    { tool: "command", target: "cd build", command: "cd build\nrm -rf dist" },
+  ]);
+  const long = steps([user("go"), call("p", "Bash", { command: "x".repeat(3000) })].join("\n"))?.[0]?.command;
+  assert.equal(long, `${"x".repeat(2000)}…`, "cut with a visible mark");
+});
+
+test("a full read keeps what each call gave back, capped, for the chat's preview; a board read none", () => {
+  const record = [user("go"), call("b", "Bash", { command: "ls" }), line({ type: "user", timestamp: "2026-08-04T01:00:05.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "b", content: [{ type: "text", text: `a\n${"y".repeat(5000)}` }] }] } })].join("\n");
+  const step = (full: boolean) => {
+    const action = parseTranscript(record, full).events.find((event) => event.kind === "action");
+    return action?.kind === "action" ? action.steps?.[0] : undefined;
+  };
+  assert.equal(step(true)?.output, `a\n${"y".repeat(3998)}…`);
+  assert.equal(step(false), undefined);
+});
+
+test("a full read keeps a prompt's pictures as data URLs, none over 5 MB nor from an address", () => {
+  const picture = (data: string, media = "image/png") => ({ type: "image", source: { type: "base64", media_type: media, data } });
+  const record = user([
+    { type: "text", text: "[Image #1] [Image #2] look" },
+    picture("iVBORw0KGgo="),
+    picture("A".repeat(7_000_000)),
+    { type: "image", source: { type: "url", url: "https://example.com/a.png" } },
+    picture("PHN2Zz4=", "image/svg+xml"),
+  ]);
+  const prompt = (full: boolean) => parseTranscript(record, full).events[0] as { text: string; images?: string[] };
+  // One for each picture, in order as the words name them: one not shown is empty, its chip stays.
+  assert.deepEqual(prompt(true).images, ["data:image/png;base64,iVBORw0KGgo=", "", "", ""]);
+  assert.equal(prompt(false).images, undefined);
+});
+
+test("a read crosses to the page with its pictures' names only, each held once to be asked for", () => {
+  const src = `data:image/png;base64,${"A".repeat(1000)}`;
+  const events: WorkflowItem[] = [{ kind: "prompt", at: 7, text: "[Image #1] [Image #2]", images: [src, ""] }, { kind: "note", at: 8, text: "ok" }];
+  const held = new Map<string, string>();
+  const sent = heldPictures(events, "pc::repo", held);
+  assert.deepEqual(sent[0], { kind: "prompt", at: 7, text: "[Image #1] [Image #2]", images: ["7:0:1022", ""] });
+  assert.equal(sent[1], events[1]);
+  assert.ok(JSON.stringify(sent).length < 200, "megabytes stay in main");
+  assert.equal(held.get("pc::repo\x007:0:1022"), src);
+  heldPictures(events, "pc::repo", held);
+  assert.equal(held.size, 1, "read again: held once");
+  for (let at = 0; at < 5; at++) heldPictures([{ kind: "prompt", at, text: "", images: [src] }], "pc::repo", held, 3);
+  assert.deepEqual([...held.keys()], ["pc::repo\x002:0:1022", "pc::repo\x003:0:1022", "pc::repo\x004:0:1022"], "the newest kept");
+});
+
+test("a board read has no steps", () => {
+  const action = parseTranscript(calls).events.find((event) => event.kind === "action");
+  assert.equal(action?.kind === "action" && "steps" in action, false);
+});
+
+test("the record names the model", () => {
+  const answer = (model: string, at: string) => line({ type: "assistant", timestamp: at, message: { model, content: [{ type: "text", text: "ok" }] } });
+  const sub = line({ type: "assistant", isSidechain: true, timestamp: "2026-08-04T01:00:04.000Z", message: { model: "claude-haiku-5-5", content: [{ type: "text", text: "sub" }] } });
+  const jsonl = [user("hi"), answer("claude-opus-5-5", "2026-08-04T01:00:01.000Z"), answer("claude-sonnet-5-5", "2026-08-04T01:00:02.000Z"), answer("<synthetic>", "2026-08-04T01:00:03.000Z"), sub].join("\n");
+  assert.equal(parseTranscript(jsonl).model, "claude-sonnet-5-5", "the newest, neither <synthetic> nor a subagent's");
+  assert.equal("model" in parseTranscript([user("hi"), says("ok")].join("\n")), false);
+});
+
+test("a transcript's conversation id is the one its newest lines are written under", () => {
+  const id = "2fcfc66f-d6c7-416f-abcc-ad85b5f4f9bf";
+  const lines = [
+    JSON.stringify({ type: "user", sessionId: "11111111-2222-4333-8444-555555555555", timestamp: "2026-11-01T00:00:00Z", message: { role: "user", content: "hi" } }),
+    JSON.stringify({ type: "assistant", sessionId: id, timestamp: "2026-11-01T00:00:01Z", message: { role: "assistant", content: [{ type: "text", text: "hello" }] } }),
+  ];
+  assert.equal(transcriptId(lines.join("\n")), id);
+  assert.equal(transcriptId(""), undefined);
 });

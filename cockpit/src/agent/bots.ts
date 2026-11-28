@@ -27,6 +27,9 @@ export interface Bot {
   retired?: AgentKind;
 }
 
+/** A bot's name heads a tab and a card. */
+export const MAX_BOT_NAME = 60;
+
 /** Every profile starts with this rule; the user may edit it away in the file. */
 const DEFAULT_RULE = "지우기, 되돌릴 수 없는 일은 먼저 목록을 보여 주고 사용자에게 물어본 뒤에만 한다.";
 
@@ -61,7 +64,7 @@ export const botPreamble = (name: string, profilePath: string): string =>
   `너는 "${name}" 봇이다. 먼저 ${profilePath} 파일을 읽고 따른다. 사용자가 "앞으로 이렇게"라고 하면 그 지시를 이 파일의 "## 기억" 아래에 덧붙인다.`;
 
 /** Jobs whose minute, hour and day match `now` (local time) and have not fired in that minute. */
-export function dueJobs(bot: Bot, lastFired: Record<string, number>, now: Date): BotJob[] {
+export function dueJobs(bot: Pick<Bot, "paused" | "jobs">, lastFired: Record<string, number>, now: Date): BotJob[] {
   if (bot.paused) return [];
   const minuteStart = Math.floor(now.getTime() / 60000) * 60000;
   return bot.jobs.filter(({ id, when }) =>

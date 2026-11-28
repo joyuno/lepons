@@ -60,3 +60,15 @@ export const codeShaped = (code: string): boolean => /^\d{6}$/.test(code);
 
 /** Four and four, for typing by hand; apps ignore the spaces. */
 export const keyInGroups = (key: string): string => key.replace(/(.{4})(?=.)/g, "$1 ");
+
+/** The store pages for the phone app; the install step draws a QR of each. */
+export const STORE_LINKS = {
+  ios: "https://apps.apple.com/app/id6829282468",
+  android: "https://play.google.com/store/apps/details?id=app.lepons.mobile",
+} as const;
+
+/** "1:23" until `until`, and never below "0:00". */
+export function timeLeft(until: number, now: number): string {
+  const seconds = Math.max(0, Math.ceil((until - now) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}

@@ -377,6 +377,15 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
 
   /** What each session's phone was last answered with &v=: what a phone asking from that "v" holds. */
   const flowSent = new Map<string, { v: string; events: WorkflowItem[] }>();
+  /** The PC chat's own parts of a full read -- a prompt's pictures, what each call gave back -- stay on the PC: MBs the phone does not show. */
+  const forPhone = (events: WorkflowItem[]): WorkflowItem[] => events.map((event) => {
+    if (event.kind === "prompt" && event.images) {
+      const { images: _images, ...rest } = event;
+      return rest;
+    }
+    if (event.kind === "action" && event.steps?.some((step) => step.output !== undefined)) return { ...event, steps: event.steps.map(({ output: _output, ...step }) => step) };
+    return event;
+  });
 
   // Streams outlive the request that opened them, so an expiry -- idle or
   // absolute -- has to be found by looking. A stream does not count as use:
@@ -487,14 +496,17 @@ export function createPhoneApi(deps: PhoneDeps, auth: PhoneAuth, now: () => numb
         const before = Number(param(at, "before") ?? NaN);
         if (Number.isSafeInteger(before)) {
           const result = await deps.workflow(key, before);
-          return ok(at, result.ok ? { ok: true, ...result.workflow } : result);
+          if (!result.ok) return ok(at, result);
+          // The model is the PC's chat chip's (contract.ts PhoneWorkflow): the phone app checks the keys it gets.
+          const { model: _model, ...workflow } = result.workflow;
+          return ok(at, { ok: true, ...workflow, events: forPhone(workflow.events) });
         }
         const keep = deps.phoneEvents?.(key) ?? 80;
         const result = await deps.workflow(key);
         if (!result.ok) return ok(at, result);
         // The newest part: a phone scrolls one column, not a day's transcript.
         const { title } = result.workflow;
-        const events = result.workflow.events.slice(-keep);
+        const events = forPhone(result.workflow.events.slice(-keep));
         const asked = param(at, "v");
         if (asked === null) return ok(at, { ok: true, title, events });
         const v = createHash("sha256").update(JSON.stringify({ title, events })).digest("hex").slice(0, 16);

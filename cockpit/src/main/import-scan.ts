@@ -1,15 +1,24 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ImportScan, LocalFind, NodeConfig, RemoteFind } from "../shared/ipc.ts";
+import type { AgentKind, ImportScan, LocalFind, NodeConfig, RemoteFind } from "../shared/ipc.ts";
 import { parseDestination, resolveHost } from "../ssh/ssh-config.ts";
 
 /**
  * What can be brought into Lepons from where the operator already works:
  * the remote folders VS Code and Cursor remember connecting to, and the
- * folders Claude Code and Codex have sessions in on this machine. All of it
- * is read from files those tools keep anyway -- nothing is asked of them,
- * nothing of theirs is written, and the scan runs only when asked.
+ * folders Claude Code and Codex have sessions in on this machine, and the
+ * folders Cursor's editor lists as recently opened. All of it is read from
+ * files those tools keep anyway -- nothing is asked of them, nothing of
+ * theirs is written, and the scan runs only when asked.
+ *
+ * Left out, each for want of evidence of a folder record (no entry on the PC
+ * this was built on, no official doc or source that states one):
+ * - Cursor agent CLI (~/.cursor/projects): folder names are a lossy encoding of
+ *   the path and the transcripts carry no folder field.
+ * - OpenCode: `session list` only lists the current project, and its database
+ *   schema is still changing upstream.
+ * - Grok, Antigravity: no folder or CLI on this PC, no published record format.
  */
 
 const remoteUri = /vscode-remote:\/\/ssh-remote(?:%2B|\+)([^/"\\]+)((?:\/[^"\\]*)?)/g;
@@ -83,6 +92,32 @@ export function codexSessionHead(line: string): { cwd?: string } {
   }
 }
 
+/**
+ * The local folders in Cursor's `history.recentlyOpenedPathsList` value. Shape
+ * is VS Code's ISerializedRecentlyOpened (Cursor is a fork): `entries` of
+ * `{ folderUri }`; workspace files, single files and remote folders are skipped.
+ */
+export function cursorFolders(text: string): Array<{ path: string; at?: number }> {
+  let entries: unknown;
+  try {
+    entries = (JSON.parse(text) as { entries?: unknown }).entries;
+  } catch {
+    return [];
+  }
+  const found: Array<{ path: string }> = [];
+  for (const entry of Array.isArray(entries) ? (entries as Array<{ folderUri?: unknown; remoteAuthority?: unknown }>) : []) {
+    if (typeof entry?.folderUri !== "string" || entry.remoteAuthority || !entry.folderUri.startsWith("file:///")) continue;
+    try {
+      // file:///c%3A/x -> c:/x on Windows, file:///home/x -> /home/x elsewhere.
+      const path = decodeURIComponent(entry.folderUri.slice("file://".length));
+      found.push({ path: /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path });
+    } catch {
+      // A malformed escape: skip this entry.
+    }
+  }
+  return found;
+}
+
 /** The first `limit` bytes of a file, so a long transcript costs a page, not its size. */
 function head(path: string, limit = 64 * 1024): string {
   const fd = openSync(path, "r");
@@ -142,7 +177,7 @@ export async function scanImports(where: { home: string; appData: string; nodes:
   // Local folders with sessions: where each one ran, and how recently.
   const local = new Map<string, LocalFind>();
   const windows = process.platform === "win32";
-  const record = (cwd: string, tool: "claude" | "codex", at: number): void => {
+  const record = (cwd: string, tool: AgentKind, at: number): void => {
     const path = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
     const key = windows ? path.toLowerCase() : path;
     const found = local.get(key) ?? { path, tools: [], lastUsed: 0, known: false };
@@ -186,6 +221,24 @@ export async function scanImports(where: { home: string; appData: string; nodes:
       } catch {
         // As above.
       }
+    }
+  }
+  // Cursor's own recent-folders list. No per-folder time is kept, so the
+  // file's own mtime stands in. Read-only; a locked or missing file is no record.
+  const cursorDb = join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
+  if (existsSync(cursorDb)) {
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(cursorDb, { readOnly: true });
+      try {
+        const row = db.prepare("SELECT value FROM ItemTable WHERE key = ?").get("history.recentlyOpenedPathsList");
+        const at = statSync(cursorDb).mtimeMs;
+        for (const { path } of cursorFolders(String(row?.value ?? ""))) record(path, "agent", at);
+      } finally {
+        db.close();
+      }
+    } catch {
+      // Unreadable: the other sources still count.
     }
   }
   const localNode = nodes.find((node) => node.kind === "local");

@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 
-import { claudeSessionHead, codexSessionHead, destinationOf, remoteFoldersFromStorage, scanImports } from "./import-scan.ts";
+import { claudeSessionHead, codexSessionHead, cursorFolders, destinationOf, remoteFoldersFromStorage, scanImports } from "./import-scan.ts";
 import type { NodeConfig } from "../shared/ipc.ts";
 
 const hexAuthority = (value: object): string => Buffer.from(JSON.stringify(value)).toString("hex");
@@ -50,6 +51,24 @@ test("a session record says where it ran, and who started it", () => {
   assert.deepEqual(codexSessionHead("not json"), {});
 });
 
+// Shape per VS Code's ISerializedRecentlyOpened, as Cursor (a fork) writes it
+// under `history.recentlyOpenedPathsList`; the paths are made up.
+const recentList = JSON.stringify({
+  entries: [
+    { folderUri: "file:///c%3A/Users/someone/work/app", label: "app" },
+    { folderUri: "file:///home/someone/my%20proj" },
+    { folderUri: "vscode-remote://ssh-remote%2Bdev/home/dev/api", remoteAuthority: "ssh-remote+dev" },
+    { workspace: { id: "w", configPath: "file:///c%3A/x/team.code-workspace" } },
+    { fileUri: "file:///c%3A/Users/someone/notes.txt" },
+  ],
+});
+
+test("cursorFolders reads local folders from the recent list and nothing else", () => {
+  assert.deepEqual(cursorFolders(recentList), [{ path: "c:/Users/someone/work/app" }, { path: "/home/someone/my proj" }]);
+  assert.deepEqual(cursorFolders('{"entries":[]}'), []);
+  assert.deepEqual(cursorFolders("not json"), []);
+});
+
 test("a scan merges sources, skips what is gone or automated, and marks what Lepons already has", async () => {
   const root = mkdtempSync(join(tmpdir(), "lepons-import-")).replace(/\\/g, "/");
   try {
@@ -76,6 +95,15 @@ test("a scan merges sources, skips what is gone or automated, and marks what Lep
     utimesSync(`${home}/.claude/projects/p1/s1.jsonl`, 1_000, 1_000);
     utimesSync(`${home}/.codex/sessions/2026/10/08/rollout-2026-10-08T10-00-00-x.jsonl`, 2_000, 2_000);
     utimesSync(`${home}/.codex/sessions/2026/10/08/rollout-2026-10-08T11-00-00-y.jsonl`, 3_000, 3_000);
+    const projectC = `${root}/projects/c`;
+    mkdirSync(projectC, { recursive: true });
+    mkdirSync(`${appData}/Cursor/User/globalStorage`, { recursive: true });
+    const db = new DatabaseSync(`${appData}/Cursor/User/globalStorage/state.vscdb`);
+    db.exec("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)");
+    db.prepare("INSERT INTO ItemTable VALUES (?, ?)").run("history.recentlyOpenedPathsList",
+      JSON.stringify({ entries: [projectC, projectA].map((path) => ({ folderUri: `file:///${path.replace(/^\//, "")}` })) }));
+    db.close();
+    utimesSync(`${appData}/Cursor/User/globalStorage/state.vscdb`, 4_000, 4_000);
     mkdirSync(`${home}/.ssh`, { recursive: true });
     writeFileSync(`${home}/.ssh/config`, "Host 192.0.2.18\n  User dev\n");
 
@@ -94,8 +122,9 @@ test("a scan merges sources, skips what is gone or automated, and marks what Lep
     assert.deepEqual(byDest["dev@192.0.2.34"]!.sources, ["VS Code"]);
 
     assert.deepEqual(scan.local.map((found) => [found.path, found.tools.join("+"), found.known]), [
+      [projectA, "claude+codex+agent", false], // Cursor's file time (4000) ties with C; A was seen first
+      [projectC, "agent", false],
       [projectB, "codex", true],
-      [projectA, "claude+codex", false],
     ], "newest first; automated runs and folders that are gone are left out");
     assert.equal(scan.home, home);
   } finally {

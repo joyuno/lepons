@@ -89,6 +89,45 @@ test("Codex's own word for an approval turns the session at once, and its redraw
   assert.equal(activity.waiting, true);
 });
 
+// Codex at rest on the owner's Mac (fixtures/codex-idle-dots.txt): braille dots around its prompt, redrawn without end.
+const dots = (n: number) => `\x1b[?2026h\x1b[${19 + (n % 3)};${3 + ((n * 7) % 70)}H\x1b[38;5;245m${"⠁⠂⠄⠈⠐⠠"[n % 6]}\x1b(B\x1b[m\x1b[20;4H\x1b[?2026l`;
+
+test("Codex's dots at rest are no work: its turn goes quiet, and they alone never start one", () => {
+  const activity = newActivity();
+  for (let at = 0; at <= 5000; at += 100) onOutput(activity, at, `\x1b[26;1H\x1b[1m• Working (${Math.floor(at / 1000)}s • esc to interrupt)\x1b[0m`);
+  assert.equal(activity.working, true, "its working line is work");
+  for (let at = 5100, n = 0; at <= 20_000; at += 200, n++) onOutput(activity, at, dots(n));
+  assert.equal(onTick(activity, 8100), true, "quiet 3 s after its last words: its record is asked");
+  assert.equal(onTurnEnd(activity, "finished", activity.lastOutput, 8200), true);
+  assert.equal(activity.working, false);
+  const rest = newActivity();
+  for (let at = 0, n = 0; at <= 20_000; at += 200, n++) onOutput(rest, at, dots(n));
+  assert.equal(rest.working, false);
+});
+
+test("a frame split anywhere between two chunks is still no work, and a working line split anywhere still is", () => {
+  const rest = newActivity();
+  let at = 0;
+  for (let n = 0; n < 6; n++) {
+    const frame = dots(n);
+    for (let i = 1; i < frame.length; i++) {
+      onOutput(rest, (at += 10), frame.slice(0, i));
+      onOutput(rest, (at += 10), frame.slice(i));
+    }
+  }
+  // Over SSH main decodes each chunk alone: a dot whose bytes were split arrives as replacement characters.
+  onOutput(rest, (at += 10), "\x1b[19;27H\x1b[38;5;245m�");
+  onOutput(rest, (at += 10), "��\x1b(B\x1b[m");
+  assert.deepEqual([rest.lastOutput, rest.carry], [0, undefined], "never output, nothing left held");
+  const line = "\x1b[26;1H\x1b[1m• Working (3s • esc to interrupt)\x1b[0m";
+  for (let i = 1; i < line.length; i++) {
+    const busy = newActivity();
+    onOutput(busy, 100, line.slice(0, i));
+    onOutput(busy, 200, line.slice(i));
+    assert.notEqual(busy.lastOutput, 0, `split at ${i}`);
+  }
+});
+
 test("the duck stands for the session that needs the operator first", () => {
   const busy = newActivity();
   stream(busy, 0, 5000);

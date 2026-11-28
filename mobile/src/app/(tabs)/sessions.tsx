@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Animated, FlatList, Pressable, RefreshControl
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useConnection } from "@/connection";
+import { LinkNotice, useStillLoading } from "@/link-notice";
 import { PcReconnectButton, usePcReconnect } from "@/pc-reconnect";
 import { fmt, t } from "@/i18n";
 import { useRowMoves } from "@/motion";
@@ -40,6 +41,7 @@ const pcKey = (group: { pc: string; pcId?: string }) => group.pcId ?? group.pc;
 export default function Sessions() {
   const c = useConnection();
   const pcReconnect = usePcReconnect();
+  const loading = useStillLoading();
   const { c: p, s } = useTheme();
   const sessions = (c.phone?.sessions ?? []).filter((session) => session.agent);
   const listed = sessionList(sessions, c.phone?.folders ?? [], c.phone?.pcs ?? []);
@@ -117,9 +119,10 @@ export default function Sessions() {
     if (typeof got === "string") router.push({ pathname: "/session/[id]", params: { id: got, opening: "1" } });
     else Alert.alert(t.openFolderFailed);
   };
+  // Both ask the PC: shown, but off while it cannot be reached.
   const sessionActions = (session: PhoneSessionView, key: string): RowAction[] => [
-    ...(session.mood === "failed" ? [{ label: t.reconnect, color: p.live, onPress: () => void openFolder(session.id) }] : []),
-    { label: t.closeSession, color: p.stop, onPress: () => closeOne(session, key) },
+    ...(session.mood === "failed" ? [{ label: t.reconnect, color: p.live, onPress: () => void openFolder(session.id), disabled: !c.canAsk }] : []),
+    { label: t.closeSession, color: p.stop, onPress: () => closeOne(session, key), disabled: !c.canAsk },
   ];
 
   const moodLabel = (session: PhoneSessionView) => t[`mood_${lampState(session)}`];
@@ -206,14 +209,14 @@ export default function Sessions() {
     const { folder } = row;
     return inTray(
       <View style={[nested ? undefined : shape, { overflow: "hidden", flexDirection: "row", alignItems: "stretch" }]}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`${folder.folder}, ${t.closedFolders}`} accessibilityHint={folded ? t.worktreesShow : t.openFolderHint} disabled={busy !== undefined} onPress={go(() => void openFolder(folder.id))}
+        <Pressable accessibilityRole="button" accessibilityLabel={`${folder.folder}, ${t.closedFolders}`} accessibilityHint={folded ? t.worktreesShow : t.openFolderHint} accessibilityState={{ disabled: !folded && !c.canAsk }} disabled={busy !== undefined || (!folded && !c.canAsk)} onPress={go(() => void openFolder(folder.id))}
           style={({ pressed }) => [{ flex: 1, flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 48, paddingHorizontal: nested ? space.md : space.lg, paddingVertical: space.sm }, pressed && { backgroundColor: nested ? p.trayPress : p.raise }]}>
           <Lamp state="off" />
           {nested ? <SymbolView name={{ ios: "arrow.triangle.branch", android: "fork_right" }} tintColor={p.muted} size={14} /> : null}
           <Text style={[s.dim, { fontSize: size.callout, flexShrink: 1 }]} numberOfLines={1}>{folder.folder}</Text>
           {badge}
           <View style={{ flex: 1 }} />
-          {busy === folder.id || busy === item.key ? <ActivityIndicator size="small" color={p.muted} /> : <Text style={[font.semibold, { fontSize: size.footnote, color: p.link }]}>{t.openFolder}</Text>}
+          {busy === folder.id || busy === item.key ? <ActivityIndicator size="small" color={p.muted} /> : <Text style={[font.semibold, { fontSize: size.footnote, color: p.link, opacity: c.canAsk ? 1 : 0.4 }]}>{t.openFolder}</Text>}
         </Pressable>
         {fold}
       </View>,
@@ -229,18 +232,21 @@ export default function Sessions() {
         contentContainerStyle={{ padding: space.xl }}
         refreshControl={<RefreshControl refreshing={false} onRefresh={c.refresh} tintColor={p.muted} />}
         ListHeaderComponent={
-          <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, marginBottom: empty ? 0 : space.md }}>
-            {c.demo ? <Text style={[s.dim, { flex: 1, color: p.live }]}>{t.demoBanner}</Text> : <View style={{ flex: 1 }} />}
-            {/* Only open sessions have something to close, and only two PCs or more something to move. */}
-            {sessions.length === 0 && groups.length < 2 ? null : (
-                <Pressable accessibilityRole="button" accessibilityHint={t.rowActions} hitSlop={8} onPress={() => { setEditing((now) => !now); setSwiped(undefined); }}
-                  style={({ pressed }) => ({ minHeight: 32, minWidth: 44, alignItems: "flex-end", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
-                  <Text style={[font.semibold, { fontSize: size.callout, color: p.link }]}>{editing ? t.editDone : t.edit}</Text>
-                </Pressable>
-            )}
+          <View style={{ gap: space.sm }}>
+            <LinkNotice after={space.sm} savedAt={c.savedAt} />
+            <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, marginBottom: empty ? 0 : space.md }}>
+              {c.demo ? <Text style={[s.dim, { flex: 1, color: p.live }]}>{t.demoBanner}</Text> : <View style={{ flex: 1 }} />}
+              {/* Only open sessions have something to close, and only two PCs or more something to move. */}
+              {sessions.length === 0 && groups.length < 2 ? null : (
+                  <Pressable accessibilityRole="button" accessibilityHint={t.rowActions} hitSlop={8} onPress={() => { setEditing((now) => !now); setSwiped(undefined); }}
+                    style={({ pressed }) => ({ minHeight: 32, minWidth: 44, alignItems: "flex-end", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
+                    <Text style={[font.semibold, { fontSize: size.callout, color: p.link }]}>{editing ? t.editDone : t.edit}</Text>
+                  </Pressable>
+              )}
+            </View>
           </View>
         }
-        ListEmptyComponent={<Text style={s.empty}>{c.phone ? t.noSessions : t.loadingList}</Text>}
+        ListEmptyComponent={<Text style={s.empty}>{c.phone ? t.noSessions : loading ? t.loadingList : t.noSavedYet}</Text>}
         renderItem={({ item }) => (
           <Animated.View onLayout={(event) => measured(item.key, event.nativeEvent.layout.height)} style={{ transform: [{ translateY: shift(item.key) }] }}>
             {render(item)}
@@ -250,3 +256,5 @@ export default function Sessions() {
     </SafeAreaView>
   );
 }
+
+export { ScreenFailed as ErrorBoundary } from "@/screen-failed";

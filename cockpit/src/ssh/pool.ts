@@ -2,6 +2,29 @@ import type { Client } from "ssh2";
 
 import { connect, type ConnectOptions } from "./connect.ts";
 
+/** One command on a connection already open: what it printed, stderr too, or undefined when its channel failed. */
+export function execOn(client: Client, command: string): Promise<string | undefined> {
+  return new Promise<string | undefined>((resolve) => {
+    client.exec(command, (err, stream) => {
+      if (err) {
+        resolve(undefined);
+        return;
+      }
+      let output = "";
+      const collect = (chunk: string) => {
+        output += chunk;
+      };
+      // Decoded as streams, so a character split across packets survives.
+      stream.setEncoding("utf8");
+      stream.stderr?.setEncoding("utf8");
+      stream.on("data", collect);
+      stream.stderr?.on("data", collect);
+      stream.on("close", () => resolve(output));
+      stream.on("error", () => resolve(undefined));
+    });
+  });
+}
+
 /**
  * Holds one live client per node id for as long as a view keeps probing it,
  * so a second probe on the same node spends a channel rather than a fresh
@@ -36,32 +59,12 @@ export class ProbePool {
     const client = await pending;
     if (!client) return undefined;
 
-    return new Promise<string | undefined>((resolve) => {
-      client.exec(command, (err, stream) => {
-        if (err) {
-          this.drop(nodeId, pending);
-          resolve(undefined);
-          return;
-        }
-        let output = "";
-        const collect = (chunk: string) => {
-          output += chunk;
-        };
-        // Decoded as streams, so a character split across packets survives.
-        stream.setEncoding("utf8");
-        stream.stderr?.setEncoding("utf8");
-        stream.on("data", collect);
-        stream.stderr?.on("data", collect);
-        stream.on("close", () => resolve(output));
-        // A channel error still leaves the client itself alive in ssh2, but
-        // one broken channel is treated as a broken node: the next probe
-        // reconnects rather than risking a client stuck mid-failure.
-        stream.on("error", () => {
-          this.drop(nodeId, pending);
-          resolve(undefined);
-        });
-      });
-    });
+    const output = await execOn(client, command);
+    // A channel error still leaves the client itself alive in ssh2, but
+    // one broken channel is treated as a broken node: the next probe
+    // reconnects rather than risking a client stuck mid-failure.
+    if (output === undefined) this.drop(nodeId, pending);
+    return output;
   }
 
   /**

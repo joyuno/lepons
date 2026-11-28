@@ -19,8 +19,15 @@ export default function Settings() {
   const [note, setNote] = useState("");
   const [pushDenied, setPushDenied] = useState(false);
   const [latest, setLatest] = useState<string>();
+  const [cleared, setCleared] = useState(false);
   useEffect(() => setServer(c.server), [c.server]);
   useEffect(() => { void storeVersion().then(setLatest); }, []);
+  // "지웠어요" for a few seconds after the press.
+  useEffect(() => {
+    if (!cleared) return;
+    const timer = setTimeout(() => setCleared(false), 3000);
+    return () => clearTimeout(timer);
+  }, [cleared]);
 
   const save = async () => {
     const value = server.trim();
@@ -84,6 +91,14 @@ export default function Settings() {
             <Text style={s.dim}>{t.notPaired}</Text>
           )}
         </Section>
+
+        {/* What the phone kept to show while the PC cannot be reached, every PC's; the demo keeps none. */}
+        {!c.demo && c.pcs.length > 0 ? (
+          <View style={{ gap: space.sm }}>
+            <Button title={t.clearSaved} kind="plain" onPress={() => void c.clearSaved().then(() => setCleared(true)).catch(() => undefined)} />
+            {cleared ? <Text style={s.dim} accessibilityLiveRegion="polite">{t.clearSavedDone}</Text> : null}
+          </View>
+        ) : null}
 
         {!c.demo && c.pairing ? (
           <Section title={t.notifications}>

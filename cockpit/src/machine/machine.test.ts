@@ -238,10 +238,33 @@ for (const adapter of adapters) {
       writeFileSync(path("commands/ship.md"), "---\ndescription: Ship it\n---\nbody");
       writeFileSync(path("commands/skip.txt"), "not a command");
       writeFileSync(path("skills/tidy/SKILL.md"), "---\nname: tidy\ndescription: Tidy up\n---\n");
+      // A skill whose folder is a link (~/.claude/skills/ui-taste -> ~/.agents/skills/ui-taste), as Claude follows it.
+      mkdirSync(path("agents/taste"), { recursive: true });
+      writeFileSync(path("agents/taste/SKILL.md"), "---\nname: taste\ndescription: Taste\n---\n");
+      symlinkSync(path("agents/taste"), path("skills/taste"), "junction");
       const found = await machine.customCommands([{ kind: "commands", dir: path("commands") }, { kind: "skills", dir: path("skills") }, { kind: "commands", dir: path("absent") }]);
       assert.deepEqual(found.map((command) => [command.name, command.description]).sort(), [
-        ["/ship", "Ship it"], ["/tidy", "Tidy up"],
+        ["/ship", "Ship it"], ["/taste", "Taste"], ["/tidy", "Tidy up"],
       ]);
+    });
+
+    test("Claude's enabled plugins come back under their names, a turned-off one left out", async () => {
+      const { root, path } = tree("machine-plugins");
+      const install = `${root}/cache/kit/1.0.0`;
+      mkdirSync(path(".claude/plugins"), { recursive: true });
+      mkdirSync(`${install}/skills/plan`, { recursive: true });
+      mkdirSync(`${install}/commands`, { recursive: true });
+      mkdirSync(`${root}/cache/off/1.0.0/commands`, { recursive: true });
+      writeFileSync(path(".claude/plugins/installed_plugins.json"), JSON.stringify({ version: 2, plugins: {
+        "kit@mkt": [{ scope: "user", installPath: install }],
+        "off@mkt": [{ scope: "user", installPath: `${root}/cache/off/1.0.0` }],
+      } }));
+      writeFileSync(path(".claude/settings.json"), JSON.stringify({ enabledPlugins: { "kit@mkt": true, "off@mkt": false } }));
+      writeFileSync(`${install}/skills/plan/SKILL.md`, "---\nname: plan\ndescription: >\n  Plan it\n---\n");
+      writeFileSync(`${install}/commands/go.md`, "---\ndescription: Go\n---\n");
+      writeFileSync(`${root}/cache/off/1.0.0/commands/no.md`, "---\ndescription: No\n---\n");
+      const found = await machine.customCommands([{ kind: "plugins", home: root, repo: path("docs") }]);
+      assert.deepEqual(found.map((command) => [command.name, command.description]).sort(), [["/kit:go", "Go"], ["/kit:plan", "Plan it"]]);
     });
 
     test("a folder's manifests come back by name, absent ones left out", async () => {
@@ -561,6 +584,111 @@ test("a command over SSH goes through the login shell on request, and a dead nod
   await machine.run("tmux ls", { login: true, timeoutMs: 8000 });
   assert.deepEqual(asked, [["tmux ls", undefined], [inLoginShell("tmux ls"), 8000]]);
 });
+
+test("Claude's list over SSH: only in a folder Claude trusts there, again only when its stamp moves, one ask at a time per PC", async () => {
+  const asked: Array<[string, number | undefined]> = [];
+  const answer = '{"type":"control_response","response":{"subtype":"success","request_id":"lepons-init","response":{"commands":[{"name":"ui-taste","description":"Taste"}]}}}';
+  let times = "100 /home/me/.claude/skills";
+  const config = JSON.stringify({ projects: { "/work/a": { hasTrustDialogAccepted: true }, "/work/b": { hasTrustDialogAccepted: true } } });
+  let slow: () => void = () => {};
+  const reach = { ...unreachable, ensureKeyReady: async () => ({ ok: true as const }), sshOptions: () => ({}) as never,
+    runRemote: async (_options: unknown, command: string) => (command.includes(".claude.json") ? `${config}\0${times}\n` : undefined),
+    runRemoteStatus: async (_options: unknown, command: string, timeoutMs?: number) => {
+      asked.push([command, timeoutMs]);
+      if (command.includes("/work/b")) await new Promise<void>((done) => (slow = done));
+      return { code: 0, output: `banner\n${answer}\n` };
+    } };
+  const machine = machineFor({ ...sshNode, id: "list-node", home: "/home/me" }, reach);
+  assert.deepEqual(await machine.claudeCommands("/work/a"), [{ name: "/ui-taste", description: "Taste" }]);
+  assert.deepEqual(await machine.claudeCommands("/work/a"), [{ name: "/ui-taste", description: "Taste" }]);
+  assert.equal(asked.length, 1, "asked once while nothing moved");
+  assert.match(asked[0]![0], /^"\$SHELL" -lic .*claude -p --input-format stream-json/);
+  assert.equal(asked[0]![1], 20_000);
+  times = "200 /home/me/.claude/skills";
+  await machine.claudeCommands("/work/a");
+  assert.equal(asked.length, 2, "a skill added: asked again");
+  // Two folders at once: the second waits for the first.
+  const first = machine.claudeCommands("/work/b");
+  times = "300 /home/me/.claude/skills";
+  const second = machine.claudeCommands("/work/a");
+  await new Promise((done) => setTimeout(done, 50));
+  assert.equal(asked.length, 3, "one claude at a time on a PC");
+  slow();
+  await Promise.all([first, second]);
+  assert.equal(asked.length, 4);
+  // A folder Claude was never trusted in: not asked, the files' list is used.
+  assert.equal(await machine.claudeCommands("/work/cloned"), undefined);
+  assert.equal(asked.length, 4);
+  const silent = machineFor({ ...sshNode, id: "silent-node", home: "/home/me" }, { ...unreachable, ensureKeyReady: async () => ({ ok: true }), sshOptions: () => ({}) as never, runRemoteStatus: async () => undefined });
+  assert.equal(await silent.claudeCommands("/work/a"), undefined);
+});
+
+test("Claude's list on this PC: a stand-in claude is sent an initialize, then MCP asks until none is coming up, and no prompt", async () => {
+  const dir = scratchDir("claude-list");
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(join(dir, "repo"), { recursive: true });
+  const sent = join(dir, "sent").replace(/\\/g, "/");
+  // Answers as Claude Code 2.1.332 does: its list to initialize; one MCP server pending at the first status ask, up at the next.
+  writeFileSync(join(bin, "stand-in.mjs"), [
+    'import { appendFileSync } from "node:fs";',
+    'import { createInterface } from "node:readline";',
+    `appendFileSync(${JSON.stringify(sent)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + "\\n");`,
+    "let asks = 0;",
+    "createInterface({ input: process.stdin }).on(\"line\", (line) => {",
+    `  appendFileSync(${JSON.stringify(sent)}, line + "\\n");`,
+    "  const { request_id: id, request } = JSON.parse(line);",
+    "  const response = request.subtype === \"initialize\" ? { commands: [{ name: \"ui-taste\", description: \"Taste\" }] } : { mcpServers: [{ name: \"x\", status: ++asks > 1 ? \"connected\" : \"pending\" }] };",
+    "  console.log(JSON.stringify({ type: \"control_response\", response: { subtype: \"success\", request_id: id, response } }));",
+    "  if (asks === 2) console.log(JSON.stringify({ type: \"system\", subtype: \"commands_changed\", commands: [{ name: \"ui-taste\", description: \"Taste\" }, { name: \"x:hello (MCP)\", description: \"Hi\" }] }));",
+    "});",
+  ].join("\n"));
+  writeFileSync(join(bin, "claude.cmd"), `@"${process.execPath}" "%~dp0stand-in.mjs" %*\r\n`);
+  writeFileSync(join(bin, "claude"), `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/stand-in.mjs" "$@"\n`, { mode: 0o755 });
+  // Only the stand-in on the PATH: never a real claude.
+  const path = process.env["PATH"];
+  process.env["PATH"] = process.platform === "win32" ? `${bin};${process.env["SystemRoot"] ?? "C:\\Windows"}\\System32` : `${bin}:/usr/bin:/bin`;
+  const shell = process.env["SHELL"];
+  if (process.platform !== "win32") process.env["SHELL"] = "/bin/sh";
+  // A home of its own: Claude's config there trusts the one folder, not the other.
+  const homes = { HOME: process.env["HOME"], USERPROFILE: process.env["USERPROFILE"] };
+  const home = join(dir, "home");
+  mkdirSync(home, { recursive: true });
+  mkdirSync(join(dir, "cloned"), { recursive: true });
+  // A claude.cmd in the session's folder is never what runs (cmd.exe would take it before the PATH's), trusted or not.
+  for (const folder of ["cloned", "repo"]) writeFileSync(join(dir, folder, "claude.cmd"), `@echo planted> "${join(dir, "planted")}"\r\n`);
+  // ~/projects trusted once (no repository); a repository cloned under it since is not, as Claude reads it.
+  mkdirSync(join(dir, "projects", "cloned", ".git"), { recursive: true });
+  writeFileSync(join(dir, "projects", "cloned", ".mcp.json"), JSON.stringify({ mcpServers: { evil: { command: "evil" } } }));
+  writeFileSync(join(home, ".claude.json"), JSON.stringify({ projects: {
+    [join(dir, "repo").replace(/\\/g, "/")]: { hasTrustDialogAccepted: true },
+    [join(dir, "projects").replace(/\\/g, "/")]: { hasTrustDialogAccepted: true },
+  } }));
+  process.env["HOME"] = home;
+  process.env["USERPROFILE"] = home;
+  try {
+    assert.equal(await localMachine(trash).claudeCommands(join(dir, "cloned")), undefined, "not trusted: not asked");
+    assert.equal(await localMachine(trash).claudeCommands(join(dir, "projects", "cloned")), undefined, "a clone under a trusted plain folder: not asked");
+    assert.equal(existsSync(sent), false, "no claude started");
+    const started = Date.now();
+    assert.deepEqual(await localMachine(trash).claudeCommands(join(dir, "repo")), [{ name: "/ui-taste", description: "Taste" }, { name: "/mcp__x__hello", description: "Hi" }]);
+    assert.ok(Date.now() - started < 8000, "it ended as soon as the server was up");
+    await localMachine(trash).claudeCommands(join(dir, "repo"));
+    assert.equal(readFileSync(sent, "utf8").trim().split("\n").filter((line) => line.includes('"args"')).length, 1, "nothing moved: not asked again");
+  } finally {
+    process.env["PATH"] = path;
+    for (const [name, value] of Object.entries(homes)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    if (shell === undefined) delete process.env["SHELL"];
+    else process.env["SHELL"] = shell;
+  }
+  assert.equal(existsSync(join(dir, "planted")), false);
+  const lines = readFileSync(sent, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { args?: string[]; cwd?: string; request?: { subtype: string } });
+  assert.ok(lines[0]!.args!.includes("--no-session-persistence") && lines[0]!.args!.includes('{"disableAllHooks":true}'), JSON.stringify(lines[0]!.args));
+  assert.equal(realpathSync(lines[0]!.cwd!), realpathSync(join(dir, "repo")));
+  assert.deepEqual(lines.slice(1).map((line) => line.request!.subtype), ["initialize", "mcp_status", "mcp_status"], "no prompt: no model call");});
 
 test("an agent is asked for on the machine's own connection, and a key that no longer reads is a failure", async () => {
   const broken = machineFor(sshNode, unreachable);

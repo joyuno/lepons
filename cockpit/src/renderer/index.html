@@ -655,6 +655,282 @@
       .paneMessage .row { margin-top: 14px; justify-content: center; }
       .paneMessage .row button { flex: none; padding: 7px 16px; }
       .paneMessage .row button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      /* A session's chat over its terminal (chat-view.ts); the terminal stays laid out underneath at its size.
+         Padding and gap are the slot's, so the notes moved up here sit where they sat. */
+      .chatCover {
+        position: absolute; inset: 0; z-index: 1; background: var(--ground);
+        display: flex; flex-direction: column; gap: 8px; padding: 4px 6px 6px;
+      }
+      .chatView { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .chatList {
+        flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+        padding: 16px max(12px, calc((100% - 760px) / 2)); font-size: var(--text-size, 13px); line-height: 1.6;
+      }
+      .chatList:focus-visible { outline-offset: -2px; }
+      .chatUser { align-self: flex-end; max-width: min(82%, 600px); display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+      .chatBubble {
+        padding: 7px 12px; border-radius: 12px 12px 4px 12px; border: 1px solid var(--line); background: var(--raise);
+        white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .chatUser time { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .chatPhoto {
+        display: inline-flex; align-items: center; gap: 4px; margin: 0 2px; padding: 0 7px; border-radius: 10px;
+        background: var(--panel); border: 1px solid var(--line); font-size: .9em; color: var(--muted); vertical-align: 1px;
+      }
+      .chatPhoto .lucide { margin: 0; }
+      .chatLive { align-self: flex-start; display: flex; align-items: center; gap: 6px; max-width: 100%; color: var(--live); font-size: .92em; }
+      .chatLive[hidden] { display: none; }
+      .chatLive::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: chatPulse 1.2s var(--ease) infinite; }
+      .chatLive span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .chatLive span + span { flex: none; overflow: visible; }
+      @keyframes chatPulse { 50% { opacity: .3; } }
+      @media (prefers-reduced-motion: reduce) { .chatLive::before { animation: none; } }
+      .chatAgent { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
+      .chatAnswer { max-width: 100%; overflow-wrap: anywhere; }
+      .chatAnswer > :first-child { margin-top: 0; }
+      .chatAnswer > :last-child { margin-bottom: 0; }
+      .chatAnswer :is(p, ul, ol, pre, blockquote, table) { margin: .5em 0; }
+      .chatAnswer :is(h1, h2, h3, h4, h5, h6) { margin: 1em 0 .4em; font-size: 1.05em; font-weight: 600; line-height: 1.35; }
+      .chatAnswer h1 { font-size: 1.25em; }
+      .chatAnswer h2 { font-size: 1.15em; }
+      .chatAnswer :is(ul, ol) { padding-left: 1.5em; }
+      .chatAnswer a { color: var(--link); }
+      .chatAnswer a:hover { color: var(--live); }
+      .chatAnswer code { font: .96em var(--code-font, var(--mono)); background: var(--raise); border-radius: 3px; padding: .1em .35em; }
+      .chatAnswer pre { padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow-x: auto; }
+      .chatAnswer pre code { background: none; padding: 0; }
+      .chatAnswer blockquote { padding: .1em .9em; border-left: 3px solid var(--line); color: var(--muted); }
+      .chatAnswer table { display: block; max-width: 100%; width: max-content; overflow-x: auto; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+      .chatAnswer :is(th, td) { padding: 5px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: normal; word-break: keep-all; min-width: 7em; max-width: 28em; }
+      .chatAnswer th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+      .chatAnswer tbody tr:nth-child(even) { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+      /* An answer's image (markdown.ts renderAnswer): its name until a file on the session's PC is read into it. */
+      .chatAnswer .chatImage { color: var(--link); text-decoration: underline dotted; overflow-wrap: anywhere; }
+      .chatAnswer img.chatImage { display: block; max-width: min(100%, 480px); max-height: 360px; margin: .3em 0; border: 1px solid var(--line); border-radius: 6px; }
+      .chatAnswer hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+      .chatAnswer mark { background: color-mix(in srgb, var(--live) 30%, transparent); color: inherit; border-radius: 2px; }
+      .chatAnswer .wikilink { color: var(--link); }
+      .chatCopy { width: 22px; height: 22px; margin-left: -4px; opacity: .6; }
+      .chatAgent:hover .chatCopy, .chatCopy:focus-visible { opacity: 1; }
+      .chatCopy.copied { color: var(--go); opacity: 1; }
+      .chatCopy .lucide { display: block; margin: auto; }
+      .chatWork { align-self: flex-start; max-width: 100%; }
+      .chatWorkHead {
+        display: inline-flex; align-items: center; gap: 6px; margin-left: -8px; padding: 3px 8px;
+        border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: .92em;
+        font-variant-numeric: tabular-nums; cursor: pointer;
+      }
+      .chatWorkHead:hover { background: var(--raise); color: var(--text); }
+      .chatWorkHead.live { color: var(--live); }
+      .chatChevron { display: inline-block; font-size: 14px; line-height: 1; transition: transform var(--t-fast) var(--ease); }
+      .chatWorkHead[aria-expanded="true"] .chatChevron { transform: rotate(90deg); }
+      .chatSteps {
+        display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: 3px 12px; margin-top: 4px;
+        padding: 2px 0 2px 12px; border-left: 1px solid var(--line); font-size: .92em;
+      }
+      .chatSteps[hidden] { display: none; }
+      .chatStep { display: contents; }
+      .chatStepKind, .chatStepResult { color: var(--muted); white-space: nowrap; }
+      .chatStep code { font: 1em var(--code-font, var(--mono)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .chatStepResult.failed { color: var(--stop); }
+      .chatStepResult.running { color: var(--live); }
+      .chatEmpty { margin: auto; text-align: center; color: var(--muted); font-size: 12.5px; }
+      .chatEmpty p { margin: 0; }
+      /* What a call gave back, under its line: two lines, then all of it with 더 보기. */
+      .chatStepOut { grid-column: 1 / -1; min-width: 0; margin: 0 0 4px; }
+      .chatStepOut pre, .chatSubBody pre {
+        margin: 0; padding: 4px 8px; border-radius: 5px; background: var(--raise); color: var(--muted);
+        font: .96em var(--code-font, var(--mono)); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24em; overflow: auto;
+      }
+      .chatMore { margin-top: 2px; padding: 0; border: 0; background: none; color: var(--link); font-size: .92em; cursor: pointer; }
+      .chatMore:hover { text-decoration: underline; }
+      /* A subagent's row (chat-view.ts subRow): what it was given and what it gave back. */
+      .chatSubBody { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; padding: 2px 0 2px 12px; border-left: 1px solid var(--line); font-size: .92em; }
+      .chatSubBody[hidden] { display: none; }
+      .chatSubHead { color: var(--muted); font-weight: 600; }
+      /* What a subagent was given and gave back is prose: the talk's own letters, not code's. */
+      .chatSubBody pre { font: inherit; }
+      .chatSubBody pre + .chatSubHead { margin-top: 4px; }
+      /* A prompt's picture, small in its bubble; a click shows it over the app. */
+      .chatThumb { display: inline-block; margin: 2px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: zoom-in; vertical-align: middle; overflow: hidden; }
+      .chatThumb img { display: block; max-width: 120px; max-height: 90px; object-fit: cover; }
+      .chatThumb:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
+      dialog.chatPhotoView { width: fit-content; max-width: 92vw; max-height: 92vh; padding: 0; overflow: hidden; }
+      dialog.chatPhotoView img { display: block; max-width: calc(92vw - 2px); max-height: calc(92vh - 2px); object-fit: contain; }
+      .chatPhotoClose { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; background: var(--panel); display: grid; place-items: center; }
+      /* A line sent from the composer until the record has it: dim while on its way, red once it could not go. */
+      .chatPending { display: contents; }
+      .chatUser.sending .chatBubble { opacity: .55; }
+      .chatSendState { font-size: 10.5px; color: var(--muted); }
+      .chatUser.failed .chatBubble { border-color: var(--stop); }
+      .chatUser.failed .chatSendState { color: var(--stop); }
+      .chatSendState button { padding: 0; border: 0; background: none; color: var(--link); font-size: inherit; text-decoration: underline; cursor: pointer; }
+      /* Not typed yet: an x takes it back. */
+      .chatSendState:has(.chatTakeBack) { display: inline-flex; align-items: center; gap: 4px; }
+      .chatSendState .chatTakeBack { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 999px; color: var(--muted); text-decoration: none; }
+      .chatSendState .chatTakeBack:hover, .chatSendState .chatTakeBack:focus-visible { background: var(--line); color: var(--text); }
+      .chatTakeBack .lucide, .chatTakeBack svg { display: block; margin: 0; width: 12px; height: 12px; }
+      /* Where a stopped turn stopped (chat-view.ts stoppedMark, stopBox). */
+      .chatStopped { display: flex; align-items: center; gap: 6px; width: fit-content; margin: 2px 0 0; color: var(--muted); font-size: .92em; }
+      .chatStopped::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 1px; background: currentColor; }
+      .chatStopped[hidden] { display: none; }
+      /* The menu on the terminal, as buttons under the last row (chat-view.ts syncAsk). */
+      .chatAsk {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px;
+        border: 1px solid color-mix(in srgb, var(--live) 45%, var(--line)); border-radius: 8px;
+        background: color-mix(in srgb, var(--live) 9%, var(--panel));
+      }
+      .chatAsk[hidden] { display: none; }
+      .chatAsk.sent { opacity: .6; }
+      .chatAsk.settling { opacity: .85; }
+      .chatAskQuestion { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+      .chatAskCode {
+        max-width: 100%; max-height: 12em; overflow: auto; padding: 4px 8px; border-radius: 5px; background: var(--raise);
+        font: .96em var(--code-font, var(--mono)); white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      .chatAskCode[hidden] { display: none; }
+      .chatAskOptions { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+      /* Two classes: the .listRow rule further down would stack the key over its words. */
+      .chatAsk .chatAskOption { flex-direction: row; align-items: flex-start; gap: 10px; }
+      .chatAsk .chatAskOption:hover { background: color-mix(in srgb, var(--live) 14%, var(--panel)); }
+      .chatAskOption:focus-visible { outline: none; border-color: var(--live); }
+      .chatAskKey {
+        flex: none; min-width: 22px; height: 22px; padding: 0 4px; border-radius: 4px; display: grid; place-content: center;
+        background: var(--raise); font: 600 11.5px var(--mono); font-variant-numeric: tabular-nums;
+      }
+      .chatAskKey.checked { background: var(--link); color: var(--ground); }
+      .chatAskWords { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 22px; }
+      .chatAskWords .sub { line-height: 1.45; }
+      /* A question set's questions (chat-ask.ts tabs): the lit one is the one on screen. */
+      .chatAskTabs { display: flex; flex-wrap: wrap; gap: 4px; }
+      .chatAskTab {
+        padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: none;
+        color: var(--muted); font-size: .92em; cursor: pointer;
+      }
+      .chatAskTab[aria-selected="true"] { border-color: var(--live); color: var(--text); background: color-mix(in srgb, var(--live) 18%, var(--panel)); font-weight: 600; }
+      .chatAskTab:focus-visible, .chatAskKeyButton:focus-visible, .chatAskAway:focus-visible { outline: 2px solid var(--live); outline-offset: 1px; }
+      .chatAskLines {
+        margin: 0; max-width: 100%; max-height: 16em; overflow: auto; padding: 6px 8px; border-radius: 5px; background: var(--raise);
+        font: .96em var(--code-font, var(--mono)); white-space: pre-wrap; overflow-wrap: anywhere;
+      }
+      /* Words for a free-text row, under it; a raw card's, under its keys. */
+      .chatAskFree { display: flex; gap: 6px; width: 100%; }
+      .chatAskOptions .chatAskFree { padding: 2px 0 6px 42px; }
+      .chatAskFree input { flex: 1; min-width: 0; }
+      .chatAskFree .chatSend { flex: none; align-self: center; }
+      .chatAskKeys { display: flex; flex-wrap: wrap; gap: 4px; }
+      .chatAskKeyButton {
+        min-width: 34px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--raise);
+        font: 600 12px var(--mono); cursor: pointer;
+      }
+      .chatAskKeyButton:hover { border-color: var(--muted); }
+      .chatAskAway { padding: 0; border: 0; background: none; color: var(--link); font-size: 12px; text-decoration: underline; cursor: pointer; }
+      .chatAsk button.go { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      .chatAsk [aria-disabled="true"] { cursor: default; }
+      /* What is typed to the session (chat-view.ts composer), under the list and as wide as its rows. */
+      .chatComposer { flex: none; display: flex; flex-direction: column; gap: 6px; padding: 8px max(12px, calc((100% - 760px) / 2)) 0; }
+      /* The subagents running now, one line over the composer (chat-view.ts syncSubs). */
+      .chatSubs { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+      .chatSubs[hidden] { display: none; }
+      .chatSubsHead {
+        align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 0; border-radius: 5px;
+        background: none; color: var(--live); font-size: inherit; font-variant-numeric: tabular-nums; cursor: pointer;
+      }
+      .chatSubsHead:hover { background: var(--raise); }
+      .chatSubsHead .lucide { transition: transform var(--t-fast) var(--ease); }
+      .chatSubsHead[aria-expanded="true"] .lucide { transform: rotate(180deg); }
+      .chatSubsList { margin: 0; padding: 0 8px 4px 20px; color: var(--muted); }
+      .chatSubsList[hidden] { display: none; }
+      .chatSubsList li { display: flex; gap: 10px; }
+      .chatSubsList li span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .chatSubsTime { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+      .chatBeta {
+        flex: none; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent);
+        background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-size: 11px; font-weight: 600;
+      }
+      .chatNote { margin: 0; font-size: 12px; color: var(--stop); overflow-wrap: anywhere; }
+      .chatNote[hidden] { display: none; }
+      .chatNoteRetry { padding: 0; border: 0; background: none; color: var(--link); font: inherit; text-decoration: underline; cursor: pointer; }
+      .chatInput {
+        position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px 8px 8px 12px;
+        border: 1px solid var(--line); border-radius: 14px; background: var(--panel);
+      }
+      .chatInput:focus-within { border-color: var(--live); }
+      .chatInput textarea {
+        field-sizing: content; min-height: calc(1.6em * 2); max-height: 40vh; padding: 2px 0;
+        border: 0; border-radius: 0; background: none; resize: none; font-size: var(--text-size, 13px); line-height: 1.6;
+      }
+      .chatInput.locked textarea { color: var(--muted); }
+      /* "/" and "@" over the field (chat-view.ts updateSuggest), as the terminal's popup sits over its prompt. */
+      .chatSuggest {
+        position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 5; max-height: min(320px, 50vh); overflow: auto;
+        padding: 4px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+        background: var(--panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .3);
+      }
+      .chatSuggest[hidden] { display: none; }
+      .chatSuggestRow { flex: none; display: flex; align-items: baseline; gap: 12px; padding: 6px 10px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+      .chatSuggestRow:hover { background: var(--raise); }
+      .chatSuggestRow[aria-selected="true"] { background: var(--raise); box-shadow: inset 2px 0 0 var(--live); }
+      .chatSuggestName { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+      .chatSuggestDetail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+      .chatLost { flex: none; margin: 0; padding: 6px 12px; text-align: center; font-size: 12.5px; color: var(--live); background: var(--raise); border-bottom: 1px solid var(--line); }
+      .chatLost[hidden], .chatLostRetry[hidden] { display: none; }
+      .chatLostRetry { margin: 0 0 0 10px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+      .chatLostRetry:hover, .chatLostRetry:focus-visible { border-color: var(--live); }
+      .chatAttached { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
+      .chatAttached[hidden] { display: none; }
+      .chatAttachedItem { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 2px 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--raise); font-size: 12px; }
+      .chatAttachedName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+      .chatAttachedRemove { flex: none; width: 20px; height: 20px; margin: 0; padding: 0; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+      .chatAttachedRemove:hover, .chatAttachedRemove:focus-visible { background: var(--line); color: inherit; }
+      .chatInput.filesOver { outline: 2px dashed var(--live); outline-offset: 2px; }
+      .chatBar { display: flex; align-items: center; gap: 6px; }
+      .chatBar :is(.chatAttach, .chatSend), .chatAskFree .chatSend { width: 30px; height: 30px; margin: 0; padding: 0; border-radius: 8px; display: grid; place-items: center; }
+      .chatAttach { border: 1px solid var(--line); }
+      /* An inline svg sits on the text baseline and leaves the line's descent under it: block, so the icon is centred. */
+      :is(.chatBar, .chatAskFree) .lucide, :is(.chatBar, .chatAskFree) .lucide svg { display: block; margin: 0; }
+      /* The phone's send button (mobile ink / onInk): the text colour as its fill, the ground's as its arrow. */
+      .chatBar .chatSend { margin-left: auto; }
+      /* The question card's own send (a written answer) is the composer's button, so one send looks like one send. */
+      :is(.chatBar, .chatAskFree) .chatSend { border: 0; border-radius: 50%; background: var(--text); color: var(--ground); }
+      :root[data-theme="light"] :is(.chatBar, .chatAskFree) .chatSend { color: #fff; }
+      :is(.chatBar, .chatAskFree) .chatSend svg { display: block; width: 16px; height: 16px; stroke-width: 2.6; }
+      :is(.chatBar, .chatAskFree) .chatSend:hover:not([aria-disabled="true"]) { opacity: .85; }
+      /* While the AI works it stops it (a filled square), or takes back a line not typed yet (an x). */
+      .chatBar .chatSend.stop svg { width: 14px; height: 14px; }
+      .chatBar .chatSend.stop rect { fill: currentColor; }
+      .chatBar [aria-disabled="true"] { opacity: .4; cursor: default; }
+      /* The model chip and the menu it opens above itself (chat-view.ts). */
+      .chatChip { position: relative; min-width: 0; }
+      .chatChip[hidden] { display: none; }
+      .chatChipButton {
+        height: 30px; max-width: 100%; margin: 0; padding: 0 8px 0 10px; display: flex; align-items: center; gap: 6px;
+        border: 1px solid var(--line); border-radius: 8px; background: none; font-size: 12.5px; cursor: pointer;
+      }
+      .chatChipButton > span:not(.chatLogo, .lucide) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .chatChipButton:hover, .chatChipButton[aria-expanded="true"] { background: var(--raise); }
+      .chatChipButton[aria-expanded="true"] { border-color: var(--live); }
+      .chatChipButton .lucide { color: var(--muted); }
+      .chatLogo { flex: none; display: grid; width: 14px; height: 14px; }
+      .chatLogo svg { width: 14px; height: 14px; }
+      .chatMenu {
+        position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 5; width: 300px; max-width: 80vw; max-height: 60vh; overflow: auto;
+        padding: 4px; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px;
+        background: var(--panel); box-shadow: 0 10px 28px rgba(0, 0, 0, .3); outline: none;
+      }
+      .chatMenu[hidden] { display: none; }
+      .chatMenu [role="group"] { display: flex; flex-direction: column; }
+      .chatMenuHead { padding: 6px 10px 3px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+      .chatMenu .chatMenuItem { flex-direction: row; align-items: center; gap: 8px; min-height: 34px; }
+      .chatMenu .chatMenuItem:focus-visible { outline: none; border-color: var(--live); }
+      .chatMenu .chatMenuItem[aria-checked="true"] { background: var(--raise); }
+      .chatMenu .chatMenuItem[aria-disabled="true"] { opacity: 1; color: var(--muted); cursor: default; }
+      .chatMenu .chatMenuItem[aria-disabled="true"]:hover { background: none; border-color: transparent; }
+      .chatMenuName { flex: 1; min-width: 0; }
+      .chatMenuNow { font-size: 12px; color: var(--live); }
+      .chatMenuNote { font-size: 11.5px; color: var(--muted); }
+      .chatMenuAside { padding: 2px 10px 6px; }
+      .chatMenuLine { height: 1px; margin: 4px; background: var(--line); }
       #map, #guide { flex: 1; min-height: 0; min-width: 0; overflow: auto; position: relative; }
       /* The title bar's "확인 필요 n": opens the workflow map on the next waiting session. */
       .wmPill {
@@ -769,15 +1045,24 @@
       .autoSet { display: flex; flex-direction: column; }
       .autoSection > .autoLog { margin: 0; }
       .autoSet .setSchedForm { margin: 6px 0 10px; }
-      .autoBotHead h2 { margin: 0; font-size: 18px; font-weight: 600; }
-      .autoBotTools { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
-      .autoMenu { display: flex; gap: 6px; }
+      /* A bot's head: 자동화 / name on one line, where it works under the name, the buttons right; a long name wraps beside them. */
+      .autoBotHead { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: baseline; gap: 4px 10px; }
+      .autoBotHead h2 { margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; word-break: keep-all; overflow-wrap: anywhere; }
+      /* The lamp hangs before the name, so a wrapped name and the line under it start where the name does. */
+      .autoBotHead h2 { padding-left: 16px; text-indent: -16px; }
+      .autoBotHead h2 .lamp { display: inline-block; margin-right: 9px; vertical-align: 3px; text-indent: 0; }
+      .autoBotWhere { grid-column: 3; padding-left: 16px; }
+      .autoBotTools { grid-column: 4; grid-row: 1 / 3; align-self: center; display: flex; gap: 6px; margin-left: 16px; }
+      .autoMore { position: relative; display: flex; }
+      .autoMore .setMenu { min-width: 160px; }
       .autoBotGrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 28px; }
       .autoSide { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
       .autoProfile { padding: 16px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); line-height: 1.75; white-space: pre-line; }
       .autoProfile p { margin: 0 0 12px; }
       .autoProfile .autoRule { margin: 0; color: var(--live); font-size: 12.5px; }
-      .autoWork { display: grid; grid-template-columns: 120px minmax(0, 1fr) 28px; gap: 12px; align-items: start; padding: 8px 10px; border-radius: 6px; white-space: pre-line; }
+      /* 하는 일 and 최근 실행 share one column for times, so their words start at the same line; an empty note lines up with them. */
+      .autoWork { display: grid; grid-template-columns: 136px minmax(0, 1fr) 28px; gap: 12px; align-items: baseline; padding: 8px 10px; border-radius: 6px; white-space: pre-line; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
+      .autoSide > .autoSection > p.autoMuted { padding: 0 10px; }
       .autoWork:hover { background: var(--raise); }
       /* See-through, not hidden: closing the bot dialog gives the focus back to the pencil that opened it. */
       .autoWork .autoIb { opacity: 0; margin-top: -4px; }
@@ -792,7 +1077,9 @@
       .autoFormGroup + .autoFormGroup { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 6px; }
       .autoAddJob { font-size: 13px; }
       .autoSub { margin: 6px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
-      .autoRun { display: grid; grid-template-columns: 14px 120px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 6px 0; font-size: 12.5px; }
+      .autoRun { display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 6px 10px; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
+      .autoRun > .autoMuted { white-space: nowrap; }
+      .autoRun .lamp { display: inline-block; margin-right: 9px; vertical-align: 1px; }
       .autoFormJobs { display: flex; flex-direction: column; gap: 12px; }
       .autoFormJob { display: flex; gap: 8px; align-items: flex-start; padding: 2px 0; border-radius: 6px; }
       .autoFormJob.dragging { opacity: .45; }
@@ -815,8 +1102,13 @@
       .autoDialogFoot > p { flex: 1; min-width: 0; margin: 0; }
       /* A note's own display would show it empty, taking the row's room and pushing the buttons to the middle. */
       .autoDialogFoot > p[hidden] { display: none; }
+      /* A dialog's form fills its width: the 440px caps are for the settings page's column. */
+      :is(#settingsPanel, .autoSet).autoDialogBody :is(.setSchedForm, select) { max-width: none; }
       :is(#settingsPanel, .autoSet).autoDialogFoot .setButtons { margin: 0 0 0 auto; flex-direction: row-reverse; justify-content: flex-start; }
       label.autoCheck { display: flex; align-items: center; gap: 8px; margin: 2px 0; color: var(--text); font-size: 12.5px; }
+      /* An AI's request (renderer/approval.ts): a field is its label, with a 바뀜 badge, its control, and what it was. */
+      .approvalField { display: flex; flex-direction: column; gap: 6px; }
+      .approvalField[hidden], .approvalField [hidden] { display: none; }
       @media (max-width: 760px) { .autoBotGrid { grid-template-columns: minmax(0, 1fr); } }
       /* --- the workflow map (workflowmap/): a canvas with its strip, zoom bar,
          focus bar and right panel over it. Every colour is a theme variable:
@@ -986,7 +1278,29 @@
       #setupTotpKey { display: block; margin-top: 6px; font: 12px var(--mono); user-select: all; }
       #setupTotpBox[hidden], #setupTotpDone[hidden], #setupPasswordKept[hidden] { display: none; }
       #phoneStatus { user-select: text; }
-      #relayDialog .phoneQr img { width: 200px; height: 200px; }
+      /* One QR in its frame: the border says which app scans it, the middle mark is what H error correction pays for. */
+      .qrPair { display: flex; gap: 16px; justify-content: center; margin-top: 10px; }
+      .qrBox { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: 10px 0; }
+      .qrPair .qrBox { margin: 0; }
+      .qrFrame { position: relative; width: 200px; height: 200px; padding: 6px; box-sizing: border-box; border: 3px solid var(--line); border-radius: 12px; background: #fff; }
+      .qrPair .qrFrame { width: 170px; height: 170px; }
+      .qrFrame.teal { border-color: var(--link); }
+      .qrFrame.amber { border-color: var(--live); }
+      .qrFrame > img:first-child { display: block; width: 100%; height: 100%; }
+      .qrFrame > img:first-child:not([src]) { visibility: hidden; }
+      .qrMark { position: absolute; left: 50%; top: 50%; width: 22%; height: 22%; transform: translate(-50%, -50%); box-sizing: border-box; padding: 3px; border-radius: 22%; background: #fff; }
+      .qrMark svg { width: 100%; height: 100%; }
+      .qrMark.shield { color: var(--link); display: flex; }
+      .qrChip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 12.5px; }
+      .qrChip.teal { border-color: var(--link); background: color-mix(in srgb, var(--link) 9%, var(--ground)); }
+      .qrChip.amber { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
+      .qrChip svg { width: 14px; height: 14px; flex: none; }
+      /* The ring keeps the icon's dark tile visible on the dark theme's panel. */
+      .qrChipIcon, .qrTitleIcon { width: 16px; height: 16px; border-radius: 4px; flex: none; box-shadow: 0 0 0 1px var(--line); }
+      .qrTitleIcon { margin-right: 6px; vertical-align: -3px; }
+      .qrKey { margin-top: 12px; }
+      .qrKey summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+      #relayLeft { font: 600 12.5px var(--mono); }
       #relayScan[hidden], #relayConfirm[hidden], #relayDialog button[hidden] { display: none; }
       #relayCode { display: block; margin: 12px 0; text-align: center; font: 600 32px var(--mono); letter-spacing: 6px; }
       #settingsPanel .setAdvanced { max-width: 440px; margin-top: 18px; }
@@ -1093,6 +1407,12 @@
       #settingsPanel label:has(input:checked) { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
       #settingsPanel label:has(input:focus-visible) { outline: 2px solid var(--live); outline-offset: 2px; }
       #settingsPanel input:focus-visible { outline: none; }
+      /* A setting of its own after a group of choices. */
+      #settingsPanel label.setApart { margin-top: 18px; }
+      #settingsPanel .setBeta {
+        margin-left: -2px; padding: 1px 7px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--live) 55%, transparent);
+        background: color-mix(in srgb, var(--live) 14%, transparent); color: var(--live); font-size: 11px; font-weight: 600;
+      }
       :is(#settingsPanel, .autoSet) .setButtons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
       #settingsPanel .setPetDelete {
         margin-left: auto; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px;
@@ -1116,14 +1436,14 @@
       #settingsPanel .setStepper output { min-width: 48px; text-align: center; font-variant-numeric: tabular-nums; }
       /* The AI accounts tab: PCs as pills wearing their rail lamp, then one
          card row per AI -- name, state badge, its one button on the right. */
-      :is(#settingsPanel, .autoSet) .setChips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
-      :is(#settingsPanel, .autoSet) .setChips:empty { display: none; }
-      :is(#settingsPanel, .autoSet) .setChips button {
+      :is(#settingsPanel, .autoSet, #importDialog) .setChips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+      :is(#settingsPanel, .autoSet, #importDialog) .setChips:empty { display: none; }
+      :is(#settingsPanel, .autoSet, #importDialog) .setChips button {
         display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
         border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 12.5px;
       }
-      :is(#settingsPanel, .autoSet) .setChips button:hover { border-color: var(--muted); }
-      :is(#settingsPanel, .autoSet) .setChips button[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
+      :is(#settingsPanel, .autoSet, #importDialog) .setChips button:hover { border-color: var(--muted); }
+      :is(#settingsPanel, .autoSet, #importDialog) .setChips button[aria-pressed="true"] { border-color: var(--live); background: color-mix(in srgb, var(--live) 9%, var(--ground)); }
       :is(#settingsPanel, .autoSet) .setAccount {
         display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: 440px; margin: 6px 0; padding: 9px 12px;
         border: 1px solid var(--line); border-radius: 8px; background: var(--ground);
@@ -1245,26 +1565,27 @@
         background: none; color: var(--muted); cursor: pointer;
       }
       #settingsPanel .setIcon:hover, #settingsPanel .setIcon[aria-expanded="true"] { border-color: var(--line); background: var(--raise); color: var(--text); }
-      #settingsPanel .setMenu {
+      :is(#settingsPanel, #automation) .setMenu {
         position: absolute; right: 0; top: calc(100% + 4px); z-index: 2; min-width: 140px; padding: 4px;
         display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px;
         background: var(--panel); box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
       }
       #settingsPanel .setMenu[hidden] { display: none; }
-      #settingsPanel .setMenu button {
+      :is(#settingsPanel, #automation) .setMenu button {
         border: 0; background: none; padding: 7px 10px; border-radius: 5px; text-align: left; font-size: 12.5px; cursor: pointer;
       }
-      #settingsPanel .setMenu button:hover, #settingsPanel .setMenu button:focus-visible { background: var(--raise); }
-      #settingsPanel .setMenu button.danger { color: var(--stop); border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; }
+      :is(#settingsPanel, #automation) .setMenu button:is(:hover, :focus-visible) { background: var(--raise); }
+      :is(#settingsPanel, #automation) .setMenu button.danger { color: var(--stop); border-top: 1px solid var(--line); border-radius: 0 0 5px 5px; margin-top: 4px; }
       #settingsPanel ul { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
-      #importList { max-height: 52vh; overflow-y: auto; overflow-x: hidden; margin: 4px 0 10px; }
-      #importList h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 12px 0 4px; }
-      .importRow { display: flex; align-items: center; gap: 8px; padding: 3px 4px; font-size: 12.5px; cursor: pointer; }
-      .importRow.child { padding-left: 28px; font: 11.5px var(--sans); }
-      .importRow.known { opacity: .5; cursor: default; }
-      .importRow .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .importRow .meta { margin-left: auto; padding-left: 12px; color: var(--muted); font-size: 11px; white-space: nowrap; }
       #importNote { white-space: pre-line; }
+      #importList h3 { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--muted); margin: 10px 0 2px; padding: 0 10px; }
+      #importList h3 label { display: flex; align-items: center; gap: 8px; margin: 0; cursor: pointer; }
+      /* The rows are labels, not a field's caption (the bare label rule further down). */
+      #importList label.listRow { margin: 0; color: var(--text); font-size: inherit; }
+      #importList h3[hidden] { display: none; }
+      #importList .listRow.known { opacity: .55; }
+      #importList .rowMeta.bad { color: var(--stop); white-space: normal; text-align: right; max-width: 45%; }
+      #importDialog .setChips button svg { width: 14px; height: 14px; flex: none; }
       /* The agent picker and the in-app dialog focus the likely choice by
          hand; a mouse-opened dialog would otherwise not show which one Enter
          takes. */
@@ -1538,6 +1859,7 @@
       }
       :where(button:not([class]):hover) { border-color: var(--muted); }
       :where(button.go) { background: var(--live); border-color: var(--live); color: #21160a; font-weight: 600; }
+      button.go:disabled { opacity: .45; cursor: default; }
       .listRow {
         display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
         padding: 7px 10px; border: 1px solid transparent; border-radius: 5px;
@@ -2002,14 +2324,18 @@
       </form>
     </dialog>
 
-    <dialog id="importDialog" aria-labelledby="importTitle">
-      <h2 id="importTitle" data-i18n="import.title"></h2>
+    <dialog id="importDialog" class="picker" aria-labelledby="importTitle">
+      <div class="exHead"><h2 id="importTitle" data-i18n="import.title"></h2></div>
       <p class="sub" data-i18n="import.sub"></p>
-      <div id="importList"></div>
+      <div class="setChips" id="importChips"></div>
+      <div class="pickList" id="importList"></div>
       <div class="note" id="importNote"></div>
-      <div class="row">
-        <button type="button" class="go" id="importRun" data-i18n="import.run"></button>
-        <button type="button" id="importClose" data-i18n="common.close"></button>
+      <div class="exFoot">
+        <span class="sub" id="importCount"></span>
+        <span class="footEnd">
+          <button type="button" id="importClose" data-i18n="common.close"></button>
+          <button type="button" class="go" id="importRun"></button>
+        </span>
       </div>
     </dialog>
 
@@ -2345,33 +2671,56 @@
         <h3 data-i18n="setup.totpHead"></h3>
         <p class="note good" id="setupTotpDone" data-i18n="setup.totpDone" hidden></p>
         <div id="setupTotpBox">
-          <p class="guideHint" data-i18n="setup.totpGet"></p>
-          <div class="phoneQr">
-            <img id="setupTotpQr" alt="" />
-            <div>
-              <p class="guideHint" data-i18n="setup.totpScan"></p>
-              <p class="guideHint" data-i18n="setup.totpKey"></p>
-              <code id="setupTotpKey"></code>
+          <p class="guideHint" data-i18n="setup.totpBody"></p>
+          <div class="qrBox">
+            <div class="qrFrame teal">
+              <img id="setupTotpQr" alt="" />
+              <span class="qrMark shield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span>
             </div>
+            <span class="qrChip teal"><span class="lucide"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span><span data-i18n="setup.totpChip"></span></span>
           </div>
           <label for="setupCode" data-i18n="setup.code"></label>
           <input id="setupCode" type="text" inputmode="numeric" maxlength="7" autocomplete="off" />
+          <details class="qrKey">
+            <summary data-i18n="setup.keyByHand"></summary>
+            <p class="guideHint" data-i18n="setup.totpKey"></p>
+            <code id="setupTotpKey"></code>
+          </details>
         </div>
       </section>
 
       <section class="phoneStep" data-setup="app" hidden>
-        <h3 data-i18n="setup.appHead"></h3>
-        <p class="guideHint"><strong>iPhone</strong> <span data-i18n="setup.appIos"></span></p>
-        <p class="guideHint"><strong>Android</strong> <span data-i18n="setup.appPlay"></span></p>
-        <p class="guideHint" data-i18n="setup.appSite"></p>
+        <h3><img class="qrTitleIcon" src="lepons.png" alt="" /><span data-i18n="setup.appHead"></span></h3>
+        <p class="guideHint" data-i18n="setup.appBody"></p>
+        <div class="qrPair">
+          <div class="qrBox">
+            <div class="qrFrame">
+              <img id="appQrIos" alt="" />
+              <img class="qrMark" src="lepons.png" alt="" />
+            </div>
+            <span class="qrChip"><strong>iPhone</strong> App Store</span>
+          </div>
+          <div class="qrBox">
+            <div class="qrFrame">
+              <img id="appQrAndroid" alt="" />
+              <img class="qrMark" src="lepons.png" alt="" />
+            </div>
+            <span class="qrChip"><strong>Android</strong> Google Play</span>
+            <span class="guideHint" data-i18n="setup.appInvite"></span>
+          </div>
+        </div>
       </section>
 
       <!-- The QR, then the six digits both screens show. -->
       <section class="phoneStep" data-setup="pair">
         <h3 data-i18n="setup.pairHead"></h3>
-        <div class="phoneQr" id="relayScan">
-          <img id="relayQr" alt="" />
-          <p class="guideHint" data-i18n="relay.scan"></p>
+        <div class="qrBox" id="relayScan">
+          <div class="qrFrame amber">
+            <img id="relayQr" alt="" />
+            <img class="qrMark" src="lepons.png" alt="" />
+          </div>
+          <span class="qrChip amber"><img class="qrChipIcon" src="lepons.png" alt="" /><span data-i18n="setup.pairChip"></span></span>
+          <p class="guideHint"><span data-i18n="relay.scan"></span> <output id="relayLeft"></output></p>
         </div>
         <section id="relayConfirm" hidden>
           <p class="sub" id="relayFrom"></p>

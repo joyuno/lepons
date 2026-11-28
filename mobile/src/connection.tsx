@@ -1,10 +1,12 @@
 import { getRandomBytes } from "expo-crypto";
+import { router } from "expo-router";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, AppState, Platform } from "react-native";
 
 import type { PhoneCaller, PhoneEvents, UrlFor } from "../../cockpit/src/phone/contract.ts";
 import { createDemo, type Demo } from "./demo.ts";
 import { t } from "./i18n";
+import { canAskOf } from "./phone/link.ts";
 import { waitUntil } from "./phone/outbox.ts";
 import type { PhoneState } from "./phone/types.ts";
 import { stateOf } from "./phone/validate.ts";
@@ -57,6 +59,14 @@ export interface Connection {
   stopDemo(): void;
   /** The PC's sessions and PCs, from the live stream; undefined until the first "state". */
   phone: PhoneState | undefined;
+  /** Whether the PC can be asked anything now: a live, signed-in link (or the demo). Saved copies never make it true. */
+  canAsk: boolean;
+  /** When the `phone` on screen was received, live or (as the saved copy) from disk; undefined with nothing on screen, and in the demo. */
+  savedAt: number | undefined;
+  /** Since when the phone has been dialing the relay without reaching it; undefined otherwise. */
+  dialingSince: number | undefined;
+  /** Deletes every saved copy; what is on screen stays until the next update. */
+  clearSaved(): Promise<void>;
   /** Which session's screen the live stream carries (one per link); undefined: just the list. */
   watch(session: string | undefined): void;
   /** Stops watching this session, unless another screen has taken the stream already. */
@@ -98,7 +108,7 @@ const THIS_COMPUTER = new Set(["이 PC", "This computer", "本机"]);
 /** What a paired PC is called here: its name, else its key's first bytes, enough to tell two apart. */
 export const pcLabel = (pc: store.Pc) => pc.name ?? `PC ${pc.id.slice(0, 8).toUpperCase()}`;
 
-export const halted = (status: RelayStatus) => ["off", "replaced", "error", "refused"].includes(status.kind);
+export const halted = (status: RelayStatus) => ["off", "replaced", "error", "refused", "unpaired"].includes(status.kind);
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
@@ -114,7 +124,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   /** Which PC the live client was opened for: a pairing in progress is another one's. */
   const clientFor = useRef<string | undefined>(undefined);
   const [server, setServerState] = useState(DEFAULT_SERVER);
-  const [status, setStatus] = useState<RelayStatus>({ kind: "off" });
+  const [status, setStatusState] = useState<RelayStatus>({ kind: "off" });
+  const [dialingSince, setDialingSince] = useState<number>();
+  /** Dial and backoff are one wait for the relay, timed from its start; the handshake means the relay answered. */
+  const setStatus = (s: RelayStatus) => {
+    setStatusState(s);
+    setDialingSince((since) => (s.kind === "connecting" && s.phase !== "handshake" ? since ?? Date.now() : undefined));
+  };
   const [token, setToken] = useState<string>();
   /** The sign-in as of now, for a reply that ends it from an older render; emptied at once, so several replies tell once. */
   const tokenNow = useRef<string | undefined>(undefined);
@@ -123,6 +139,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [demo, setDemo] = useState(false);
   const demoRef = useRef<Demo | undefined>(undefined);
   const [phone, setPhone] = useState<PhoneState>();
+  /** When the `phone` on screen came, and whether it is the saved copy (`disk`): the widget is never given one. */
+  const [received, setReceived] = useState<{ at: number; disk: boolean }>();
   const [pushOff, setPushOff] = useState(true);
   const [doneOff, setDoneOff] = useState(false);
   const [termSize, setTermSizeState] = useState<store.TermSize>("medium");
@@ -137,7 +155,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const emit = (name: string, data: unknown) => {
     if (name === "state") {
       const next = stateOf(data);
-      if (next) setPhone(next);
+      if (next) {
+        setPhone(next);
+        setReceived({ at: Date.now(), disk: false });
+        // Signed in only: a list still arriving after a sign-out or unpair would put back the folder they deleted.
+        if (!demoRef.current && activeNow.current && tokenNow.current !== undefined) store.saved.saveState(activeNow.current, next);
+      }
     } else if (name === "end") {
       // The PC ended the stream (sign-in over, or "끊기"): ask again; a 401 then signs out.
       stream();
@@ -156,9 +179,22 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     tokenNow.current = undefined;
     setToken(undefined);
     setPhone(undefined);
+    setReceived(undefined);
     store.chats.clear();
     forgetOpened();
-    if (activeNow.current) void store.saveToken(activeNow.current, "");
+    if (activeNow.current) {
+      void store.saveToken(activeNow.current, "");
+      // What it showed goes with the sign-in: the next person at this phone signs in to see it.
+      store.saved.forgetPc(activeNow.current);
+    }
+  };
+
+  /** The PC's last saved list, until a live one comes; only for a PC still in use when it is read, never in the demo. */
+  const showSaved = async (pc: string) => {
+    const copy = await store.saved.loadState(pc);
+    if (!copy || activeNow.current !== pc || demoRef.current) return;
+    setPhone(copy.state);
+    setReceived({ at: copy.at, disk: true });
   };
 
   /** One request, to the demo or over the link; a 401 means the PC forgot this sign-in. */
@@ -245,8 +281,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       setActive(saved?.id);
       setServerState(saved?.server ?? savedServer);
       setToken(savedToken);
+      // Before the link opens, so a live list can only come after it; signed out, there is nothing to show.
+      if (saved && savedToken) await showSaved(saved.id);
       setLoaded(true);
       if (saved) await open({ server: saved.server, pairing: saved, token: savedToken });
+      await heardByWidget().catch(() => undefined);
     })();
     return () => {
       client.current?.stop();
@@ -287,6 +326,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let resume = false;
     const sub = AppState.addEventListener("change", (state) => {
+      // Saves wait up to 15 s; the OS may end a background app before then.
+      if (state === "background") void store.saved.flush();
       const c = client.current;
       if (!c) return;
       if (state === "background" && picking > 0) return;
@@ -300,6 +341,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         resume = false;
         c.start();
       }
+      if (state === "active") void heardByWidget().catch(() => undefined);
     });
     return () => sub.remove();
   }, []);
@@ -307,7 +349,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   /** Everything one PC showed goes when another takes its place; its sign-in is read before anything changes. */
   const useOne = async (next: store.Pc | undefined, list: store.Pc[]) => {
     const nextToken = next ? await store.loadToken(next.id) : undefined;
-    openGen.current++;
+    const gen = ++openGen.current;
     client.current?.stop();
     client.current = undefined;
     watching.current = undefined;
@@ -317,19 +359,55 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setPcs(list);
     setActive(next?.id);
     setPhone(undefined);
+    setReceived(undefined);
     tokenNow.current = nextToken;
     setToken(nextToken);
     setStatus({ kind: "off" });
     if (next) setServerState(next.server);
+    // The next PC's own copy, never the last one's; switching keeps both on disk.
+    if (next && nextToken) await showSaved(next.id);
+    // A newer switch went ahead during that read: it alone saves and opens.
+    if (gen !== openGen.current) return;
     await store.savePcs(list, next?.id);
     if (next) await open({ server: next.server, pairing: next, token: nextToken });
   };
 
-  // The home-screen widget shows the PC in use while this app has it (widget.ts); signed out, nothing.
+  /** This phone's half of an unpair: the PC, its sign-in and saved copies go; the next paired PC, if any, takes its place. */
+  const forgetHere = async (pc: store.Pc) => {
+    const list = pcs.filter((one) => one.id !== pc.id);
+    // Signed out from here on, before its folder goes: a list the old link still brings is not saved again.
+    tokenNow.current = undefined;
+    setToken(undefined);
+    await store.forgetPc(pc.id, list.length === 0);
+    await useOne(list[0], list);
+  };
+
+  // The owner unpaired this phone on the PC: forget it here too, asking nothing of a PC that already let go.
+  // Then to the start, as an unpair from the phone ends (pcs.tsx, settings.tsx): pairing with none left, else the next
+  // PC's home or sign-in. One navigation, which overtakes ToSignInWhenSignedOut's sign-in page; told even when a store throws.
   useEffect(() => {
-    if (demo) return;
+    if (status.kind !== "unpaired" || !pairing || clientFor.current !== pairing.id) return;
+    void forgetHere(pairing).catch(() => undefined).then(() => {
+      if (router.canDismiss()) router.dismissAll();
+      router.replace("/");
+      Alert.alert(t.unpaired, t.unpairedBody);
+    });
+  }, [status.kind]);
+
+  /** The widget's own link heard the unpair (android-widget.tsx): the PC in use is let go as if this link had. */
+  const heardByWidget = async () => {
+    const pc = activeNow.current;
+    if (!pc || (await store.takeUnpaired()) !== pc) return;
+    if (clientFor.current === pc) client.current?.stop({ kind: "unpaired" });
+  };
+
+  // The home-screen widget shows the PC in use while this app has it (widget.ts); signed out, nothing.
+  // Not the saved copy: the widget would show yesterday's list as just received, and keep it for 10 minutes.
+  const fromDisk = received?.disk === true;
+  useEffect(() => {
+    if (demo || fromDisk) return;
     updateWidget(pairing && token !== undefined && phone ? pcLabel(pairing) : undefined, phone?.sessions);
-  }, [demo, phone, pairing?.id, pairing?.name, token]);
+  }, [demo, fromDisk, phone, pairing?.id, pairing?.name, token]);
 
   // And what the widget needs to answer by itself, for the same PC and sign-in.
   useEffect(() => {
@@ -377,6 +455,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     signedIn: demo || token !== undefined,
     demo,
     phone,
+    canAsk: canAskOf(status, token !== undefined, demo),
+    savedAt: demo ? undefined : received?.at,
+    dialingSince: demo ? undefined : dialingSince,
+    async clearSaved() {
+      store.saved.clearAll();
+    },
     async pair(qr) {
       const id = store.pcIdOf(qr.pcStaticPub);
       const known = pcs.find((pc) => pc.id === id);
@@ -396,6 +480,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           setServerState(qr.server);
           setToken(undefined);
           setPhone(undefined);
+          setReceived(undefined);
           store.chats.clear();
           forgetOpened();
           void Promise.all([store.savePcs(list, id), store.saveToken(id, "")]);
@@ -429,10 +514,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         await request("POST", "/api/push-token", { body: { token: null } }).catch(() => undefined);
         await request("POST", "/api/logout", { body: {} }).catch(() => undefined);
       }
-      if (!pairing) return;
-      const list = pcs.filter((pc) => pc.id !== pairing.id);
-      await store.forgetPc(pairing.id, list.length === 0);
-      await useOne(list[0], list);
+      if (pairing) await forgetHere(pairing);
     },
     async signOut() {
       await request("POST", "/api/logout", { body: {} }).catch(() => undefined);
@@ -445,6 +527,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       store.chats.clear();
       watching.current = undefined;
       setPhone(undefined);
+      setReceived(undefined);
       setDemo(true);
       stream();
     },
@@ -454,6 +537,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       store.chats.clear();
       watching.current = undefined;
       setPhone(undefined);
+      setReceived(undefined);
       setDemo(false);
       stream();
     },

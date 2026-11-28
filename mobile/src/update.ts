@@ -50,3 +50,6 @@ export function openUpdate(latest: string | undefined): void {
   if (testflight) void Linking.openURL("itms-beta://").catch(() => Linking.openURL(APP_STORE));
   else void Linking.openURL(APP_STORE);
 }
+
+/** The store page, as settings' 업데이트 opens it: the App Store's version is asked first, to tell TestFlight from the store. */
+export const openStore = () => void storeVersion().then(openUpdate);

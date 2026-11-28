@@ -6,8 +6,12 @@
  * for a file outside every listed folder. A pane holds one project's tabs.
  */
 import { projectOf, sessionKey } from "../shared/ipc.ts";
+import { t } from "../i18n/i18n.ts";
 
 export { projectOf };
+
+/** A bot's session as its tab names it: "Bot · its name", so one in a pane is never taken for a person's. */
+export const botTabName = (name: string | undefined): string => (name ? t("session.botNamed", { name }) : t("session.bot"));
 
 export interface LeafView { id: string; project: string | null; tabs: number }
 export type Placement = { pane: string } | { split: string } | { blocked: true };

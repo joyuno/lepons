@@ -158,6 +158,31 @@ test("a refused pairing tells the phone and stops", () => {
   assert.equal(h.paired.length, 0);
 });
 
+test("unpairing tells the paired phone before the socket goes, then stops; with no phone it just stops", () => {
+  const own = generateKeyPair();
+  const h = harness({ knownPhone: own.publicKey });
+  h.client.start();
+  const socket = h.sockets[0]!;
+  socket.text("peer-joined");
+  const phone = phoneOf(h.pc.publicKey, h.roomId, undefined, own);
+  socket.bin(phone.hello);
+  phone.welcome(socket.sent[0]!);
+  for (const frame of phone.seal({ t: "event", name: "hello" })) socket.bin(frame);
+  assert.deepEqual(h.last(), { kind: "connected" });
+  h.client.unpair();
+  assert.deepEqual(phone.read(socket.sent.slice(1)), [{ t: "event", name: "hello" }, { t: "error", message: "unpaired" }]);
+  assert.equal(socket.closed, 1000);
+  assert.deepEqual(h.last(), { kind: "off" });
+  assert.equal(h.timers.length, 0);
+
+  const alone = harness({ knownPhone: own.publicKey });
+  alone.client.start();
+  alone.client.unpair();
+  assert.equal(alone.sockets[0]!.sent.length, 0);
+  assert.equal(alone.sockets[0]!.closed, 1000);
+  assert.deepEqual(alone.last(), { kind: "off" });
+});
+
 test("the remembered phone gets straight through; a stranger is ignored; a bad frame redials", () => {
   const own = generateKeyPair();
   const h = harness({ knownPhone: own.publicKey });

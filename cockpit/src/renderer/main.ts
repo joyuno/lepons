@@ -10,6 +10,7 @@ import { attachHover, hideTip, showTipAt } from "./hover.ts";
 import { iconFile, type IconMap } from "./file-icons.ts";
 import { treeHits } from "./tree-search.ts";
 import { base64Bytes, decodeText, fileKind, imageMime } from "./file-view.ts";
+import { chatImagePath, localPath } from "../shared/image-path.ts";
 import { renderCode } from "./code-view.ts";
 import { createEditor } from "./editor.ts";
 import { agents, isAgentKind, usageLimitAgents } from "../agent/agents.ts";
@@ -45,28 +46,32 @@ import { cellChanges, dividerMove, EASE, FAST, MID, openingBox, paneChange, plac
 import { newActivity, onMenu, onOutput, onTick, onTurnEnd, petMood, type Activity, type PetMood, type PetSession } from "./pet.ts";
 import { isTerminalReport, pcFailReason, pcState, sessionStatus, turnMark, turnsEnded, type PcState, type TurnEnd } from "../shared/status.ts";
 import { between, moved } from "./reorder.ts";
-import { positionAt, thumbOf, type TmuxView } from "./tmux-bar.ts";
-import { livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
+import { chatLine, chatStop, positionAt, thumbOf, type SendResult, type TmuxView } from "./tmux-bar.ts";
+import { cutOff, livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
 import { statusFrom } from "../phone/status.ts";
 import { layoutOf, leaves, readLayout, restorable, type SavedLayout } from "./restore.ts";
+import { chatAgent, createChatView, dropChat, handoffStep, leaveTerminal, liveLine, readAfterSwitch, typeLine, type ChatView, type Switch } from "./chat-view.ts";
+import { answerCard, chatCard, PC_KEYS, type ChatCard } from "./chat-ask.ts";
 import { canSplit, MAX_PANES, MAX_TABS, paneFits, splitOrder } from "./pane-size.ts";
-import { bandOf, dropAllowed, dropZone, projectOf, projectOfFile, type Zone } from "./tabs.ts";
+import { bandOf, botTabName, dropAllowed, dropZone, projectOf, projectOfFile, type Zone } from "./tabs.ts";
 import { editedPaths, outside, overlap } from "./worktree-files.ts";
 import { homeTerminal, leafView, projectZone, shownFile, shownKey, shownTab, Workspace, type Direction, type PaneFile, type PaneLeaf, type PaneNode, type PaneSplit, type PaneTab, type Landing, type ProjectZone } from "./workspace.ts";
 import { canTypeInto, installLine, installQuestion, terminalShell, tmuxInstallLine, type MissingAgent } from "../agent/install.ts";
-import { fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, type ThemeChoice } from "./settings-tabs.ts";
+import { chatViewOn, fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, type ThemeChoice } from "./settings-tabs.ts";
 import { initSettings, openSettings, phoneChanged, refreshSettings, remotesChanged } from "./settings.ts";
 import { relayLamp, relayRow } from "./relay-state.ts";
-import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts, type SetupStep } from "./phone-setup.ts";
+import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, STORE_LINKS, timeLeft, type SetupFacts, type SetupStep } from "./phone-setup.ts";
 import { dragLeavesScreen, firstDragX, reportedY, reportsDrags } from "./term-drag.ts";
 import { createWorkflowMap } from "./workflowmap/view.ts";
-import { automationEscape, initAutomation, showAutomation } from "./automation.ts";
-import type { BotRow } from "../shared/ipc.ts";
+import { automationEscape, botsUpdated, initAutomation, openBotPage, showAutomation, skipText } from "./automation.ts";
+import { showApproval } from "./approval.ts";
+import type { BotRow, BotRun, Handoff } from "../shared/ipc.ts";
 import { agentLogos, platformLogos } from "./agent-logos.ts";
+import { afterImport, importChips, importRows, type ImportRow } from "./import-list.ts";
 import { pathsAt, urlsAt } from "./wrapped-url.ts";
 import type { MapInput } from "./workflowmap/model.ts";
 import type { Question } from "./workflowmap/panel.ts";
-import { forPhone, stepsOf } from "./workflowmap/summary.ts";
+import { forPhone, oneLine, stepsOf } from "./workflowmap/summary.ts";
 import { menuFrom, withoutSidebar } from "../phone/menu.ts";
 import { limitOnScreen, menuAsks } from "../phone/push.ts";
 import { autoAnswerWait, autoChoice } from "../phone/auto-answer.ts";
@@ -104,7 +109,8 @@ const shares = new Map<string, ShareStatus>();
 // Who reads which folder: the map's own picture, so the rail can never
 // disagree with it. Refreshed with the map and after every grant.
 let shareMap: MapState | undefined;
-const terminals = new Map<string, { term: Terminal; fit: FitAddon; element: HTMLDivElement; paste: () => void }>();
+/** `type`: what the terminal itself types, in order behind a tmux let-go still on its way (terminalFor). */
+const terminals = new Map<string, { term: Terminal; fit: FitAddon; element: HTMLDivElement; paste: () => void; type: (data: string) => void }>();
 const TERMINAL_FONT = '"Cascadia Mono", Consolas, monospace';
 let codeFontSize = fontSize(localStorage.getItem("fontSize"));
 let codeFontFamily = fontFamily(localStorage.getItem("fontFamily"));
@@ -116,6 +122,8 @@ function applyCodeFont(): void {
   const root = document.documentElement.style;
   // File views ran half a pixel under the terminal before this setting; kept so.
   root.setProperty("--code-size", `${codeFontSize - 0.5}px`);
+  // The chat's text goes by the same size; its code by the font too (--code-font).
+  root.setProperty("--text-size", `${codeFontSize}px`);
   root.setProperty("--code-font", fontStack(codeFontFamily, "var(--mono)"));
   // xterm measures its cells once, from whatever font is there: a bundled
   // one is loaded first, or the cells come out at the fallback's width.
@@ -168,6 +176,8 @@ interface SessionMeta {
   ask?: PhoneSession["ask"];
   /** That menu is Claude's AskUserQuestion (askUserMenu): main reads its set from the record. */
   askUser?: boolean;
+  /** The question on screen as the chat's card (chat-ask.ts): that menu, one only the PC reads, or a key hint nobody reads. */
+  card?: ChatCard;
   /** The agent's usage-limit line is on screen, for the stop push. */
   limited?: boolean;
 }
@@ -312,9 +322,14 @@ function capturePreview(key: string): void {
   const seen = sessionMeta.get(key) ?? { waiting: false, history: [] };
   const ask = menu && askOf(entry.term, menu);
   const askUser = ask !== undefined && agentScreen && askUserMenu(reflowed);
-  if (seen.asks !== asks || (seen.limited ?? false) !== limited || seen.ask?.id !== ask?.id || (seen.askUser ?? false) !== askUser) sessionMeta.set(key, { ...seen, asks, limited, ask, askUser });
+  // The chat's card: that menu, or what only the PC reads; a key hint is no question while the AI's own line says it works.
+  const card = agentScreen ? chatCard(reflowed, ask, liveLine(lines.join("\n")) !== undefined) : undefined;
+  if (seen.asks !== asks || (seen.limited ?? false) !== limited || seen.ask?.id !== ask?.id || (seen.askUser ?? false) !== askUser || seen.card?.id !== card?.id) sessionMeta.set(key, { ...seen, asks, limited, ask, askUser, card });
   // A new question reaches the phone now, not at the next tick; an unchanged snapshot is not sent again.
   if (seen.ask?.id !== ask?.id || (seen.askUser ?? false) !== askUser) sendPhoneSnapshot();
+  // And the chat's card, as the question comes, goes or moves (its cursor too).
+  if (seen.card?.id !== card?.id) chatViews.get(key)?.showAsk();
+  backToChat(key);
   // The limit line came or went: the note over the pane follows it.
   if ((seen.limited ?? false) !== limited) noteLimits();
   // After asks is set: the snapshot this may send rings with this menu's line, not the last one's.
@@ -761,6 +776,10 @@ const lucide = {
   gitBranch: '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
   gitMerge: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
   gitBranchPlus: '<path d="M6 3v12"/><path d="M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M15 6a9 9 0 0 0-9 9"/><path d="M18 15v6"/><path d="M21 18h-6"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
+  square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
   settings: '<path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/>',
 };
 function lucideIcon(name: keyof typeof lucide): HTMLSpanElement {
@@ -1315,6 +1334,10 @@ function showRailMoved(was: Map<string, number>): void {
 }
 
 function renderRail(): void {
+  // The dots say waiting or not from here on: so does a chat's "answer in the terminal" note, and a pane sent to the
+  // terminal to answer goes back to its chat once nothing waits.
+  for (const key of [...answeringInTerminal.keys()]) backToChat(key);
+  for (const chat of chatViews.values()) chat.showAsk();
   // Always there, beside the bots: with fewer than two sessions open it has nothing to send to.
   const broadcast = el<HTMLButtonElement>("openBroadcast");
   broadcast.disabled = liveSessions().length < 2;
@@ -1676,15 +1699,18 @@ function drawTmuxBar(entry: { element: HTMLElement; bar: HTMLElement; thumb: HTM
 }
 
 /** Where tmux's view is (after moving it to `to` lines above the bottom, or to `find`'s next match), drawn on the pane's bar. */
-async function readTmux(key: string, to?: number, find?: { text: string; up: boolean }): Promise<void> {
+/** This read's view: undefined when none came (busy, unreachable), the bar keeping its last. */
+async function readTmux(key: string, to?: number, find?: { text: string; up: boolean }): Promise<TmuxView | undefined> {
   const entry = tmuxBars.get(key);
-  if (!entry || (entry.busy && to === undefined && !find)) return;
+  // Not while the session is down: with no pane connection to ride, each read was an SSH connection of its own, every 3 s.
+  if (!entry || states.get(key)?.kind !== "ready" || (entry.busy && to === undefined && !find)) return;
   entry.busy = true;
   try {
     const view = await cockpit.tmuxScroll(key, to, find);
     if (!view) return;
     entry.view = view;
     if (!entry.dragging) drawTmuxBar(entry);
+    return view;
   } catch {
     // Unreachable for now: the bar keeps what it had.
   } finally {
@@ -1698,6 +1724,356 @@ setInterval(() => {
 }, 3000);
 
 /**
+ * Sessions showing their terminal for now, though 설정 → 화면 says chat: a question card's free-text option, or "터미널에서
+ * 답해 주세요", sent the person there to answer. Never saved. `menuSeen`: a menu was on its screen since; `typedAt`: the
+ * person's last key there (not a terminal's own report), from arriving on; `sentAt`: their last Enter there. The chat comes back as leaveTerminal says (backToChat), or
+ * by the bar's "대화로 돌아가기".
+ */
+const answeringInTerminal = new Map<string, { menuSeen: boolean; typedAt: number; sentAt?: number }>();
+
+/** Answered in the terminal (leaveTerminal, on the screen as last read): the pane shows the chat again. */
+function backToChat(key: string): void {
+  const held = answeringInTerminal.get(key);
+  if (!held) return;
+  const menuNow = asksNow(key);
+  if (menuNow) held.menuSeen = true;
+  const activity = activityOf(key);
+  const working = sessionStatus(states.get(key), activity) === "working";
+  if (!leaveTerminal({ menuNow, menuSeen: held.menuSeen, working, workSince: activity.workSince, sentAt: held.sentAt, quietMs: Date.now() - held.typedAt })) return;
+  answeringInTerminal.delete(key);
+  renderPanesFollowingFocus();
+}
+/** Each session's chat, kept as its terminal is: a pane redraw moves it, never rebuilds it. */
+const chatViews = new Map<string, ChatView>();
+/** Sessions a chat's question card is typing into now (answerCard). */
+const cardKeys = new Set<string>();
+
+/** A session whose record reads as a conversation: Claude, Codex (chatAgent). Not a plain terminal, nor OpenCode, Grok, Antigravity or Cursor. */
+function chatCapable(key: string): boolean {
+  const found = findByKey(key);
+  if (!found || found.terminal) return false;
+  const executor = sessionExecutors.get(key) ?? found.node.agent;
+  return executor !== "shell" && chatAgent(executor);
+}
+
+/** Sessions moving to another AI or model (continueWith, useCodexModel): the chat shows the new one from the pick on. */
+const switching = new Map<string, Switch>();
+
+function showsChat(key: string): boolean {
+  return chatCapable(key) && (states.get(key)?.kind === "ready" || lostChats.has(key) || switching.has(key)) && chatViewOn(localStorage.getItem("chatView")) && !answeringInTerminal.has(key);
+}
+
+/**
+ * Chats whose session the network cut off: they stay on screen (under a "연결이 끊겼어요" line) rather than giving way
+ * to the terminal's last screen, and their session is opened again by itself (keepReconnecting) until it is back.
+ */
+const lostChats = new Set<string>();
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Tries made since the chat was cut off: kept until it is really back, so the session's own state on the way does not start them over. */
+const reconnectTries = new Map<string, number>();
+/** A lost chat whose tries stopped for a reason the network did not give (a key refused, the AI gone): that reason, shown with 다시 연결. */
+const lostWhy = new Map<string, string>();
+/** Whether a cut-off chat's session is to be read: not while it is down (each read would try SSH); only the tries touch the network. */
+const chatDown = (key: string) => lostChats.has(key) && states.get(key)?.kind !== "ready";
+/** A chat back up: what kept it as lost goes. */
+function chatBack(key: string): void {
+  lostChats.delete(key);
+  lostWhy.delete(key);
+  reconnectTries.delete(key);
+}
+/**
+ * Its session opened again, sooner first (3 s, 10 s, 30 s, then every minute), while its chat is on screen and still cut
+ * off. A pane not on screen when the time comes waits: the 2.5 s round starts the tries again once it shows (resumeLost).
+ */
+function keepReconnecting(key: string, now = false): void {
+  if (reconnectTimers.has(key) || lostWhy.has(key)) return;
+  const tries = reconnectTries.get(key) ?? 0;
+  reconnectTimers.set(key, setTimeout(() => void (async () => {
+    reconnectTimers.delete(key);
+    const found = findByKey(key);
+    const executor = sessionExecutors.get(key);
+    const state = states.get(key);
+    if (!found || !executor || !lostChats.has(key) || state?.kind !== "closed" || !workspace.visibleSessions().has(key)) return;
+    reconnectTries.set(key, tries + 1);
+    states.set(key, { kind: "connecting" });
+    renderRail();
+    const view = terminalFor(key);
+    // An open, not a restart: tmux's session (and the AI in it) is attached again, not ended.
+    const opened = await cockpit.openSession(found.node.id, found.repo.id, view.term.cols, view.term.rows, executor, true, bypassChosen(), undefined, undefined, found.bot);
+    states.set(key, opened);
+    if (opened.kind === "ready") chatBack(key);
+    // Not the network: tried again it would fail the same way. Its reason shows, with a button to try once more.
+    else if (opened.kind === "closed" && !cutOff(opened)) lostWhy.set(key, reasonText(opened.reason));
+    renderPanesFollowingFocus();
+    renderRail();
+    // (Not afterOpen's notes: they sit over the chat's own line, which says the reason and has the button.)
+    if (opened.kind === "closed" && cutOff(opened)) keepReconnecting(key);
+  })(), now ? 0 : [3000, 10_000, 30_000][tries] ?? 60_000));
+}
+/** The lost chats on screen with no try on its way (their pane was hidden when it came): tried again. */
+function resumeLost(): void {
+  for (const key of lostChats) if (chatDown(key) && workspace.visibleSessions().has(key)) keepReconnecting(key);
+}
+
+/**
+ * renderPanes after a chat came or went on its own (the session came up, the setting changed): when the keys were in
+ * the focused pane, they follow into what it shows now -- a terminal gone inert under a chat takes none.
+ */
+function renderPanesFollowingFocus(): void {
+  const shell = terminalPanel.querySelector(`.paneLeaf[data-pane-id="${CSS.escape(workspace.focused)}"]`);
+  const inside = document.activeElement === document.body || (shell?.contains(document.activeElement) ?? false);
+  renderPanes();
+  if (inside) focusPane(workspace.focused);
+}
+
+/**
+ * A path a session printed (its terminal's or its chat's Ctrl+click), or one a program marked up as a file:// link: a
+ * file opens in a tab of its pane's column, on the session's PC; a folder opens in Explorer or Finder on this PC, and
+ * another PC's is shown in the rail's tree, as no file manager here can show it. Relative to the session's folder.
+ */
+function openPrinted(key: string, event: MouseEvent, printed: string, folder?: boolean): void {
+  const found = findByKey(key);
+  if (!found) return;
+  const path = resolvePath(found.repo.path, found.node.home, printed);
+  // A share or device path on this PC is plain text: even a look at it connects out (localPath; main holds to it too).
+  if (found.node.kind === "local" && !localPath(path, navigator.platform.startsWith("Win"))) return;
+  // Checked first, so a path that is not there says so, with the full path it looked at.
+  void cockpit.locateFile(found.node.id, path, found.repo.path, folder).then((located) => {
+    if (!located.ok) return showTipAt(located.error, event);
+    if (!located.folder) return openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
+    if (found.node.kind === "local") return void cockpit.openFolder(found.node.id, located.path).then((problem) => problem && showTipAt(problem, event));
+    if (!revealFolder(found.node, found.repo, located.path)) showTipAt(t("files.folderOutside", { path: located.path }), event);
+  });
+}
+
+/** An address a session printed (its terminal's or its chat's), opened from its PC as a link there opens. */
+function openPrintedUrl(key: string, event: MouseEvent, text: string): void {
+  const found = findByKey(key);
+  if (!found) return;
+  // Claude Code marks the files it names up as file:// links (OSC 8), and tmux passes them on: a remote pane's
+  // file is that PC's, not this one's, so it goes the way a printed path does, not to a browser here.
+  const file = fileLinkPath(text);
+  if (file !== undefined) return openPrinted(key, event, file);
+  void cockpit.openLink(found.node.id, text).then((problem) => {
+    if (problem) return showTipAt(problem, event);
+    const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:(\d+))?/i.exec(text);
+    if (found.node.kind !== "ssh" || !local) return;
+    const port = Number(local[3] ?? (text.startsWith("https") ? 443 : 80));
+    const ports = sessionForwards.get(key) ?? new Set<number>();
+    sessionForwards.set(key, ports.add(port));
+    renderPanes();
+  });
+}
+
+/** Files attached in a chat's composer: each one's name, and its path as the session's terminal takes it (typedPaths). */
+const attachedItems = (paths: string[], cmd: boolean) => paths.map((path) => ({ name: path.slice(path.replace(/\\/g, "/").lastIndexOf("/") + 1), text: typedPaths([path], cmd) }));
+
+function chatFor(key: string): ChatView {
+  const existing = chatViews.get(key);
+  if (existing) return existing;
+  const chat = createChatView({
+    read: async (before) => {
+      const found = findByKey(key);
+      if (!found) return { ok: false, reason: "no_transcript" };
+      // Moving to another AI: none read until it is up, main reading the last one's record till then (readAfterSwitch).
+      const move = switching.get(key);
+      if (move && !move.up) return { ok: false, reason: "no_transcript", why: "starting" };
+      const read = await cockpit.sessionWorkflow(found.node.id, found.repo.id, found.bot, true, before);
+      if (!move) return read;
+      const after = readAfterSwitch(move, read, Date.now());
+      if (after.done && switching.get(key) === move) switching.delete(key);
+      return after.read;
+    },
+    agent: () => {
+      const executor = sessionExecutors.get(key) ?? findByKey(key)?.node.agent;
+      return isAgentKind(executor) ? executor : undefined;
+    },
+    installed: async () => {
+      const found = findByKey(key);
+      // A bot's session keeps its own AI.
+      if (!found || found.bot !== undefined) return [];
+      return (await agentReportOf(found.node.id)).filter((account) => account.version !== undefined && !account.unknown).map((account) => account.kind);
+    },
+    continueWith: (kind) => {
+      const found = findByKey(key);
+      if (found && found.bot === undefined) void continueWith(found.node.id, found.repo.id, kind);
+    },
+    codexModels: async () => {
+      const found = findByKey(key);
+      return found && found.bot === undefined ? cockpit.codexModels(found.node.id).catch(() => undefined) : undefined;
+    },
+    useCodexModel: (slug) => {
+      const found = findByKey(key);
+      if (found && found.bot === undefined) void continueWith(found.node.id, found.repo.id, "codex", slug);
+    },
+    readScreen: () => menuOnScreen(key),
+    screen: () => {
+      const entry = terminals.get(key);
+      return entry ? screenLines(entry.term).join("\n") : "";
+    },
+    // From the session's PC, only as chatImagePath allows (checked here, and again in main): a drive path or one
+    // inside the session's folder; never a `\\host` path, which would connect to that host.
+    photo: async (name) => {
+      const found = findByKey(key);
+      return found ? cockpit.chatPhoto(found.node.id, found.repo.id, found.bot, name) : undefined;
+    },
+    image: async (path) => {
+      const found = findByKey(key);
+      if (!found || chatImagePath(path, found.repo.path, found.node.kind === "local" ? navigator.platform.startsWith("Win") : false) === undefined) return undefined;
+      const result = await cockpit.chatImage(found.node.id, found.repo.id, path);
+      return result.ok ? `data:${imageMime(path)};base64,${result.base64}` : undefined;
+    },
+    send: (text, typing) => sendFromChat(key, text, typing),
+    stop: () => stopFromChat(key),
+    commands: async (kind, own) => {
+      const found = findByKey(key);
+      return found ? cockpit.chatCommands(found.node.id, found.repo.id, kind, own) : [];
+    },
+    // As the rail's tree lists a folder (browse), on the session's PC.
+    folder: async (relative) => {
+      const found = findByKey(key);
+      if (!found) return [];
+      const listing = await cockpit.browse(found.node, relative ? `${found.repo.path.replace(/[\\/]+$/, "")}/${relative}` : found.repo.path);
+      return listing.ok ? listing.entries.map((entry) => ({ name: entry.name, directory: entry.isDirectory })) : [];
+    },
+    // As a drop on the terminal types them (terminalFor's typeFiles).
+    attach: async (paths) => {
+      const found = findByKey(key);
+      if (!found) return { ok: false, error: t("chat.cannotType") };
+      if (found.node.kind === "local") return { ok: true, items: attachedItems(paths, navigator.platform.startsWith("Win")) };
+      const result = await cockpit.dropFiles(found.node.id, paths);
+      return result.ok ? { ok: true, items: attachedItems(result.paths, false) } : result;
+    },
+    // As the terminal's paste of a copied picture for another PC (pasteImage), and for this one too: the chat has no Alt+V.
+    picture: async (bytes, type) => {
+      const found = findByKey(key);
+      if (!found) return { ok: false, error: t("chat.cannotType") };
+      const result = await cockpit.pasteImage(found.node.id, bytes, type);
+      return result.ok ? { ok: true, items: attachedItems([result.path], found.node.kind === "local" && navigator.platform.startsWith("Win")) } : result;
+    },
+    copiedFile: () => cockpit.clipboardFile(),
+    canType: () => states.get(key)?.kind === "ready" && !activityOf(key).agentGone,
+    lost: () => {
+      if (!chatDown(key)) return undefined;
+      const why = lostWhy.get(key);
+      return why === undefined ? { text: t("chat.connectionLost") } : {
+        text: t("chat.lostStopped", { reason: why }),
+        retry: () => {
+          lostWhy.delete(key);
+          reconnectTries.delete(key);
+          keepReconnecting(key, true);
+          chatViews.get(key)?.showAsk();
+        },
+      };
+    },
+    // As the terminal's drop takes it: the file tree's drag out, and a folder dragged off the rail, are the app's own.
+    appDrag: () => draggingOut || railDrag !== undefined,
+    mood: () => sessionStatus(states.get(key), activityOf(key)),
+    ask: () => sessionMeta.get(key)?.card,
+    // A key at a time, each on the screen read right then (not at the last quiet moment), as answerCard says; one
+    // card's keys at a time per session, and none while the phone's answers are being typed there.
+    answer: async (card, action) => {
+      if (cardKeys.has(key) || answering.has(key)) return "busy";
+      cardKeys.add(key);
+      try {
+        const result = await answerCard({
+          read: () => {
+            capturePreview(key);
+            return sessionMeta.get(key)?.card;
+          },
+          press: (name) => typeInto(key, PC_KEYS[name]!),
+          type: (text) => typeInto(key, text),
+          wait: (ms) => new Promise((done) => setTimeout(done, ms)),
+        }, card, action);
+        // Answered here: the wait is over, as a phone's answer ends it.
+        if (result === "ok") {
+          activityOf(key).waiting = false;
+          renderRail();
+        }
+        return result;
+      } finally {
+        cardKeys.delete(key);
+      }
+    },
+    // Read as it is asked: the session may have been opened again with another AI.
+    get older() {
+      const executor = sessionExecutors.get(key) ?? findByKey(key)?.node.agent;
+      return executor !== undefined && executor !== "shell" && agents[executor].can.transcript === "claude";
+    },
+    icon: (name) => lucideIcon(name as keyof typeof lucide),
+    copy: (text) => cockpit.writeClipboard(text),
+    // As the terminal's Ctrl+click: another PC's file in the file view, its localhost through a forward.
+    openLink: (url, event) => openPrintedUrl(key, event, url),
+    openPath: (printed, event, folder) => openPrinted(key, event, printed, folder),
+    toTerminal: () => {
+      answeringInTerminal.set(key, { menuSeen: asksNow(key), typedAt: Date.now() });
+      renderPanes();
+      terminals.get(key)?.term.focus();
+    },
+  });
+  chatViews.set(key, chat);
+  // A Claude session, or another PC's Codex: told as its record changes (main's watchChat), instead of waiting for the next read.
+  const found = findByKey(key);
+  const executor = sessionExecutors.get(key) ?? found?.node.agent;
+  const record = executor === undefined || executor === "shell" ? null : agents[executor].can.transcript;
+  if (found && (record === "claude" || (record === "codex" && found.node.kind === "ssh"))) {
+    cockpit.watchChat(key, found.node.id, found.repo.id, true);
+  }
+  void chat.refresh();
+  return chat;
+}
+
+// The chats on screen, read again; one that read the same is not redrawn (chat-view.ts). A Claude session (another
+// PC's Codex too) is also read as its record changes (onChatRecord): this is the floor for a change the watch missed.
+setInterval(() => {
+  if (document.hidden || terminalPanel.hidden !== false) return;
+  // A pane answering in its terminal, its screen read now: the question gone and the keys quiet, it goes back.
+  for (const key of [...answeringInTerminal.keys()]) capturePreview(key);
+  for (const key of workspace.visibleSessions()) {
+    const chat = chatViews.get(key);
+    // One cut off is not read while it is down: its tries are what reach that PC (keepReconnecting).
+    if (!chat || !showsChat(key) || chatDown(key)) continue;
+    void chat.refresh();
+  }
+  resumeLost();
+}, 2500);
+
+// Main saw the record folder change (watchChat): the chat on screen reads it now, main parsing only if the file moved.
+/** How long a handed-back handoff waits for a plain prompt once no menu is on screen. */
+const HANDOFF_WAIT_MS = 20_000;
+/**
+ * A handoff main gave back (typeWhenSettled's held: the new AI never marked its prompt up after a question): typed the
+ * way the composer types, only over a plain prompt; a menu on screen holds it; none in time, a note with 다시 시도.
+ */
+function typeHandoff(key: string, text: string): void {
+  let until = Date.now() + HANDOFF_WAIT_MS;
+  const stuck = () => chatViews.get(key)?.notice(t("chat.handoffStuck"), () => typeHandoff(key, text));
+  const look = () => {
+    const entry = terminals.get(key);
+    // The session went: the handoff with it.
+    if (!entry || states.get(key)?.kind !== "ready") return;
+    const screen = { menu: menuOnScreen(key), working: liveLine(screenLines(entry.term).join("\n")) !== undefined, up: !activityOf(key).agentGone };
+    const step = handoffStep(screen, Date.now(), until);
+    if (step === "hold") until = Date.now() + HANDOFF_WAIT_MS;
+    if (step === "stuck") return void stuck();
+    if (step === "type") {
+      // false: a menu came up since the look; looked at again.
+      const sent = sendFromChat(key, text);
+      if (sent) return void sent.then((result) => void (result === "notSent" && stuck()));
+    }
+    setTimeout(look, 500);
+  };
+  look();
+}
+cockpit.onHandoffHeld(typeHandoff);
+
+cockpit.onChatRecord((key) => {
+  const chat = chatViews.get(key);
+  if (!chat || document.hidden || !showsChat(key) || chatDown(key) || !workspace.visibleSessions().has(key)) return;
+  void chat.refresh();
+});
+
+/**
  * What is typed into a session. A remote tmux pane scrolled up (or searched) is in copy mode, where keys are copy-mode
  * commands and Ctrl+C only leaves it: the view goes back to the bottom first, and what is typed meanwhile waits behind
  * that, in order. Anywhere else, and in tmux at the bottom, it goes straight through.
@@ -1706,6 +2082,58 @@ function typeInto(key: string, data: string): void {
   // Straight through, as before 1.10.12: leaving tmux's copy mode on any input pulled a pane scrolled up to read
   // back to the bottom on every focus and mouse report, while the agent printed.
   cockpit.writeSession(key, data);
+}
+
+/** A menu on the screen as last read, the phone's or one only the PC reads, or a key hint asking (chat-ask.ts). */
+function asksNow(key: string): boolean {
+  const meta = sessionMeta.get(key);
+  return meta?.asks !== undefined || meta?.card !== undefined;
+}
+
+/** As a card's press reads it: the screen now, not at the last quiet moment. Any menu counts, one no card could draw too. */
+function menuOnScreen(key: string): boolean {
+  capturePreview(key);
+  return asksNow(key);
+}
+
+/**
+ * What the chat sends (chat-view.ts typeLine), never over a menu on screen: read before the paste, and again before its Enter.
+ * A remote tmux pane is brought out of copy mode first (chatLine), its view read back to know it left. The Enter goes
+ * the paste's way (`type`: behind a let-go still on its way), never past it. False at once: nothing typed (a menu);
+ * else how the line and its Enter went (SendResult). Read again just after: the record has it by then.
+ */
+function sendFromChat(key: string, text: string, typing?: () => boolean): false | Promise<SendResult> {
+  const entry = terminals.get(key);
+  if (!entry || menuOnScreen(key)) return false;
+  return chatLine(leaveCopyMode(key), (entered) => typeLine(text, {
+    blocked: () => menuOnScreen(key),
+    bracketed: entry.term.modes.bracketedPasteMode,
+    paste: (line) => entry.term.paste(line),
+    enter: () => {
+      entry.type("\r");
+      entered(states.get(key)?.kind === "ready" ? "sent" : "notSent");
+      setTimeout(() => void chatViews.get(key)?.refresh(), 300);
+    },
+    later: (run, ms) => setTimeout(() => {
+      run();
+      // A menu came up meanwhile: the line is there, its Enter not. (After an Enter, already told.)
+      entered("typed");
+    }, ms),
+  }), typing);
+}
+
+/** A remote tmux pane out of copy mode, by this read's own view: none read is not known to be out. None for any other pane. */
+const leaveCopyMode = (key: string) => tmuxBars.has(key) ? () => readTmux(key, 0).then((view) => view !== undefined && view.inMode !== true) : undefined;
+
+/** The chat's stop (chatStop): the CLI's interrupt key, the line's way (out of copy mode, behind a let-go), never over a menu. */
+function stopFromChat(key: string): Promise<"stopped" | "asking" | "idle" | "notSent"> {
+  const entry = terminals.get(key);
+  if (!entry || states.get(key)?.kind !== "ready") return Promise.resolve("notSent");
+  return chatStop(leaveCopyMode(key), {
+    asking: () => menuOnScreen(key),
+    working: () => liveLine(screenLines(entry.term).join("\n")) !== undefined,
+    press: (data) => entry.type(data),
+  });
 }
 
 function terminalFor(key: string) {
@@ -1749,37 +2177,9 @@ function terminalFor(key: string) {
     const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?![\w.-])/.test(url);
     showTipAt(found?.node.kind === "ssh" && local ? t("link.openRemote", { machine: machineLabel(found.node) }) : t("link.open"), event);
   };
-  // A printed path, or one a program marked up as a file:// link: a file opens in a tab of this pane's column, on the
-  // session's PC; a folder opens in Explorer or Finder on this PC, and another PC's is shown in the rail's tree, as no
-  // file manager here can show it. Relative to the session's folder.
-  const openPrintedPath = (event: MouseEvent, printed: string, folder?: boolean) => {
-    const found = findByKey(key);
-    if (!found) return;
-    const path = resolvePath(found.repo.path, found.node.home, printed);
-    // Checked first, so a path that is not there says so, with the full path it looked at.
-    void cockpit.locateFile(found.node.id, path, found.repo.path, folder).then((located) => {
-      if (!located.ok) return showTipAt(located.error, event);
-      if (!located.folder) return openFileInPane(found.node, located.path, located.path.slice(located.path.lastIndexOf("/") + 1), found.repo);
-      if (found.node.kind === "local") return void cockpit.openFolder(found.node.id, located.path).then((problem) => problem && showTipAt(problem, event));
-      if (!revealFolder(found.node, found.repo, located.path)) showTipAt(t("files.folderOutside", { path: located.path }), event);
-    });
-  };
+  const openPrintedPath = (event: MouseEvent, printed: string, folder?: boolean) => openPrinted(key, event, printed, folder);
   const openUrl = (event: MouseEvent, text: string) => {
-    const found = findByKey(key);
-    if (!(event.ctrlKey || event.metaKey) || !found) return;
-    // Claude Code marks the files it names up as file:// links (OSC 8), and tmux passes them on: a remote pane's
-    // file is that PC's, not this one's, so it goes the way a printed path does, not to a browser here.
-    const file = fileLinkPath(text);
-    if (file !== undefined) return openPrintedPath(event, file);
-    void cockpit.openLink(found.node.id, text).then((problem) => {
-      if (problem) return showTipAt(problem, event);
-      const local = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:(\d+))?/i.exec(text);
-      if (found.node.kind !== "ssh" || !local) return;
-      const port = Number(local[3] ?? (text.startsWith("https") ? 443 : 80));
-      const ports = sessionForwards.get(key) ?? new Set<number>();
-      sessionForwards.set(key, ports.add(port));
-      renderPanes();
-    });
+    if (event.ctrlKey || event.metaKey) openPrintedUrl(key, event, text);
   };
   // A link a program marked up itself (OSC 8: its text need not be the
   // address) the same way. Without this xterm asked in an English confirm()
@@ -2028,6 +2428,12 @@ function terminalFor(key: string) {
   term.onData((data) => {
     // The operator answering is what ends a wait.
     activityOf(key).waiting = false;
+    // Typing an answer the chat sent them here for: the pane stays on the terminal while they do.
+    const answering = answeringInTerminal.get(key);
+    if (answering && !isTerminalReport(data)) {
+      answering.typedAt = Date.now();
+      if (data.includes("\r")) answering.sentAt = answering.typedAt;
+    }
     // A kept tmux selection is let go first, or the keys went to tmux's copy
     // mode rather than the agent. Mouse, focus and other terminal reports are not typing.
     if (!isTerminalReport(data) && isKept()) letGo();
@@ -2231,7 +2637,7 @@ function terminalFor(key: string) {
     }
     typeFiles([...dropped.files].map((file) => cockpit.pathForFile(file)).filter((path) => path !== ""));
   });
-  const created = { term, fit, element, paste };
+  const created = { term, fit, element, paste, type: send };
   terminals.set(key, created);
   return created;
 }
@@ -2638,7 +3044,10 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     "pointerdown",
     (event) => {
       if ((event.target as HTMLElement).closest(".paneBtn, .paneTab")) return;
-      focusPane(node.id);
+      // In a chat the press keeps its own target: a redraw now moved it mid-press, and the click (a card's option,
+      // the chip's menu, a "/" row) never came. The pane is marked focused only; the press focuses what it hit.
+      if ((event.target as HTMLElement).closest(".chatView") && node.id !== workspace.focused) markFocused(node.id);
+      else focusPane(node.id);
       // The press's own mousedown follows and drops focus to the page when what
       // was pressed cannot hold it, or was just redrawn. Typing still goes here.
       setTimeout(() => document.activeElement === document.body && workspace.leaf(node.id) && focusPane(node.id));
@@ -2881,6 +3290,18 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
     } else if (note) {
       slot.append(paneMessage(note.text, note.actions));
     }
+    // Sent here from the chat to answer: a way back, whatever the screen shows, a notice on the pane too.
+    if (answeringInTerminal.has(key)) {
+      const bar = document.createElement("div");
+      bar.className = "note paneNotice sessionNote";
+      bar.append(t("chat.answeringHere"), ...noteButtons([[t("chat.backToChat"), () => {
+        answeringInTerminal.delete(key);
+        renderPanes();
+        chatViews.get(key)?.focus();
+      }]], false));
+      slot.classList.add("noted");
+      slot.prepend(bar);
+    }
     const auto = autoAnswers.get(key);
     if (auto && !note) {
       const bar = document.createElement("div");
@@ -2889,6 +3310,24 @@ function renderPaneNode(node: PaneNode, multiPane: boolean): HTMLElement {
       bar.append(t("auto.note", { time, n: auto.n, option: auto.option }), ...noteButtons([[t("auto.keep"), () => keepWaiting(key)]], false));
       slot.classList.add("noted");
       slot.prepend(bar);
+    }
+    // The chat goes over the terminal, which stays laid out at its size underneath (never display:none: a terminal
+    // measured at nothing resizes the session, and the phone reads its menus off that screen).
+    const chatting = showsChat(key);
+    view.element.inert = chatting;
+    if (chatting) {
+      const cover = document.createElement("div");
+      cover.className = "chatCover";
+      // The notes stay readable over the chat; a hidden copy keeps their room above the terminal, so its size holds.
+      for (const bar of slot.querySelectorAll<HTMLElement>(":scope > .sessionNote")) {
+        const room = bar.cloneNode(true) as HTMLElement;
+        room.style.visibility = "hidden";
+        bar.replaceWith(room);
+        cover.append(bar);
+      }
+      cover.append(chatFor(key).element);
+      // Before the terminal: a noted slot sizes its last child.
+      view.element.before(cover);
     }
   } else {
     slot.append(paneMessage(t("pane.empty"), [[t("guide.open"), () => void openGuide()]], false));
@@ -2922,7 +3361,7 @@ function tabButton(leaf: PaneLeaf, tab: PaneTab, index: number): HTMLButtonEleme
   if (tab.kind === "session") {
     const found = findByKey(tab.key);
     const executor = sessionExecutors.get(tab.key) ?? (found?.terminal ? "shell" : found?.node.agent);
-    name.textContent = found?.bot !== undefined ? botsByKey.get(tab.key)?.name ?? found.bot : executor === "shell" || !executor ? t("session.shell") : agents[executor].label;
+    name.textContent = found?.bot !== undefined ? botTabName(botsByKey.get(tab.key)?.name ?? found.bot) : executor === "shell" || !executor ? t("session.shell") : agents[executor].label;
     // The session's lamp, kept current by paintLamps(): amber while it waits.
     const lamp = document.createElement("span");
     lamp.className = "lamp";
@@ -3255,12 +3694,28 @@ function paneMessage(text: string, actions: Array<[string, () => void]>, primary
   return box;
 }
 
+/** focusPane without the redraw or the keyboard: the focus ring, the rail and the top bar follow. */
+function markFocused(paneId: string): void {
+  const was = terminalPanel.querySelector<HTMLElement>(".paneLeaf.focused")?.dataset.paneId;
+  workspace.focus(paneId);
+  const leaf = workspace.leaf(paneId);
+  activeKey = (leaf && shownKey(leaf)) ?? undefined;
+  refreshUsageOf(activeKey);
+  const several = paneShells().length > 1;
+  for (const shell of paneShells()) shell.classList.toggle("focused", several && shell.dataset.paneId === paneId);
+  showFocusMoved(was);
+  updateSplitLimits();
+  renderRail();
+  saveLayout();
+}
+
 /** `redraw` when the pane's tab changed: already in focus, it would skip the render. */
 function focusPane(paneId: string, redraw = false): void {
   const leaf = workspace.leaf(paneId);
   const key = leaf ? shownKey(leaf) : null;
   const editing = leaf ? shownFile(leaf)?.editing : undefined;
-  const focusInside = () => (editing ? editing.view.focus() : key && terminals.get(key)?.term.focus());
+  const focusInside = () =>
+    editing ? editing.view.focus() : key && (showsChat(key) ? chatViews.get(key)?.focus() : terminals.get(key)?.term.focus());
   if (paneId === workspace.focused && !redraw) return void focusInside();
   workspace.focus(paneId);
   activeKey = key ?? undefined;
@@ -3424,6 +3879,12 @@ function forgetSessions(matches: (key: string) => boolean): void {
     clearTimeout(autoAnswers.get(key)?.timer);
     autoAnswers.delete(key);
     for (const held of [...autoKept]) if (held.startsWith(`${key}\0`)) autoKept.delete(held);
+  }
+  for (const key of [...chatViews.keys()]) {
+    if (!matches(key)) continue;
+    dropChat(chatViews, key);
+    cockpit.watchChat(key, "", "", false);
+    answeringInTerminal.delete(key);
   }
   // Panes referencing a now-removed session would otherwise resurrect it as
   // a brand-new, blank-labeled terminal on the next render (terminalFor()
@@ -4232,6 +4693,14 @@ function setResume(on: boolean): void {
  * probe), and the picker only uses it to dim what is not installed.
  */
 const agentReports = new Map<string, Promise<AgentAccount[]>>();
+function agentReportOf(nodeId: string): Promise<AgentAccount[]> {
+  let report = agentReports.get(nodeId);
+  if (!report) {
+    report = cockpit.agentAccounts(nodeId).catch(() => []);
+    agentReports.set(nodeId, report);
+  }
+  return report;
+}
 
 /** Dims the tiles of agents the PC does not have, once its report is in. A PC that could not say dims nothing. */
 function markMissingAgents(nodeId: string): void {
@@ -4239,12 +4708,7 @@ function markMissingAgents(nodeId: string): void {
     tile.classList.remove("missing");
     tile.querySelector(".exMissing")?.remove();
   }
-  let report = agentReports.get(nodeId);
-  if (!report) {
-    report = cockpit.agentAccounts(nodeId).catch(() => []);
-    agentReports.set(nodeId, report);
-  }
-  void report.then((accounts) => {
+  void agentReportOf(nodeId).then((accounts) => {
     if (!el<HTMLDialogElement>("executorDialog").open) return;
     for (const account of accounts) {
       if (account.unknown || account.version !== undefined) continue;
@@ -4476,7 +4940,8 @@ async function restartPaneSession(
   // Given when the choice is already made -- reopening to pick up a share
   // keeps the agent and its conversation, so there is nothing to ask.
   // `bot`: a bot's own session (its name or slug), never the folder's plain one.
-  preset?: { executor: Executor; resume: boolean | string; terminal?: boolean; firstPrompt?: string; bot?: string },
+  // `model`: the AI on that model (Codex's -m).
+  preset?: { executor: Executor; resume: boolean | string; terminal?: boolean; firstPrompt?: string; bot?: string; model?: string },
 ): Promise<void> {
   const executor = preset?.executor ?? (repoId === null ? "shell" : await chooseExecutor(nodeId, repoId));
   if (!executor) return;
@@ -4484,12 +4949,15 @@ async function restartPaneSession(
   const key = sessionKey(nodeId, repoId, preset?.terminal, bot);
   sessionExecutors.set(key, executor);
   saveLayout();
+  // Another AI or a new talk under the same key: the chat holding the last one's would keep it over the new one.
+  dropChat(chatViews, key);
+  cockpit.watchChat(key, "", "", false);
   const view = terminalFor(key);
   view.term.reset();
   states.set(key, { kind: "connecting" });
   renderRail();
   const resume = bot !== undefined ? false : preset?.resume ?? resumeChosen();
-  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bot !== undefined || bypassChosen(), preset?.terminal, preset?.firstPrompt, bot);
+  const restarted = await cockpit.restartSession(nodeId, repoId, view.term.cols, view.term.rows, executor, resume, bot !== undefined || bypassChosen(), preset?.terminal, preset?.firstPrompt, bot, preset?.model);
   states.set(key, restarted);
   renderRail();
   if (restarted.kind === "ready") view.term.focus();
@@ -4507,14 +4975,15 @@ async function addAgentInWorktree(nodeId: string, repoId: string, startMode: "ch
   worktreePicked = undefined;
   if (!executor || !pick) return;
   // Read before the AI at work is replaced: its record is the folder's latest until then.
-  const handoff = pick.handoff ? await cockpit.handoffText(nodeId, repoId).catch(() => undefined) : undefined;
-  if (pick.handoff && !handoff) showToast(t("worktree.freshNote"), 6000);
+  // Changed in place, it may go back to an AI's own conversation (continueWith); a worktree starts its own.
+  const handoff: Handoff = pick.handoff ? await cockpit.handoffText(nodeId, repoId, pick.mode === "change" && isAgentKind(executor) ? executor : undefined).catch(() => ({})) : {};
+  if (pick.handoff && !handoff.text && !handoff.resume) showToast(t("worktree.freshNote"), 6000);
   if (pick.mode === "change") {
     const key = sessionKey(nodeId, repoId);
     showView("terminal");
     if (!placeTab(projectOf(key), { kind: "session", key })) return;
     const resume = resumeChosen();
-    return restartPaneSession(nodeId, repoId, { executor, resume: pick.handoff ? false : resume, firstPrompt: handoff });
+    return restartPaneSession(nodeId, repoId, { executor, resume: pick.handoff ? handoff.resume ?? false : resume, firstPrompt: handoff.text });
   }
   // The dialog's resume choice was about the original folder: a worktree starts fresh unless its conversation came along.
   resumeChosen();
@@ -4528,7 +4997,34 @@ async function addAgentInWorktree(nodeId: string, repoId: string, startMode: "ch
   if (!placeTab(projectOf(key), { kind: "session", key })) return renderRail();
   pastPicked = made.resume;
   setResume(false);
-  await showPlaced(nodeId, made.repoId, false, () => executor, handoff);
+  await showPlaced(nodeId, made.repoId, false, () => executor, handoff.text);
+}
+
+/**
+ * The chat chip's "다른 AI로 이어가기": "AI 바꾸기" with the talk handed over, the AI already picked. Back to an AI the
+ * folder left, it goes on with that AI's own conversation, told only what was done since (main's handoffText).
+ * `model`: Codex on another model, going on with the same conversation. The chat shows the new one from the pick on.
+ */
+async function continueWith(nodeId: string, repoId: string, kind: AgentKind, model?: string): Promise<void> {
+  const key = sessionKey(nodeId, repoId);
+  const move: Switch = { to: kind, at: Date.now(), up: false, resume: model !== undefined, typed: false, ...(model ? { model } : {}) };
+  // An AI with no chat opens in the terminal: nothing to show meanwhile.
+  if (chatAgent(kind)) switching.set(key, move);
+  sessionExecutors.set(key, kind);
+  dropChat(chatViews, key);
+  renderPanes();
+  // Read before the AI at work is replaced: its record is the folder's latest until then.
+  const handoff: Handoff = model ? {} : await cockpit.handoffText(nodeId, repoId, kind).catch(() => ({}));
+  if (!model && !handoff.text && !handoff.resume) showToast(t("worktree.freshNote"), 6000);
+  move.resume ||= handoff.resume !== undefined;
+  move.typed = handoff.text !== undefined;
+  await restartPaneSession(nodeId, repoId, { executor: kind, resume: model ? true : handoff.resume ?? false, firstPrompt: handoff.text, ...(model ? { model } : {}) });
+  if (switching.get(key) !== move) return;
+  // Not up (not installed there, say): what the pane says then is the terminal's.
+  if (states.get(key)?.kind === "ready") move.up = true;
+  else switching.delete(key);
+  renderPanes();
+  void chatViews.get(key)?.refresh();
 }
 
 // --- an agent that is not installed --------------------------------------
@@ -4773,6 +5269,18 @@ function workflowMapInput(): MapInput {
       const owner = repoOf?.get(edge.repoWireId);
       return owner === undefined ? [] : [{ from: owner, to: edge.consumerNodeId }];
     }),
+    // Under their folders, as subagents are; each stands for its own session (the key it is listed by).
+    bots: [...botsByKey].map(([key, bot]) => {
+      const job = (id: string) => oneLine(bot.jobs.find((each) => each.id === id)?.instructions, 80);
+      const why = (run: BotRun) => (run.reason && (run.state === "skipped" || run.state === "failed") ? skipText(run.reason) : undefined);
+      const run = (each: BotRun) => ({ at: Date.parse(each.startedAt), state: each.state, ...(why(each) ? { why: why(each)! } : {}) });
+      return {
+        id: bot.id, folder: sessionKey(bot.nodeId, bot.repoId), name: bot.name, session: key, ai: agents[bot.executor]?.label ?? bot.executor,
+        ...(bot.paused ? { paused: true } : {}), ...(bot.nextRun ? { next: Date.parse(bot.nextRun) } : {}), ...(bot.last ? { last: run(bot.last) } : {}),
+        ...(bot.missed ? { missed: bot.missed.count } : {}),
+        runs: (bot.runs ?? []).map((each) => ({ ...run(each), ...(job(each.jobId) ? { job: job(each.jobId)! } : {}) })),
+      };
+    }),
   };
 }
 
@@ -4784,6 +5292,11 @@ const workflowMap = createWorkflowMap(workflowHost, el<HTMLButtonElement>("waiti
   goTo(key) {
     const found = findByKey(key);
     if (found) void activate(found.node.id, found.repo.id, found.terminal, found.bot);
+  },
+  openBot(id) {
+    openBotPage(id);
+    if (activeView !== "automation") beforeAutomation = activeView;
+    showView("automation");
   },
   question: questionOf,
   history: (key) => {
@@ -5217,6 +5730,10 @@ initAutomation(automationHost, {
 });
 // Tabs of bot sessions restored at start show the bot's name, not its slug.
 void cockpit.botList().then(botsChanged, () => undefined);
+cockpit.onBotsChanged(() => {
+  void cockpit.botList().then(botsChanged, () => undefined);
+  botsUpdated();
+});
 el<HTMLButtonElement>("openBroadcast").addEventListener("click", () => {
   const list = el<HTMLDivElement>("broadcastList");
   list.replaceChildren();
@@ -5234,7 +5751,7 @@ el<HTMLButtonElement>("openBroadcast").addEventListener("click", () => {
     box.checked = remembered ? last.has(key) : executor !== "shell";
     box.addEventListener("change", syncBroadcastAll);
     const name = document.createElement("span");
-    const tool = executor === "shell" ? t("session.shell") : agents[executor].label;
+    const tool = found.bot !== undefined ? botTabName(botsByKey.get(key)?.name ?? found.bot) : executor === "shell" ? t("session.shell") : agents[executor].label;
     name.textContent = `${machineLabel(found.node)} · ${found.repo.label} · ${tool}`;
     row.append(box, " ", name);
     list.append(row);
@@ -5912,25 +6429,94 @@ window.addEventListener("beforeunload", (event) => {
 
 const importDialog = el<HTMLDialogElement>("importDialog");
 const importList = el<HTMLDivElement>("importList");
+const importChipsBox = el<HTMLDivElement>("importChips");
 const importNote = el<HTMLDivElement>("importNote");
+const importCount = el<HTMLSpanElement>("importCount");
 const importRun = el<HTMLButtonElement>("importRun");
+let importRowsNow: ImportRow[] = [];
+let importFilter = "";
+let importBusy = false;
 
-function importRow(label: string, detail: string, checked: boolean, known: boolean, data: Record<string, string>): HTMLLabelElement {
-  const row = document.createElement("label");
-  row.className = "importRow" + (known ? " known" : "");
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = checked;
-  box.disabled = known;
-  Object.assign(box.dataset, data);
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = label;
-  const meta = document.createElement("span");
-  meta.className = "meta";
-  meta.textContent = detail;
-  row.append(box, name, meta);
-  return row;
+const importShown = (row: ImportRow): boolean => importFilter === "" || row.sources.includes(importFilter);
+/** What a press of the button would add: new, ticked, and not filtered out. */
+const importPicked = (): ImportRow[] => importRowsNow.filter((row) => importShown(row) && row.checked && !row.known);
+
+function importLogo(source: string): Node | undefined {
+  const kind = (Object.keys(agentLogos) as AgentKind[]).find((k) => agents[k].short === source);
+  if (!kind) return undefined;
+  const span = document.createElement("span");
+  span.className = "lucide";
+  span.innerHTML = agentLogos[kind];
+  return span;
+}
+
+function renderImport(): void {
+  importChipsBox.replaceChildren();
+  const chips = [{ source: "", label: t("import.all"), count: importRowsNow.length }, ...importChips(importRowsNow).map((c) => ({ ...c, label: c.source }))];
+  if (chips.length > 1) {
+    for (const chip of chips) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("aria-pressed", String(chip.source === importFilter));
+      const logo = chip.source ? importLogo(chip.source) : undefined;
+      button.append(...(logo ? [logo] : []), `${chip.label} ${chip.count}`);
+      button.addEventListener("click", () => {
+        importFilter = chip.source;
+        renderImport();
+      });
+      importChipsBox.append(button);
+    }
+  }
+  importList.replaceChildren();
+  const groups = [...new Set(importRowsNow.map((row) => row.group))];
+  for (const group of groups) {
+    const rows = importRowsNow.filter((row) => row.group === group && importShown(row));
+    if (rows.length === 0) continue;
+    const fresh = rows.filter((row) => !row.known);
+    const head = document.createElement("h3");
+    const label = document.createElement("label");
+    const all = document.createElement("input");
+    all.type = "checkbox";
+    all.disabled = fresh.length === 0 || importBusy;
+    all.checked = fresh.length > 0 && fresh.every((row) => row.checked);
+    all.addEventListener("change", () => {
+      for (const row of fresh) row.checked = all.checked;
+      renderImport();
+    });
+    label.append(all, group || t("import.thisPc"));
+    head.append(label);
+    importList.append(head);
+    for (const row of rows) {
+      const line = document.createElement("label");
+      line.className = "listRow" + (row.known ? " known" : "");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = row.checked;
+      box.disabled = row.known || importBusy;
+      box.addEventListener("change", () => {
+        row.checked = box.checked;
+        renderImport();
+      });
+      const text = document.createElement("span");
+      text.className = "rowText";
+      const name = document.createElement("b");
+      name.textContent = row.name;
+      const path = document.createElement("span");
+      path.className = "sub";
+      path.textContent = row.path;
+      path.title = row.path;
+      text.append(name, path);
+      const meta = document.createElement("span");
+      meta.className = "rowMeta" + (row.reason ? " bad" : "");
+      meta.textContent = row.reason ?? (row.known ? t("import.known") : row.sources.join(" · "));
+      line.append(box, lucideIcon("folder"), text, meta);
+      importList.append(line);
+    }
+  }
+  const n = importPicked().length;
+  importCount.textContent = t("import.picked", { n: String(n) });
+  importRun.textContent = t("import.runCount", { n: String(n) });
+  importRun.disabled = n === 0 || importBusy;
 }
 
 /**
@@ -5939,100 +6525,88 @@ function importRow(label: string, detail: string, checked: boolean, known: boole
  * sessions in -- with everything new ticked except the home folder itself.
  */
 async function openImport(): Promise<void> {
-  importList.replaceChildren();
+  importRowsNow = [];
+  importFilter = "";
   importNote.className = "note";
   importNote.textContent = t("import.scanning");
-  importRun.disabled = true;
+  renderImport();
   importDialog.showModal();
-  const scan = await cockpit.scanImports();
-  importNote.textContent = "";
-  const heading = (text: string): void => {
-    const h = document.createElement("h3");
-    h.textContent = text;
-    importList.append(h);
-  };
-  if (scan.remote.length > 0) heading(t("import.remoteHead"));
-  for (const found of scan.remote) {
-    const fresh = found.folders.filter((folder) => !folder.known).length;
-    const host = importRow(found.destination, found.nodeId ? t("import.known") : found.sources.join(" · "), fresh > 0, fresh === 0, {});
-    host.classList.add("host");
-    importList.append(host);
-    const folderBoxes: HTMLInputElement[] = [];
-    for (const folder of found.folders) {
-      const row = importRow(folder.path, folder.known ? t("import.known") : "", !folder.known, folder.known, {
-        kind: "remote",
-        destination: found.destination,
-        nodeId: found.nodeId ?? "",
-        path: folder.path,
-      });
-      row.classList.add("child");
-      importList.append(row);
-      if (!folder.known) folderBoxes.push(row.querySelector("input")!);
-    }
-    // The machine's box ticks or clears all of its new folders at once.
-    const hostBox = host.querySelector("input")!;
-    hostBox.addEventListener("change", () => {
-      for (const box of folderBoxes) box.checked = hostBox.checked;
-    });
+  try {
+    const scan = await cockpit.scanImports();
+    importRowsNow = importRows(scan);
+    importNote.textContent = importRowsNow.length === 0 ? t("import.none") : "";
+  } catch (error) {
+    importNote.className = "note bad";
+    importNote.textContent = t("import.scanFailed", { reason: failureText(error) });
   }
-  if (scan.local.length > 0) heading(t("import.localHead"));
-  for (const found of scan.local) {
-    const tools = found.tools.map((tool) => agents[tool].label).join(" · ");
-    const detail = found.known ? t("import.known") : `${tools} · ${formatDate(found.lastUsed, { year: "numeric", month: "short", day: "numeric" })}`;
-    importList.append(importRow(found.path, detail, !found.known && found.path !== scan.home, found.known, { kind: "local", path: found.path }));
-  }
-  if (scan.remote.length + scan.local.length === 0) importNote.textContent = t("import.none");
-  importRun.disabled = false;
+  renderImport();
 }
+
+const failureText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
  * Adds what is ticked. A new machine goes through the same connect-and-probe
- * as "add machine" -- a host whose key does not work is reported and skipped,
- * never half-added -- and only then do its folders follow.
+ * as "add machine" -- a host whose key does not work fails all its rows with
+ * the reason, never half-added -- and only then do its folders follow. Rows
+ * that went in become "already added", so a second press never adds twice.
  */
 async function runImport(): Promise<void> {
-  const boxes = [...importList.querySelectorAll<HTMLInputElement>("input[data-kind]:checked:not(:disabled)")];
-  if (boxes.length === 0) return;
-  importRun.disabled = true;
-  const failures: string[] = [];
-  let added = 0;
-  const hosts = new Map<string, { nodeId: string; paths: string[] }>();
-  for (const box of boxes) {
-    if (box.dataset.kind !== "remote") continue;
-    const entry = hosts.get(box.dataset.destination!) ?? { nodeId: box.dataset.nodeId ?? "", paths: [] };
-    entry.paths.push(box.dataset.path!);
-    hosts.set(box.dataset.destination!, entry);
-  }
-  for (const [destination, entry] of hosts) {
-    importNote.className = "note";
-    importNote.textContent = t("import.connecting", { target: destination });
-    let nodeId = entry.nodeId;
-    if (!nodeId) {
-      const report = await cockpit.addRemote(destination, "claude");
-      if (!report.ok) {
-        const reason = report.error && closeReasons[report.error] ? reasonText(report.error) : (report.error ?? t("remote.failed"));
-        failures.push(`${destination}: ${reason}`);
-        continue;
+  const picked = importPicked();
+  if (picked.length === 0 || importBusy) return;
+  importBusy = true;
+  renderImport();
+  try {
+    const results = new Map<string, string | undefined>();
+    const hosts = new Map<string, ImportRow[]>();
+    for (const row of picked) {
+      if (row.kind === "remote") hosts.set(row.destination!, [...(hosts.get(row.destination!) ?? []), row]);
+    }
+    for (const [destination, rows] of hosts) {
+      importNote.className = "note";
+      importNote.textContent = t("import.connecting", { target: destination });
+      let nodeId = rows[0]?.nodeId ?? "";
+      if (!nodeId) {
+        try {
+          const report = await cockpit.addRemote(destination, "claude");
+          if (!report.ok) throw new Error(report.error && closeReasons[report.error] ? reasonText(report.error) : (report.error ?? t("remote.failed")));
+          // addRemote keys the machine by the destination it was given.
+          nodeId = destination;
+        } catch (error) {
+          for (const row of rows) results.set(row.id, failureText(error));
+          continue;
+        }
       }
-      // addRemote keys the machine by the destination it was given.
-      nodeId = destination;
+      for (const row of rows) {
+        try {
+          await cockpit.addRemoteFolder(nodeId, row.path);
+          results.set(row.id, undefined);
+        } catch (error) {
+          results.set(row.id, failureText(error));
+        }
+      }
     }
-    for (const path of entry.paths) {
-      await cockpit.addRemoteFolder(nodeId, path);
-      added += 1;
+    for (const row of picked) {
+      if (row.kind !== "local") continue;
+      try {
+        const result = await cockpit.importLocalFolder(row.path);
+        results.set(row.id, "error" in result ? result.error : undefined);
+      } catch (error) {
+        results.set(row.id, failureText(error));
+      }
     }
+    const done = afterImport(importRowsNow, results);
+    importRowsNow = done.rows;
+    nodes = await cockpit.listNodes();
+    renderRail();
+    importNote.textContent = "";
+    if (done.failed === 0) {
+      importDialog.close();
+      showToast(t("import.done", { added: String(done.added) }));
+    }
+  } finally {
+    importBusy = false;
+    renderImport();
   }
-  for (const box of boxes) {
-    if (box.dataset.kind !== "local") continue;
-    const result = await cockpit.importLocalFolder(box.dataset.path!);
-    if ("error" in result) failures.push(result.error);
-    else added += 1;
-  }
-  nodes = await cockpit.listNodes();
-  renderRail();
-  importNote.className = failures.length > 0 ? "note bad" : "note good";
-  importNote.textContent = [t("import.done", { added: String(added) }), ...failures].join("\n");
-  importRun.disabled = false;
 }
 
 el<HTMLButtonElement>("openImport").addEventListener("click", () => {
@@ -6041,6 +6615,7 @@ el<HTMLButtonElement>("openImport").addEventListener("click", () => {
 });
 importRun.addEventListener("click", () => void runImport());
 el<HTMLButtonElement>("importClose").addEventListener("click", () => importDialog.close());
+
 
 // --- remote folder browser ---------------------------------------------
 
@@ -6622,6 +7197,7 @@ cockpit.onDialogRequest((request) => {
   askQueue.push(request);
   showNextAsk();
 });
+cockpit.onApprovalRequest(showApproval);
 
 // --- language -----------------------------------------------------------
 
@@ -6810,6 +7386,15 @@ initSettings({
   currentLocale: () => currentLocale,
   themeChoice: () => themeChoice,
   setThemeChoice,
+  chatView: () => chatViewOn(localStorage.getItem("chatView")),
+  setChatView: (on) => {
+    localStorage.setItem("chatView", on ? "1" : "0");
+    renderPanes();
+    // Asked in the settings window, over the panes: once it closes, the focused pane's keys go to what it shows now.
+    document.getElementById("settingsDialog")?.addEventListener("close", () => {
+      if (terminalPanel.hidden === false) focusPane(workspace.focused);
+    }, { once: true });
+  },
   codeFont: () => ({ size: codeFontSize, family: codeFontFamily }),
   setCodeFont: (font) => {
     codeFontSize = fontSize(font.size);
@@ -7220,6 +7805,8 @@ function setupSay(text: string, kind: "" | "bad" = ""): void {
   said.className = `note ${kind}`;
   said.textContent = text;
 }
+/** Ticks the time left on the open pairing once a second. */
+let relayTick: ReturnType<typeof setInterval> | undefined;
 /** What was typed and the keys on screen go with the step, and with the dialog. */
 function setupWipe(): void {
   for (const id of ["setupPassword", "setupPasswordAgain", "setupCode"]) el<HTMLInputElement>(id).value = "";
@@ -7229,6 +7816,9 @@ function setupWipe(): void {
   const qr = el<HTMLImageElement>("relayQr");
   qr.removeAttribute("src");
   delete qr.dataset.qr;
+  for (const id of ["appQrIos", "appQrAndroid"]) el<HTMLImageElement>(id).removeAttribute("src");
+  clearInterval(relayTick);
+  relayTick = undefined;
   setupSay("");
 }
 /** Ends the slide under way, if one is. */
@@ -7273,6 +7863,11 @@ async function setupEnter(step: SetupStep): Promise<void> {
     if (typeof answer === "string") return showToast(answer);
     paintPhone(answer);
   }
+  if (step === "app") {
+    for (const [id, url] of [["appQrIos", STORE_LINKS.ios], ["appQrAndroid", STORE_LINKS.android]] as const) {
+      void cockpit.phoneQr(url).then((image) => { if (setupAt === "app") el<HTMLImageElement>(id).src = image; });
+    }
+  }
   const from = setupAt;
   setupSlide?.();
   const leaving = relayDialog.open ? relayDialog.querySelector<HTMLElement>(".phoneStep:not([hidden])") : null;
@@ -7290,7 +7885,7 @@ async function setupEnter(step: SetupStep): Promise<void> {
   el<HTMLElement>("setupSleepHint").textContent = sleepHint();
   const next = el<HTMLButtonElement>("setupNext");
   next.hidden = step === "pair";
-  next.textContent = t(step === "done" ? "common.close" : setupGuided ? "setup.next" : step === "password" ? "setup.save" : "setup.check");
+  next.textContent = t(step === "done" ? "common.close" : setupGuided ? (step === "app" ? "setup.installed" : "setup.next") : step === "password" ? "setup.save" : "setup.check");
   el<HTMLButtonElement>("relayClose").hidden = step === "done";
   if (!relayDialog.open) relayDialog.showModal();
   paintRelay(phoneView!);
@@ -7403,7 +7998,20 @@ function paintRelay(view: PhoneSettingsView): void {
   const said = el<HTMLDivElement>("relayNote");
   said.className = over && relay.paired ? "note good" : "note";
   said.textContent = !over ? "" : t(relay.paired ? "relay.done" : "relay.closed");
-  el<HTMLButtonElement>("relayAgain").hidden = !over || relay.paired;
+  // A new QR can be asked for while one is open, not only after it closed.
+  el<HTMLButtonElement>("relayAgain").hidden = setupAt !== "pair" || confirm || relay.paired;
+  const left = el<HTMLOutputElement>("relayLeft");
+  if (relay.qr !== undefined && relay.qrUntil !== undefined && setupAt === "pair" && !confirm) {
+    const until = relay.qrUntil;
+    const tick = (): void => void (left.textContent = timeLeft(until, Date.now()));
+    tick();
+    clearInterval(relayTick);
+    relayTick = setInterval(tick, 1000);
+  } else {
+    clearInterval(relayTick);
+    relayTick = undefined;
+    left.textContent = "";
+  }
 }
 async function relayDo(action: RelayAction): Promise<void> {
   const answer = await cockpit.relayAction(action);
@@ -7522,8 +8130,9 @@ cockpit.onPhoneAutoKeep((key) => keepWaiting(key));
 const answering = new Set<string>();
 cockpit.onPhoneAnswer((requestId, key, form, answers) => {
   const entry = terminals.get(key);
-  if (!entry || states.get(key)?.kind !== "ready" || answering.has(key)) {
-    cockpit.replyPhoneAnswer(requestId, { ok: false, step: 0, reason: entry && answering.has(key) ? "busy" : "closed" });
+  const busy = answering.has(key) || cardKeys.has(key);
+  if (!entry || states.get(key)?.kind !== "ready" || busy) {
+    cockpit.replyPhoneAnswer(requestId, { ok: false, step: 0, reason: entry && busy ? "busy" : "closed" });
     return;
   }
   answering.add(key);
@@ -7682,12 +8291,27 @@ async function startTour(): Promise<void> {
 
 cockpit.onData((key, chunk) => {
   if (onOutput(activityOf(key), Date.now(), chunk)) turnEnded(key);
+  // Output ends a wait: the chat's note to answer in the terminal goes with it.
+  chatViews.get(key)?.showAsk();
   terminalFor(key).term.write(chunk);
   schedulePreviewCapture(key);
 });
 cockpit.onState((key, state) => {
+  const was = states.get(key);
   states.set(key, state);
-  if (state.kind === "ready" && sessionNotes.delete(key)) renderPanes();
+  // A chat on screen whose connection dropped stays, and comes back by itself (its tries counted on); back up, or closed
+  // by the person, it is a chat as any; one that fails for another reason on the way shows that reason.
+  if (state.kind === "closed" && cutOff(state) && (lostChats.has(key) || (chatViews.has(key) && chatCapable(key) && chatViewOn(localStorage.getItem("chatView")) && workspace.visibleSessions().has(key)))) {
+    // A new drop (from up, or after the tries had stopped on another reason): that reason is old, the tries start over.
+    if (lostWhy.delete(key) || was?.kind === "ready") reconnectTries.delete(key);
+    lostChats.add(key);
+    keepReconnecting(key);
+  } else if (state.kind === "ready" || (state.kind === "closed" && state.reason === "closed_by_user")) chatBack(key);
+  else if (state.kind === "closed" && lostChats.has(key)) lostWhy.set(key, reasonText(state.reason));
+  const noteGone = state.kind === "ready" && sessionNotes.delete(key);
+  // Whether the session is up decides whether its chat covers its terminal (showsChat).
+  if (chatCapable(key) && workspace.visibleSessions().has(key)) renderPanesFollowingFocus();
+  else if (noteGone) renderPanes();
   if (state.kind === "closed" && state.reason !== "closed_by_user") failedAt.set(key, Date.now());
   renderRail();
   if (state.kind === "ready" || state.kind === "closed") void refreshUsage();

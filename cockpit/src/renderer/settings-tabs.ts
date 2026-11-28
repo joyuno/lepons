@@ -20,6 +20,9 @@ export function isThemeChoice(value: unknown): value is ThemeChoice {
   return value === "light" || value === "dark" || value === "system";
 }
 
+/** The chat view is a beta: on only once the person turned it on ("1"); never set, as on every install that left it alone, is off. */
+export const chatViewOn = (stored: string | null): boolean => stored === "1";
+
 /** Code font size for terminals and file views, in px; 13 is the terminal's size before this setting. */
 export const FONT_SIZE = { min: 10, max: 24, default: 13 };
 

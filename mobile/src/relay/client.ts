@@ -28,8 +28,8 @@ export interface RelayTimers {
 
 export type RelayStatus =
   | { kind: "off" }
-  /** Dialing, waiting out a backoff, or in the handshake. */
-  | { kind: "connecting" }
+  /** Dialing or waiting out a backoff ("dial"), or in the handshake with the PC ("handshake"). */
+  | { kind: "connecting"; phase?: "dial" | "handshake" }
   /** In the room; the PC is not. */
   | { kind: "waiting" }
   /** First pairing: show these digits until the PC says "paired". */
@@ -40,7 +40,9 @@ export type RelayStatus =
   /** 1003/1009: the relay refused what we sent -- a bug. Reconnects only when asked. */
   | { kind: "error" }
   /** The PC said no to the pairing. */
-  | { kind: "refused" };
+  | { kind: "refused" }
+  /** The PC's owner unpaired this phone there: the pairing is void, nothing dials again. */
+  | { kind: "unpaired" };
 
 export interface Reply {
   status: number;
@@ -179,7 +181,7 @@ export class RelayClient {
   }
 
   #dial(): void {
-    this.#setStatus({ kind: "connecting" });
+    this.#setStatus({ kind: "connecting", phase: "dial" });
     let socket: RelaySocket;
     try {
       socket = this.#o.connect(`${this.#o.server}/ws?room=${this.#o.roomId}&role=phone`);
@@ -196,7 +198,7 @@ export class RelayClient {
   }
 
   #retry(): void {
-    this.#setStatus({ kind: "connecting" });
+    this.#setStatus({ kind: "connecting", phase: "dial" });
     const random = this.#o.random(1)[0]! / 255;
     this.#timer = this.#timers.set(() => {
       this.#timer = undefined;
@@ -290,7 +292,7 @@ export class RelayClient {
     this.#attempt = 0;
     const link: Link = { ephemeral: keyPairFromPrivate(this.#o.random(32)), inbox: new Inbox(), phase: "welcome" };
     this.#link = link;
-    this.#setStatus({ kind: "connecting" });
+    this.#setStatus({ kind: "connecting", phase: "handshake" });
     this.#socket?.send(toBuffer(phoneHello(this.#o.phoneStatic, link.ephemeral, this.#secret)));
   }
 
@@ -322,6 +324,7 @@ export class RelayClient {
       this.#settle(id)?.resolve(reply);
     } else if (message.t === "error") {
       if (message.id !== undefined) this.#settle(message.id)?.reject(new Error(message.message));
+      else if (message.message === "unpaired") this.stop({ kind: "unpaired" });
     } else if (message.t === "event") {
       for (const listener of this.#listeners.get(message.name) ?? []) listener(message.data);
     }

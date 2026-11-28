@@ -1,13 +1,14 @@
 import { forceCollide, forceLink, forceSimulation, forceX } from "d3-force";
 import type { SessionWorkflow } from "../../shared/ipc.ts";
-import { chars, doingOf, finishedSubagents, finishedToday, oneLine, pcCounts, runningSubagents, sentences, summarize, type FolderCounts, type PcCounts } from "./summary.ts";
+import { chars, doingOf, finishedSubagents, finishedToday, oneLine, pcCounts, runningSubagents, sentences, summarize, type BotRunState, type FolderCounts, type PcCounts } from "./summary.ts";
 
 /*
  * The workflow map without a canvas: what is on it and where it sits, in
  * world units. No DOM here; paint.ts turns it into pixels.
  *
  * Each PC is a constellation of its own (spec 10.1): hub -> folder -> session
- * -> subagent, this PC first. A folder with one session is one pill (10.2).
+ * -> subagent, this PC first. A folder's bots hang where subagents do.
+ * A folder with one session is one pill (10.2).
  * Pills and their summary blocks are NOT world-sized (see nodeScale): they
  * are drawn at a size on screen, so the layout makes room for them at the
  * smallest zoom that still draws them (30%), where they take the most world.
@@ -30,6 +31,27 @@ export interface MapSession {
   workflow?: SessionWorkflow;
 }
 
+/**
+ * A bot (자동화), drawn as a subagent is, under its folder. `session`: its own
+ * session's key: its card stands for it, and its mood says the bot is at work.
+ * `running`: on a run whatever its session says. Times are epoch ms; `why`
+ * says, in words, why a run did not go. `ai` and `runs` (newest first) are
+ * for its panel.
+ */
+export interface MapBot {
+  id: string;
+  folder: string;
+  name: string;
+  session?: string;
+  running?: boolean;
+  paused?: boolean;
+  next?: number;
+  last?: { at: number; state: BotRunState; why?: string };
+  missed?: number;
+  ai?: string;
+  runs?: Array<{ at: number; state: BotRunState; job?: string; why?: string }>;
+}
+
 /** A PC's OS, for the chip by its name; absent when not known. */
 export type PcOs = "Windows" | "macOS" | "Linux";
 /** A PC's connection, as the rail's lamp says it: its hub's ring. */
@@ -46,9 +68,10 @@ export interface MapInput {
   delegations: Array<{ id: string; from: string; toFolder: string; running: boolean; instructions?: string; at?: number }>;
   /** PCs reading each other's folders: `from` owns the folder, `to` reads it. */
   shares: Array<{ from: string; to: string }>;
+  bots?: MapBot[];
 }
 
-export type NodeKind = "hub" | "folder" | "merged" | "session" | "sub" | "chip";
+export type NodeKind = "hub" | "folder" | "merged" | "session" | "sub" | "bot" | "chip";
 /** A line under a pill: `at` puts a time before it; `agent` words it as a subagent step. */
 export interface Line { at?: number; text: string; agent?: boolean; faint?: boolean }
 export interface MNode {
@@ -72,13 +95,15 @@ export interface MNode {
   instr?: string;
   /** sub: its kind of agent ("Explore"), when the record says. */
   agentType?: string;
-  /** sub: when it was sent out. */
+  /** sub: when it was sent out; bot: when its run began, while at work. */
   since?: number;
   /** sub, back: the first sentence of what it said. */
   result?: string;
   /** folder: what its busiest session is doing, and its counts (its block). */
   doing?: string;
   stat?: FolderCounts;
+  /** bot: the bot, `running` as the map reads it. */
+  bot?: MapBot;
   /** chip: how many are folded. */
   count?: number;
   /** session/merged/sub: the session key. */
@@ -166,7 +191,7 @@ export function footprint(n: MNode, z = Z_PILLS): Box[] {
     return [box(x - half, y - u(PX.hubR + 3), x + half, y + u(PX.hubR + 20))];
   }
   if (n.kind === "chip") return [box(x, y - u(PX.chip / 2), x + side * u(30 + estW("+00 finished", 11.5)), y + u(PX.chip / 2))];
-  if (n.kind === "sub") return [box(x, y - u(blockH(2) * PX.sub) / 2, x + side * u(PX.blockW * PX.sub), y + u(blockH(2) * PX.sub) / 2)];
+  if (n.kind === "sub" || n.kind === "bot") return [box(x, y - u(blockH(2) * PX.sub) / 2, x + side * u(PX.blockW * PX.sub), y + u(blockH(2) * PX.sub) / 2)];
   const w = u(pillW(n)), top = y - u(PX.pill / 2), under = y + u(PX.pill / 2 + PX.gap);
   const lines = blockLines(n);
   if (n.kind === "session") {
@@ -233,10 +258,12 @@ export function build(input: MapInput, previous?: MapModel, offsets: Record<stri
   for (const pc of pcs) {
     const folders = input.folders.filter((f) => f.pc === pc.id);
     const mineSessions = input.sessions.filter((s) => folders.some((f) => f.id === s.folder));
+    // A bot's own session is drawn as the bot, not as a session of its folder.
+    const botSessions = new Set((input.bots ?? []).flatMap((b) => (b.session === undefined ? [] : [b.session])));
     const hub: MNode = { id: `h:${pc.id}`, kind: "hub", pc: pc.id, label: pc.label, x: 0, y: 0, side: 1, ...(pc.local ? { local: true } : {}), ...(pc.state ? { state: pc.state } : {}), ...(pc.os ? { os: pc.os } : {}), counts: pcCounts(mineSessions, input.now) };
     const mine: MNode[] = [hub];
     const cols = folders.map((f) => {
-      const all = mineSessions.filter((s) => s.folder === f.id).sort((a, b) => order[a.mood] - order[b.mood] || newest(b) - newest(a));
+      const all = mineSessions.filter((s) => s.folder === f.id && !botSessions.has(s.id)).sort((a, b) => order[a.mood] - order[b.mood] || newest(b) - newest(a));
       const merged = all.length === 1 ? all[0] : undefined;
       // Sessions closed calmly fold into "+n 오늘 끝" with the subagents that came back.
       const open = merged ? [] : all.filter((s) => s.mood !== "idle");
@@ -265,6 +292,15 @@ export function build(input: MapInput, previous?: MapModel, offsets: Record<stri
         addSubs(s, `s:${s.id}`);
       }
       if (merged) addSubs(merged, `f:${f.id}`);
+      const bots = (input.bots ?? []).filter((b) => b.folder === f.id);
+      for (const b of bots) {
+        const s = b.session === undefined ? undefined : mineSessions.find((x) => x.id === b.session);
+        const running = !!b.running || s?.mood === "working" || s?.mood === "waiting";
+        const since = running ? summarize(s?.workflow).progress.start : undefined;
+        const mood: Mood = running ? "working" : b.paused ? "idle" : b.missed ? "waiting" : b.last?.state === "failed" ? "failed" : b.last?.state === "done" ? "done" : "idle";
+        const node: Row["node"] = { id: `b:${b.id}`, kind: "bot", pc: pc.id, label: b.name, bot: running ? { ...b, running } : b, ...(since === undefined ? {} : { since }), mood, parent: `f:${f.id}`, live: running, folder: f.id };
+        rows.push({ node, ...row(blockH(2) * PX.sub, (blockH(2) * PX.sub) / 2), inset: SUB_INSET });
+      }
       const folded = (merged ? 0 : all.length - open.length) + all.reduce((n, s) => n + finishedToday(s.workflow?.events ?? [], input.now), 0) - shownToday;
       if (folded > 0) rows.push({ node: { id: `c:${f.id}`, kind: "chip", pc: pc.id, label: "", count: folded, parent: `f:${f.id}`, folder: f.id }, ...row(PX.chip, PX.chip / 2) });
       const height = rows.reduce((a, r) => a + r.h, 0);
@@ -287,11 +323,11 @@ export function build(input: MapInput, previous?: MapModel, offsets: Record<stri
         y0: Math.min(-wu(PX.pill / 2), -height / 2),
         y1: Math.max(wu(PX.pill / 2 + (lines ? PX.gap + blockH(lines) : 0)), height / 2),
       };
-      return { f, rows, height, dx, ext, activity: activityOf(all, input.now), fnode, sessions: all.map((s) => s.id), r: Math.max(wu(40), (ext.y1 - ext.y0) / 2 + wu(12)) };
+      return { f, rows, height, dx, ext, activity: activityOf(all, input.now), fnode, sessions: all.map((s) => s.id), bots: bots.map((b) => b.id), r: Math.max(wu(40), (ext.y1 - ext.y0) / 2 + wu(12)) };
     });
 
     // The force layout runs only when the PC's folders or their sessions changed.
-    const key = JSON.stringify(cols.map((c) => [c.f.id, c.sessions]));
+    const key = JSON.stringify(cols.map((c) => (c.bots.length ? [c.f.id, c.sessions, c.bots] : [c.f.id, c.sessions])));
     const kept = previous?.placements.get(pc.id);
     let forced: Map<string, { x: number; y: number }>;
     if (kept?.key === key) forced = kept.at;
@@ -531,9 +567,9 @@ export function nextWaiting(input: Pick<MapInput, "sessions">, current?: string)
   return waiting[(waiting.indexOf(current ?? "") + 1) % waiting.length];
 }
 
-/** The map node that shows a session: its own pill, or its folder's merged one. */
+/** The map node that shows a session: its own pill, its folder's merged one, or its bot's card. */
 export function nodeOfSession(m: MapModel, session: string): MNode | undefined {
-  return m.byId.get(`s:${session}`) ?? m.nodes.find((n) => n.kind === "merged" && n.session === session);
+  return m.byId.get(`s:${session}`) ?? m.nodes.find((n) => (n.kind === "merged" && n.session === session) || (n.kind === "bot" && n.bot?.session === session));
 }
 
 /** Seeded RNG (mulberry32): the same folder always gets the same cloud. */

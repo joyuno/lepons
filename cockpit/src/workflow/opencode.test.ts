@@ -123,3 +123,33 @@ test("OpenCode: the newest session in the folder, however the folder is spelled"
   assert.equal(pickOpencodeSession("not json", "/home/me/app"), undefined);
   assert.equal(pickOpencodeSession('{"id":"ses_a"}', "/home/me/app"), undefined);
 });
+
+test("a full read keeps each tool call's kind, target and result", () => {
+  const record = JSON.parse(fixture("finished")) as { messages: Array<{ parts: Array<{ tool?: string; state?: { status: string } }> }> };
+  record.messages.flatMap((message) => message.parts).find((part) => part.tool === "edit")!.state!.status = "error";
+  const steps = parseOpencodeExport(JSON.stringify(record), true).events.flatMap((event) => (event.kind === "action" ? event.steps ?? [] : []));
+  assert.deepEqual(steps, [
+    { tool: "command", target: "ping -n 25 127.0.0.1", result: "done", endAt: 1794362617660 },
+    { tool: "read", target: "a.txt", result: "done", endAt: 1794362641766 },
+    { tool: "edit", target: "a.txt", result: "failed", endAt: 1794362668588 },
+    { tool: "read", target: "a.txt", result: "done", endAt: 1794362672397 },
+  ]);
+});
+
+test("an unfinished command keeps its whole text for the chat's question card", () => {
+  type Part = { tool?: string; state?: { status: string; input?: { command?: string } } };
+  const record = JSON.parse(fixture("finished")) as { messages: Array<{ parts: Part[] }> };
+  const bash = record.messages.flatMap((message) => message.parts).find((part) => part.tool === "bash")!;
+  bash.state = { status: "running", input: { command: "cd build\nrm -rf dist" } };
+  const steps = parseOpencodeExport(JSON.stringify(record), true).events.flatMap((event) => (event.kind === "action" ? event.steps ?? [] : []));
+  assert.deepEqual(steps[0], { tool: "command", target: "cd build", command: "cd build\nrm -rf dist" });
+});
+
+test("a board read has no steps", () => {
+  assert.equal(parseOpencodeExport(fixture("finished")).events.some((event) => "steps" in event), false);
+});
+
+test("the record names the model", () => {
+  assert.equal(parseOpencodeExport(fixture("asking")).model, "glm-5.3-flash-free");
+  assert.equal("model" in parseOpencodeExport("{}"), false);
+});

@@ -34,6 +34,13 @@ test("v2 round-trips through text", () => {
   assert.deepEqual(readLayout(JSON.stringify(saved), fileProject), saved);
 });
 
+test("a layout from before keeps no pane's own chat or terminal choice: 설정 → 화면 decides for all", () => {
+  const saved = layoutOf(tree, {}, ["pc::a", "pc::bg"]);
+  const old = JSON.stringify({ ...saved, views: { "pc::a": "terminal", "pc::bg": "chat" } });
+  assert.deepEqual(readLayout(old, fileProject), saved);
+  assert.equal("views" in saved, false);
+});
+
 test("garbage or a wrong shape reads as nothing", () => {
   assert.equal(readLayout("{not json", fileProject), null);
   assert.equal(readLayout("null", fileProject), null);

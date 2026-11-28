@@ -326,7 +326,20 @@ export interface BlockWords {
   working: string;
   waiting: string;
   doneToday: string;
+  /** A bot's card; absent, its second line is left empty. */
+  bot?: BotWords;
 }
+/** A bot's second line: "일하는 중", "멈춤", "놓친 실행 {n}", "다음 {when}", "마지막 {when} {how}", and how a run ended. */
+export interface BotWords {
+  working: string;
+  failed: string;
+  paused: string;
+  missed: string;
+  next: string;
+  last: string;
+  run: Record<BotRunState, string>;
+}
+export type BotRunState = "done" | "failed" | "skipped" | "missed";
 const fill = (template: string, vars: Record<string, string | number>) => template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 
 /** "4분", "1시간 5분", "1분 안". */
@@ -340,6 +353,29 @@ export function elapsed(minutes: number, w: Pick<BlockWords, "under" | "minutes"
 export function agentBlock(a: { asked: string; running: boolean; since?: number; result?: string }, now: number, w: BlockWords): [string, string] {
   const status = a.running ? fill(w.running, { t: elapsed(minutesSince(a.since ?? now, now), w) }) : sentences(a.result, 1, 80) || w.done;
   return [oneLine(a.asked, 80), status];
+}
+
+/** "12:27". */
+export const hm = (at: number) => { const d = new Date(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+/**
+ * A bot's block: its name; then at work (and for how long), paused, its
+ * missed runs, why its last run failed, or its next and last runs. A part
+ * with nothing to say is left out.
+ */
+export function botBlock(
+  b: { name: string; running?: boolean; since?: number; paused?: boolean; missed?: number; next?: number; last?: { at: number; state: BotRunState; why?: string } },
+  now: number,
+  w: Pick<BlockWords, "under" | "minutes" | "hours" | "bot">,
+): [string, string] {
+  const bw = w.bot;
+  if (!bw) return [oneLine(b.name, 80), ""];
+  const parts = b.running ? [bw.working, b.since === undefined ? "" : elapsed(minutesSince(b.since, now), w)]
+    : b.paused ? [bw.paused]
+    : b.missed ? [fill(bw.missed, { n: b.missed })]
+    : b.last?.state === "failed" ? [bw.failed, b.last.why ?? ""]
+    : [b.next === undefined ? "" : fill(bw.next, { when: hm(b.next) }), b.last ? fill(bw.last, { when: hm(b.last.at), how: bw.run[b.last.state] }) : ""];
+  return [oneLine(b.name, 80), parts.filter(Boolean).join(" · ")];
 }
 
 export interface FolderCounts { sessions: number; working: number; waiting: number; done: number }

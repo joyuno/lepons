@@ -1,7 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, settingsTabs } from "./settings-tabs.ts";
+import { chatViewOn, fontFamily, fontSize, fontStack, isThemeChoice, resolveTheme, settingsTabs } from "./settings-tabs.ts";
+
+test("the chat view is on only when the person turned it on: never set, or turned off, is off", () => {
+  assert.equal(chatViewOn(null), false);
+  assert.equal(chatViewOn("0"), false);
+  assert.equal(chatViewOn(""), false);
+  assert.equal(chatViewOn("1"), true);
+});
 
 test("Windows gets the allow-connections tab, other systems do not; tabs run by priority, AI accounts first", () => {
   const all = ["agents", "llmKeys", "tokens", "update", "remotes", "phone", "theme", "font", "language", "startup", "pet", "allow", "key", "tour", "about"];

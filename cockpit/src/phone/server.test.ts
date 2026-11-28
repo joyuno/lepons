@@ -53,7 +53,8 @@ const deps: PhoneDeps = {
   workflow: async (key) =>
     key.endsWith("::terminal")
       ? { ok: false, reason: "no_transcript" }
-      : { ok: true, workflow: { title: "로그인 고치기", events: [{ kind: "prompt", at: 1, text: "<b>fix</b> login" }] } },
+      // Its picture is the PC chat's: the phone is sent none.
+      : { ok: true, workflow: { title: "로그인 고치기", events: [{ kind: "prompt", at: 1, text: "<b>fix</b> login", images: ["data:image/png;base64,AA=="] }] } },
   docs: async () => ["README.md", "docs/plan.md"],
   doc: async (_key, relative) => (relative === "README.md" ? "# 안녕" : undefined),
   docBytes: async (_key, relative) =>

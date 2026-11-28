@@ -7,7 +7,7 @@ const { Terminal } = xterm;
 import { reflow } from "./copied.ts";
 import { menuFrom } from "./menu.ts";
 import { statusFrom } from "./status.ts";
-import { lampState } from "./types.ts";
+import { lampState, type PhoneBot } from "./types.ts";
 import { accountsOf, commandsOf, filesOf, screenOf, stateOf, workflowChangeOf, workflowOf } from "./validate.ts";
 import { createDemo } from "../demo.ts";
 // The checks that the phone's copies still match the cockpit, run from both apps.
@@ -337,6 +337,36 @@ test("phone map: an agent step reads as one, and a subagent back before midnight
   assert.equal(back.nodes[0]!.counts!.done, 1, "came back today");
   const told = build(phoneMap(pc, [{ ...session, subagents: [{ label: "조사", running: true, since: today }, { label: "어제 것", running: false, since: today - 240000, doneAt: today, result: "찾았어요. 더 있어요." }] }], { agent: "에이전트", terminal: "터미널" }, today));
   assert.deepEqual(told.nodes.filter((node) => node.kind === "sub").map((node) => [node.since, node.result]), [[today, undefined], [today - 240000, "찾았어요."]], "its blocks: time out from when it was sent, what it came back with");
+});
+
+test("phone map: bots hang under their folders, a folder with only bots shows, and a bot's own session is the bot", async () => {
+  const { phoneMap } = await import("../workflowmap/phone-graph.ts");
+  const { build, nodeOfSession } = await import("../../../cockpit/src/renderer/workflowmap/model.ts");
+  const { t } = await import("../i18n.ts");
+  const now = new Date(2026, 9, 31, 12, 0).getTime();
+  const pc = { label: "PC", state: "live" as const };
+  const session = { id: "s1", pc: "PC", folder: "app", mood: "idle" as const, agent: true };
+  const botSession = { id: "s2", pc: "PC", folder: "app", mood: "working" as const, agent: true, bot: "정리봇" };
+  const bot = (over: Partial<PhoneBot>): PhoneBot => ({
+    id: "b", name: "봇", pc: "PC", pcId: "p", folder: "app", executor: "Claude Code", fresh: true, paused: false, state: "idle",
+    next: null, last: null, missed: null, jobs: [], runs: [], sessionId: null, ...over,
+  });
+  const bots = [
+    bot({ id: "b1", name: "정리봇", state: "running", sessionId: "s2" }),
+    bot({ id: "b2", name: "보고봇", folder: "reports", next: new Date(now + 600000).toISOString(), last: { at: new Date(now - 60000).toISOString(), status: "failed", reason: "error" } }),
+    bot({ id: "b3", name: "남의봇", pc: "Mac", folder: "elsewhere" }),
+  ];
+  const words = { agent: "에이전트", terminal: "터미널" };
+  const input = phoneMap(pc, [session, botSession], words, now, bots);
+  assert.deepEqual(input.folders.map((f) => f.id), ["app", "reports"], "a folder with only a bot is on the map; another PC's bot is not");
+  assert.deepEqual(input.bots!.map((b) => b.id), ["b1", "b2"]);
+  assert.deepEqual(input.bots![1]!.last, { at: now - 60000, state: "failed", why: t.botWhy_error });
+  const model = build(input);
+  assert.deepEqual(model.nodes.filter((n) => n.kind === "bot").map((n) => [n.id, n.parent, n.mood]), [["b:b1", "f:app", "working"], ["b:b2", "f:reports", "failed"]]);
+  assert.equal(model.byId.get("f:app")!.kind, "merged", "the bot's own session is not a second session of its folder");
+  assert.equal(nodeOfSession(model, "s2")!.id, "b:b1");
+  assert.deepEqual(phoneMap(pc, [session], words, now), phoneMap(pc, [session], words, now, []), "no bots: the same input as before");
+  assert.equal("bots" in phoneMap(pc, [session], words, now), false);
 });
 
 test("fmt: {n|one|many} says 1 file, 2 files", async () => {

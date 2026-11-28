@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
+import { cutOff, livePins, looksOffline, pinKey, savedPins } from "./pins.ts";
 import type { NodeConfig } from "../shared/ipc.ts";
 import type { SessionState } from "../session/state.ts";
 
@@ -52,4 +52,12 @@ test("a PC looks offline when its sessions could not reach it", () => {
   }
   assert.equal(looksOffline([closed("unreachable"), { kind: "ready" }]), false);
   assert.equal(looksOffline([closed("unreachable"), { kind: "connecting" }]), false);
+});
+
+test("a session the network ended keeps its chat and reconnects; one closed on purpose or by its own failure does not", () => {
+  assert.equal(cutOff({ kind: "closed", reason: "connection_lost" }), true);
+  assert.equal(cutOff({ kind: "closed", reason: "connect_timeout" }), true);
+  assert.equal(cutOff({ kind: "closed", reason: "closed_by_user" }), false);
+  assert.equal(cutOff({ kind: "closed", reason: "node_ended" }), false);
+  assert.equal(cutOff({ kind: "ready" }), false);
 });

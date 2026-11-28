@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 
-import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
+import { agentKinds, agents, agentSpec, codexTokenVariable, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, launchResume, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, signedInFrom, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type AgentCapabilities, type AgentKind } from "./agents.ts";
 import { startupLine, type Session } from "../session/state.ts";
 
 /** The command that registers the endpoint with an agent that has one. */
@@ -283,13 +283,15 @@ test("the lists callers ask come from the declarations", () => {
 });
 
 test("each agent with commands names its own folders", () => {
-  assert.deepEqual(agents.claude.can.commands!.folders("/repo", "/home/me").map(({ kind, dir }) => `${kind} ${dir}`), [
+  assert.deepEqual(agents.claude.can.commands!.folders("/repo", "/home/me").map((one) => "dir" in one ? `${one.kind} ${one.dir}` : one.kind), [
     "commands /repo/.claude/commands",
     "commands /home/me/.claude/commands",
     "skills /repo/.claude/skills",
     "skills /home/me/.claude/skills",
+    "plugins",
   ]);
-  assert.deepEqual(agents.codex.can.commands!.folders("/repo", "/home/me"), [{ kind: "prompts", dir: "/home/me/.codex/prompts" }]);
+  assert.deepEqual(agents.claude.can.commands!.folders("/repo", "/home/me").at(-1), { kind: "plugins", home: "/home/me", repo: "/repo" });
+  assert.deepEqual(agents.codex.can.commands!.folders("/repo", "/home/me"), []);
 });
 
 // Run for real, with shell functions standing in for every CLI so nothing real
@@ -454,6 +456,92 @@ test("a resumed Antigravity is told to fork once its screen settles", () => {
   }
 });
 
+test("a handoff is typed soon after the AI's own prompt is up, not after seconds of quiet", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const fake = () => Object.assign(new EventEmitter(), { written: [] as string[], write(data: string) { this.written.push(data); } });
+    // Codex 0.172 measured here: its prompt is drawn while it loads, its "idle" comes once it takes input, and then it
+    // goes on drawing (MCP servers starting) for seconds, which a long quiet would wait out.
+    const codex = fake();
+    typeWhenSettled(codex as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.codex.readyMark);
+    codex.emit("data", Buffer.from("C:\\work> codex\r\n> Ask Codex to do anything  ? for shortcuts"));
+    mock.timers.tick(1000);
+    assert.deepEqual(codex.written, [], "no sign of the AI yet: the long quiet still holds");
+    // In the middle of a long chunk, as its first full draw comes.
+    codex.emit("data", Buffer.from(`${"x".repeat(300)}\x1b]7501;state=idle:app=codex\x1b\\${"y".repeat(300)}`));
+    mock.timers.tick(500);
+    assert.deepEqual(codex.written, ["hand over"]);
+
+    const asking = fake();
+    typeWhenSettled(asking as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.claude.readyMark);
+    asking.emit("data", Buffer.from("(shift+tab to cycle)"));
+    asking.emit("data", Buffer.from("Do you trust the files in this folder?"));
+    mock.timers.tick(5000);
+    assert.deepEqual(asking.written, [], "a question after the prompt is still left to the operator");
+    asking.emit("data", Buffer.from("❯ "));
+    mock.timers.tick(500);
+    assert.deepEqual(asking.written, ["hand over"], "and the answer's quiet is the short one");
+
+    // Going back to an AI's own conversation: it redraws the old talk, questions in it and all, above its prompt.
+    const resumed = fake();
+    typeWhenSettled(resumed as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.claude.readyMark);
+    resumed.emit("data", Buffer.from("● Do you want me to run the tests too?\r\n"));
+    resumed.emit("data", Buffer.from("❯ \r\n  ? for shortcuts"));
+    mock.timers.tick(500);
+    assert.deepEqual(resumed.written, ["hand over"], "a question above the AI's prompt is the old talk's, not one asked now");
+    const forked = fake();
+    typeWhenSettled(forked as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.codex.readyMark);
+    forked.emit("data", Buffer.from("Do you trust this folder? was answered long ago\r\n\x1b]7501;state=idle:app=codex\x1b\\"));
+    mock.timers.tick(500);
+    assert.deepEqual(forked.written, ["hand over"]);
+
+    const plain = fake();
+    typeWhenSettled(plain as unknown as Session, "hand over", 3000, startQuestion);
+    plain.emit("data", Buffer.from("\x1b]7501;state=idle:app=codex\x1b\\"));
+    mock.timers.tick(2900);
+    assert.deepEqual(plain.written, [], "no mark asked for: the quiet given");
+    mock.timers.tick(100);
+    assert.deepEqual(plain.written, ["hand over"]);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a handoff held by a question with no prompt mark after it is handed back after a while, never typed blind", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const fake = () => Object.assign(new EventEmitter(), { written: [] as string[], write(data: string) { this.written.push(data); } });
+    // The question and the answer's redraw in one quiet, then nothing more: no "idle" mark ever comes (OSC 7501 off).
+    const quiet = fake();
+    let handed = 0;
+    typeWhenSettled(quiet as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.codex.readyMark, { ms: 20_000, gaveUp: () => void handed++ });
+    quiet.emit("data", Buffer.from("Hooks need review\r\n› 2. Trust all and continue"));
+    mock.timers.tick(1000);
+    quiet.emit("data", Buffer.from("› Ask Codex to do anything"));
+    mock.timers.tick(3000);
+    assert.deepEqual(quiet.written, []);
+    mock.timers.tick(19_999);
+    assert.equal(handed, 0, "20 s after the question was last seen, not before");
+    mock.timers.tick(1);
+    assert.equal(handed, 1);
+    assert.deepEqual(quiet.written, [], "handed back (main.ts types it where the screen shows a prompt), not typed here");
+    assert.equal(quiet.listenerCount("data"), 0);
+
+    // The mark after all, before the while is up: typed as before, nothing handed back.
+    const marked = fake();
+    let back = 0;
+    typeWhenSettled(marked as unknown as Session, "hand over", 3000, startQuestion, undefined, agents.codex.readyMark, { ms: 20_000, gaveUp: () => void back++ });
+    marked.emit("data", Buffer.from("Hooks need review"));
+    mock.timers.tick(5000);
+    marked.emit("data", Buffer.from("\x1b]7501;state=idle:app=codex\x1b\\"));
+    mock.timers.tick(30_000);
+    assert.deepEqual(marked.written, ["hand over", "\r"]);
+    assert.equal(back, 0);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("a picked conversation continues as a new one, with the last one's fallback", () => {
   const id = "95c7d9d4-d741-4643-9f06-2e0f431f1a40";
   const same = (command: string) => command;
@@ -463,7 +551,40 @@ test("a picked conversation continues as a new one, with the last one's fallback
   );
   assert.equal(resumeLine(agents.codex, same, "posix", "", id), `codex fork ${id} -c model_reasoning_effort="high"`);
   assert.equal(resumeLine(agents.codex, same, "posix"), agents.codex.resumeCommand, "no id: the last one, as before");
+  // A model pick in the chat: the folder's own conversation by its id (main's conversationOf), on the model picked.
+  assert.equal(resumeLine(agents.codex, same, "cmd", " -m gpt-5.5", id), `codex fork ${id} -c model_reasoning_effort="high" -m gpt-5.5`);
   for (const kind of ["grok", "agy", "agent"] as const) assert.equal(agents[kind].resumeIdCommand, undefined, kind);
+});
+
+test("a person's own conversation by id continues in place for Claude (no copy per open), and as fork --last does for Codex", () => {
+  const id = "95c7d9d4-d741-4643-9f06-2e0f431f1a40";
+  const same = (command: string) => command;
+  assert.equal(resumeLine(agents.claude, same, "posix", " --x", id, true), `{ claude --effort high --resume ${id} --x || claude --effort high --x; }`);
+  assert.equal(resumeLine(agents.codex, same, "posix", "", id, true), `codex fork ${id} -c model_reasoning_effort="high"`);
+});
+
+test("with a bot in the folder a person's session takes their own conversation, or a new one; a reattach never replaces tmux's", async () => {
+  const human = "95c7d9d4-d741-4643-9f06-2e0f431f1a40";
+  const ask = { fresh: false, resume: true, person: true, botHere: true };
+  for (const agent of ["claude", "codex"] as const) {
+    // A reattach, a reconnect, the app's restore: an open, so tmux keeps the AI running.
+    assert.deepEqual(await launchResume(agent, ask, async () => human), { launch: { own: human }, replace: false }, agent);
+    assert.deepEqual(await launchResume(agent, ask, async () => undefined), { launch: false, replace: false }, `${agent}: no person's talk yet`);
+    assert.deepEqual(await launchResume(agent, ask, async () => { throw new Error("unreadable"); }), { launch: false, replace: false }, `${agent}: undecided`);
+    assert.deepEqual(await launchResume(agent, ask, async () => "not-an-id"), { launch: false, replace: false }, agent);
+    // A restart starts the AI again: replaced, still on the person's own.
+    assert.deepEqual(await launchResume(agent, { ...ask, fresh: true }, async () => human), { launch: { own: human }, replace: true }, agent);
+  }
+  let read = 0;
+  const reader = async (): Promise<string | undefined> => {
+    read++;
+    return human;
+  };
+  assert.deepEqual(await launchResume("claude", { ...ask, botHere: false }, reader), { launch: true, replace: false }, "no bot: --continue as before");
+  assert.deepEqual(await launchResume("claude", { ...ask, person: false, resume: false }, reader), { launch: false, replace: false }, "a bot's own pane");
+  assert.deepEqual(await launchResume("claude", { ...ask, resume: human }, reader), { launch: human, replace: true }, "a pick stays a pick");
+  assert.deepEqual(await launchResume("grok", ask, reader), { launch: true, replace: false }, "no id resume: as before");
+  assert.equal(read, 0, "nothing read where nothing changes");
 });
 
 test("only a UUID is taken as a conversation id", () => {

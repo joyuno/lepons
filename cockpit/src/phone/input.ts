@@ -13,11 +13,14 @@
  * navigate"), Shift+Tab in OpenCode's. Only these; never raw bytes from the
  * phone. No Ctrl+C: twice, it ends the agent and leaves a bare shell behind.
  */
-const keys: Record<string, string> = {
+export const keys: Record<string, string> = {
   "1": "1", "2": "2", "3": "3", "4": "4", "5": "5", "6": "6", "7": "7", "8": "8", "9": "9",
   enter: "\r", esc: "\x1b", up: "\x1b[A", down: "\x1b[B", tab: "\t", left: "\x1b[D", backtab: "\x1b[Z",
 };
 export const MAX_INPUT = 2000;
+
+/** Line breaks folded into spaces: typed with no bracketed paste, each would be an Enter and send early. */
+export const oneLine = (text: string): string => text.replace(/[\r\n]+/g, " ");
 
 /**
  * What one phone request types: a named key, or a line of text and then
@@ -29,7 +32,7 @@ export const MAX_INPUT = 2000;
 export function inputFor(body: Record<string, unknown>, shell = false): string[] | "bad" | "long" | "exit" | "shell" {
   if (typeof body.key === "string") return Object.hasOwn(keys, body.key) ? [keys[body.key]!] : "bad";
   if (typeof body.text !== "string") return "bad";
-  const text = body.text.replace(/[\r\n]+/g, " ").replace(/[\x00-\x1f\x7f]/g, "").trim();
+  const text = oneLine(body.text).replace(/[\x00-\x1f\x7f]/g, "").trim();
   if (text === "") return "bad";
   if (shell) return text.length > MAX_INPUT ? "long" : [text, "\r"];
   // What would end the agent and leave a shell behind is the PC's to type:

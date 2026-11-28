@@ -6,6 +6,9 @@ import { join } from "node:path";
 
 import { toDataURL } from "qrcode";
 
+/** H, so the Lepons icon laid over the middle of a QR still leaves it readable. */
+export const QR_OPTIONS = { errorCorrectionLevel: "H", margin: 2 } as const;
+
 import { agents, isAgentKind, type Executor } from "../agent/agents.ts";
 import { botProfilePath, type Bot } from "../agent/bots.ts";
 import { t } from "../i18n/i18n.ts";
@@ -20,7 +23,7 @@ import { outsidePlaces, outsideSecret, printedIn, readOutside } from "../phone/o
 import { EXPO_PUSH_URL, newlyStopped, pushGate, pushTitle, pushTokenGone, schedulePush, snapshotPushes, stopPush, waitingPush, type Waiting } from "../phone/push.ts";
 import type { OutputRing } from "../phone/screen.ts";
 import { auditLine, createPhoneApi, sessionId, type PhoneApi, type PhoneDeps } from "../phone/server.ts";
-import { claudeBuiltins, codexBuiltins, mergeCommands, opencodeBuiltins } from "../phone/suggest.ts";
+import { sessionCommands } from "../phone/suggest.ts";
 import { matchTotp, newTotpSecret, otpauthUri } from "../phone/totp.ts";
 import { readTurnOver } from "../workflow/turn.ts";
 import { relayBridge } from "../relay/bridge.ts";
@@ -316,7 +319,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
         ...(relayStatus.kind === "confirm" ? { code: relayStatus.code, label: relayStatus.label } : settings.relay?.phone ? { label: settings.relay.phone.label } : {}),
         paired: settings.relay?.phone !== undefined,
         server: relayServer(),
-        ...(relayPairing ? { qr: relayPairing.qr } : {}),
+        ...(relayPairing ? { qr: relayPairing.qr, qrUntil: relayPairing.until } : {}),
       },
     };
   };
@@ -456,13 +459,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (!found) return [];
       const { node, repo } = found;
       // The session's own agent, or nothing: a plain shell has no such commands.
-      const executor = sessionExecutor.get(key) ?? node.agent;
-      const commands = executor === "shell" ? null : agents[executor].can.commands;
-      if (!commands) return [];
-      const home = node.home.replace(/\\/g, "/").replace(/\/+$/, "");
-      const dirs = commands.folders(repo.path, home);
-      const custom = await machineOf(node).customCommands(dirs);
-      return mergeCommands(commands.builtins === "codex" ? codexBuiltins : commands.builtins === "opencode" ? opencodeBuiltins : claudeBuiltins, custom.slice(0, 300));
+      return sessionCommands(sessionExecutor.get(key) ?? node.agent, repo.path, node.home, machineOf(node));
     }),
     directory: async (key, relative) => {
       const found = phoneSessionPlace(key);
@@ -594,7 +591,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
   // secret lives in memory only: a restart mid-pairing needs a new QR.
   let relay: RelayClient | undefined;
   let relayStatus: RelayStatus = { kind: "off" };
-  let relayPairing: { secret: Buffer; qr: string } | undefined;
+  let relayPairing: { secret: Buffer; qr: string; until: number } | undefined;
   /** What the running client was made for: a new room or server makes a new one. */
   let relayFor = "";
   const relaySettings = () => phone.get().relay ?? {};
@@ -715,7 +712,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       void syncPhone();
     }
     const uri = otpauthUri(secret, hostname());
-    return { secret, uri, qr: await toDataURL(uri, { margin: 2, width: 220 }) };
+    return { secret, uri, qr: await toDataURL(uri, { ...QR_OPTIONS, width: 220 }) };
   });
   // A bad scan is caught here, not at the phone's login. No last-step note: the
   // same code still opens the phone a moment later, its replay check being the login's.
@@ -736,13 +733,15 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       // Asking to pair is asking for the phone switch: the relay runs only while it is on.
       phone.set({ allowed: true, relay: { ...relaySettings(), roomId, phone: undefined } });
       api.dropAll();
-      relayPairing = { secret, qr: encodeQr({ roomId, pcStaticPub: pcStatic.publicKey, pairingSecret: secret, server: relayServer() }) };
+      relayPairing = { secret, until: Date.now() + 120_000, qr: encodeQr({ roomId, pcStaticPub: pcStatic.publicKey, pairingSecret: secret, server: relayServer() }) };
       armPairingExpiry();
     } else if (action === "approve") relay?.approve();
     else if (action === "refuse") {
       relay?.refuse();
       dropPairing();
     } else if (action === "unpair") {
+      // Before the link goes: a phone on it now forgets this PC at once. One offline then never hears.
+      relay?.unpair();
       dropPairing();
       // A phone let go keeps no sign-in it was given.
       api.dropAll();
@@ -757,6 +756,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
       if (relayPairing && relaySettings().roomId !== undefined) {
         relayPairing = {
           secret: relayPairing.secret,
+          until: relayPairing.until,
           qr: encodeQr({ roomId: relaySettings().roomId!, pcStaticPub: relayPcKey().publicKey, pairingSecret: relayPairing.secret, server: relayServer() }),
         };
       }
@@ -764,7 +764,7 @@ export function startPhoneHost(deps: PhoneHostDeps): PhoneHost {
     return syncPhone();
   });
 
-  ipcMain.handle(channels.phoneQr, (_event, text: string) => toDataURL(String(text), { margin: 2, width: 264 }));
+  ipcMain.handle(channels.phoneQr, (_event, text: string) => toDataURL(String(text), { ...QR_OPTIONS, width: 264 }));
 
   return {
     api,

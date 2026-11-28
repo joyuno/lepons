@@ -26,6 +26,9 @@ interface SettingsDeps {
   currentLocale(): string;
   themeChoice(): ThemeChoice;
   setThemeChoice(choice: ThemeChoice): void;
+  /** Claude, Codex and OpenCode sessions open as a chat over their terminal, unless switched by hand in the pane. */
+  chatView(): boolean;
+  setChatView(on: boolean): void;
   /** Terminal and file view font; family "" is the default stack. */
   codeFont(): { size: number; family: string };
   setCodeFont(font: { size: number; family: string }): void;
@@ -878,9 +881,20 @@ const panels: Record<SettingsTab, (deps: SettingsDeps, info: SettingsInfo) => HT
     if (tokens.incomplete) nodes.push(line(t("settings.tokens.partial")));
     return nodes;
   },
-  theme: ({ t, themeChoice, setThemeChoice }) =>
-    (["light", "dark", "system"] as const).map((choice) =>
-      radio("setTheme", t(`settings.theme.${choice}`), themeChoice() === choice, () => setThemeChoice(choice))),
+  theme: ({ t, themeChoice, setThemeChoice, chatView, setChatView }) => {
+    const chat = document.createElement("label");
+    chat.className = "setApart";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = chatView();
+    box.addEventListener("change", () => setChatView(box.checked));
+    const beta = document.createElement("span");
+    beta.className = "setBeta";
+    beta.textContent = t("settings.beta");
+    chat.append(box, t("settings.theme.chat"), beta);
+    return [...(["light", "dark", "system"] as const).map((choice) =>
+      radio("setTheme", t(`settings.theme.${choice}`), themeChoice() === choice, () => setThemeChoice(choice))), chat];
+  },
   font: ({ t, codeFont, setCodeFont }) => {
     const font = codeFont();
     const step = (by: number) => () => {

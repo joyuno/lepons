@@ -9,7 +9,8 @@ import { stepOf, totpAt } from "../phone/totp.ts";
 import { machineFor, type MachineReach } from "../machine/machine.ts";
 import type { ConnectOptions } from "../ssh/connect.ts";
 import { channels, type NodeConfig, type PhoneSession, type PhoneSettingsView } from "../shared/ipc.ts";
-import { startPhoneHost, type PhoneHostDeps } from "./phone-host.ts";
+import { create } from "qrcode";
+import { QR_OPTIONS, startPhoneHost, type PhoneHostDeps } from "./phone-host.ts";
 import { agents } from "../agent/agents.ts";
 import type { Bot } from "../agent/bots.ts";
 import type { Session } from "../session/state.ts";
@@ -810,4 +811,11 @@ test("대화 열기 opens a bot's session unless it is up or connecting", async 
   sessions.set(key, { state: { kind: "closed" } } as unknown as Session);
   deps.openBot("b1");
   assert.deepEqual(opened, ["b1", "b1"], "a closed one is opened again");
+});
+
+test("QR codes carry error correction H", () => {
+  // The centre icon hides part of the code; H is what lets it still read.
+  for (const text of ["otpauth://totp/Lepons:pc?secret=ABCDEFGHIJKLMNOP&issuer=Lepons", "x".repeat(700)]) {
+    assert.equal(create(text, QR_OPTIONS).errorCorrectionLevel.bit, 2);
+  }
 });

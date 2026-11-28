@@ -331,9 +331,17 @@ export class BotStore {
     return this.#bots.find((bot) => bot.id === id);
   }
 
+  #listeners: Array<() => void> = [];
+
+  /** Told after a bot is saved or removed (not after a run, queue or heartbeat). */
+  onChange(listener: () => void): void {
+    this.#listeners.push(listener);
+  }
+
   set(bot: Bot): void {
     this.#bots = this.#bots.some((each) => each.id === bot.id) ? this.#bots.map((each) => (each.id === bot.id ? bot : each)) : [...this.#bots, bot];
     this.#save();
+    for (const listener of this.#listeners) listener();
   }
 
   remove(id: string): void {
@@ -343,6 +351,7 @@ export class BotStore {
     const { [id]: _queue, ...queued } = this.#queue;
     this.#queue = queued;
     this.#save();
+    for (const listener of this.#listeners) listener();
   }
 
   /** The queued job ids of every bot that has some. */

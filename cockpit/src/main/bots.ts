@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
-import { botProfilePath, botSlug, profileTemplate, withRole, type Bot, type BotJob } from "../agent/bots.ts";
-import { MAX_SCHEDULE_TEXT, parseWhen } from "../agent/schedule.ts";
+import { MAX_BOT_NAME, botProfilePath, botSlug, profileTemplate, withRole, type Bot, type BotJob } from "../agent/bots.ts";
+import { MAX_SCHEDULE_TEXT, parseWhen, scheduleTextProblem, type When } from "../agent/schedule.ts";
 import type { Machine } from "../machine/machine.ts";
+import { inEnglish, t } from "../i18n/i18n.ts";
+import type { AgentKind } from "../agent/agents.ts";
+import { changeNote, changesOf, scheduleFromReply, type ApprovalReply, type ApprovalRequest } from "../shared/approval.ts";
 import type { BotStore } from "./stores.ts";
 
 /** What a bot is made or edited from: the form's or create_bot's fields, jobs still as typed; a kept job carries its id. */
 export type BotInput = Omit<Bot, "id" | "jobs"> & { jobs: Array<{ id?: string; when: string; instructions: string }> };
 
-/** A bot's name heads a tab and a card. */
-export const MAX_BOT_NAME = 60;
 /** How much of a profile already in the folder the question shows. */
 const SHOWN_PROFILE = 2000;
 
@@ -23,8 +24,84 @@ export interface BotDeps {
   machine(nodeId: string): Machine | undefined;
   /** Whether Lepons can tell if a session's AI is running there: not over SSH without tmux. */
   watched(nodeId: string): boolean;
-  /** The approval dialog (approveDelegation + appDialog); silence is a no. `existing`: a profile already in the folder, clipped. */
-  approve(bot: Bot, existing?: string): Promise<"allowed" | "refused" | "unanswered">;
+  /** Whether the PC answers and has the AI, checked before asking and again for an edited AI; an AI's requests only. */
+  ready?(machine: Machine, executor: AgentKind): Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * The question; silence is a no. `existing`: a profile already in the folder, clipped. `edited`: allowed as the
+   * person changed it, which is checked again from the start before anything is saved.
+   */
+  approve(bot: Bot, existing?: string): Promise<"allowed" | "refused" | "unanswered" | "schedules" | { edited: BotInput }>;
+}
+
+/**
+ * BotDeps.approve as the app's approval dialog (an AI's create_bot or update_bot): the bot as saveBot made it is
+ * shown, and what comes back allowed with changes is the input saveBot checks again. `note`: what the person
+ * changed, from the first request to the last answer, in English for the AI. `schedules`: the person made the bot's
+ * jobs schedules instead (schedulesInstead makes them); saveBot then makes no bot.
+ */
+export function approveInDialog(
+  ask: (request: ApprovalRequest) => Promise<ApprovalReply>,
+  describe: (bot: Bot, existing?: string) => { source: string; machine: string; editing: boolean; notes: string[]; canSchedule: boolean },
+): { approve: BotDeps["approve"]; note(): string; schedules(): Extract<ApprovalReply, { as: "schedules" }> | undefined } {
+  let first: ApprovalRequest | undefined;
+  let last: Extract<ApprovalReply, { as: "bot" | "schedules" }> | undefined;
+  let instead: Extract<ApprovalReply, { as: "schedules" }> | undefined;
+  const approve: BotDeps["approve"] = async (bot, existing) => {
+    const request: ApprovalRequest = {
+      kind: "bot", ...describe(bot, existing), folder: bot.folder, name: bot.name, executor: bot.executor, role: bot.role,
+      jobs: bot.jobs.map((job) => ({ id: job.id, when: job.cron, instructions: job.instructions })),
+    };
+    first ??= request;
+    const reply = await ask(request);
+    if (reply.answer !== "allowed") return reply.answer;
+    // replyOf gives a bot request no other shape.
+    if (reply.as === "schedule") return "refused";
+    last = reply;
+    if (reply.as === "schedules") {
+      instead = reply;
+      return "schedules";
+    }
+    if (changesOf(request, reply).length === 0) return "allowed";
+    return {
+      edited: {
+        nodeId: bot.nodeId, repoId: bot.repoId, folder: bot.folder, fresh: bot.fresh, ...(bot.linked ? { linked: bot.linked } : {}),
+        name: reply.name, executor: reply.executor, role: reply.role, jobs: reply.jobs,
+      },
+    };
+  };
+  return { approve, note: () => first && last ? inEnglish(() => changeNote(changesOf(first!, last!), t)) : "", schedules: () => instead };
+}
+
+/**
+ * A bot request the person allowed as schedules: each job one, in the same folder with the same AI, the role in
+ * front of its instructions so the job still means what it meant in the bot. Every one is checked again as
+ * schedule_task checks one before the first is saved; `save` makes one (already allowed: no second question).
+ */
+export async function schedulesInstead(
+  reply: Extract<ApprovalReply, { as: "schedules" }>,
+  save: (schedule: { when: When; cron: string; instructions: string; name: string }) => Promise<{ ok: true; id: string } | { ok: false; error: string }>,
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  if (reply.role.trim() === "") return { ok: false, error: "no_role: the role goes in front of each job's instructions" };
+  if (reply.jobs.length === 0) return { ok: false, error: "no_jobs: there is no job to make a schedule of" };
+  const checked = [];
+  for (const [index, job] of reply.jobs.entries()) {
+    // The job itself must say what to do: the role in front of it says only what for.
+    const empty = scheduleTextProblem(job.instructions);
+    if (empty) return { ok: false, error: empty };
+    const one = scheduleFromReply({
+      answer: "allowed", as: "schedule", when: job.when, instructions: `${reply.role.trim()}\n\n${job.instructions.trim()}`,
+      name: reply.jobs.length === 1 ? reply.name.trim() : `${reply.name.trim()} ${index + 1}`,
+    });
+    if (!one.ok) return one;
+    checked.push(one);
+  }
+  const ids: string[] = [];
+  for (const { when, cron, instructions, name } of checked) {
+    const saved = await save({ when, cron, instructions, name });
+    if (!saved.ok) return { ok: false, error: ids.length === 0 ? saved.error : `${saved.error} (made before it: schedule ids ${ids.join(", ")})` };
+    ids.push(saved.id);
+  }
+  return { ok: true, ids };
 }
 
 /**
@@ -63,6 +140,9 @@ export async function saveBot(deps: BotDeps, input: BotInput, editing?: string):
   if (!machine) return { ok: false, error: "unknown_node" };
   // Unwatched, an AI that quit or never started leaves a shell, and the run's text would run there as commands.
   if (!deps.watched(input.nodeId)) return { ok: false, error: "no_tmux: a bot needs tmux on a remote PC, so Lepons can tell its AI is running; install tmux on that PC first" };
+  // What cannot run is not put to the person; an edited AI is checked here again before it is saved.
+  const ready = await deps.ready?.(machine, input.executor);
+  if (ready && !ready.ok) return ready;
   // The AI still running in its session, when an edit changed it: the next run closes that one first.
   const running = previous?.retired ?? previous?.executor;
   const { retired: _retired, ...base } = { ...previous, ...input };
@@ -85,6 +165,16 @@ export async function saveBot(deps: BotDeps, input: BotInput, editing?: string):
   const answer = await deps.approve(bot, shown);
   if (answer === "refused") return { ok: false, error: "refused: the operator said no to this bot" };
   if (answer === "unanswered") return { ok: false, error: "approval_needed: this bot needs a yes in the Lepons window on this PC, and none came. Ask the operator, then try again." };
+  if (answer === "schedules") return { ok: false, error: "schedules: the operator made this bot's jobs schedules instead" };
+  // Every check again on what the person allowed. A renamed bot finding a profile file the question did not show
+  // asks again, showing it: its memory would otherwise be kept unseen.
+  if (answer !== "allowed") {
+    // The dialog asks for a role and a task in each row; what it sends is not trusted to have them.
+    if (answer.edited.role.trim() === "") return { ok: false, error: "no_role: a bot needs a role" };
+    const problem = answer.edited.jobs.map((job) => scheduleTextProblem(job.instructions)).find((each) => each !== undefined);
+    if (problem) return { ok: false, error: problem };
+    return saveBot({ ...deps, approve: async (again, there) => there === undefined || there === shown ? "allowed" : deps.approve(again, there) }, answer.edited, editing);
+  }
 
   // create makes no parent folders, and a new folder has no .lepons/bots yet.
   try {

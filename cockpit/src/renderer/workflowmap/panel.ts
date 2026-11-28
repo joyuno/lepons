@@ -1,9 +1,8 @@
 import { formatDate, t } from "../../i18n/i18n.ts";
 import type { WorkflowItem } from "../../shared/ipc.ts";
 import { attachHover } from "../hover.ts";
-import type { MapInput, MapModel, MapSession, Mood } from "./model.ts";
-import { hm } from "./paint.ts";
-import { finishedToday, goalIsLong, minutesSince, summarize, type Summary } from "./summary.ts";
+import type { MapInput, MapModel, MapSession, MNode, Mood } from "./model.ts";
+import { botBlock, finishedToday, goalIsLong, hm, minutesSince, summarize, type BotWords, type Summary } from "./summary.ts";
 
 /*
  * The right panel: what the clicked thing is doing. Read-only by decision
@@ -23,6 +22,8 @@ export interface PanelDeps {
   history(session: string): Array<{ at: number; text: string }>;
   translate(text: string): Promise<Translated>;
   goTo(session: string): void;
+  /** A bot's own page in the 자동화 view. */
+  openBot?(id: string): void;
   close(): void;
 }
 
@@ -55,8 +56,18 @@ export function progressLine(sum: Summary, working: boolean, now: number): strin
   return bits.join(" · ");
 }
 
-function head(av: string, title: string, sub: string) {
-  return `<div class="ph"><div class="av">${esc(av)}</div><div class="phT"><div class="pt">${esc(title)}</div><div class="ps">${sub}</div></div><button type="button" class="close" aria-label="${esc(t("wfmap.close"))}">✕</button></div>`;
+/** A bot's line words (summary.ts botBlock), for its card and its panel. */
+export const botWords = (): BotWords => ({
+  working: t("wfmap.botWorking"), failed: t("wfmap.botFailed"), paused: t("wfmap.botPaused"), missed: t("wfmap.botMissed"), next: t("wfmap.botNext"), last: t("wfmap.botLast"),
+  run: { done: t("wfmap.botRun.done"), failed: t("wfmap.botRun.failed"), skipped: t("wfmap.botRun.skipped"), missed: t("wfmap.botRun.missed") },
+});
+
+/** A bot's mark, as on the map (paint.ts botIcon): a robot's head, antenna and two eyes, in its mood's colour. */
+const botHead = (m: Mood) =>
+  `<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" style="color:var(--${m === "working" || m === "done" ? "go" : m === "waiting" ? "live" : m === "failed" ? "stop" : "idle"})"><path d="M10 3.5V7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="10" cy="3" r="1.6" fill="currentColor"/><rect x="3" y="7" width="14" height="10" rx="3" fill="currentColor"/><circle cx="7" cy="12" r="1.6" fill="var(--raise)"/><circle cx="13" cy="12" r="1.6" fill="var(--raise)"/></svg>`;
+
+function head(av: string, title: string, sub: string, icon?: string) {
+  return `<div class="ph"><div class="av">${icon ?? esc(av)}</div><div class="phT"><div class="pt">${esc(title)}</div><div class="ps">${sub}</div></div><button type="button" class="close" aria-label="${esc(t("wfmap.close"))}">✕</button></div>`;
 }
 
 function summaryCard(s: MapSession, sum: Summary, now: number): string {
@@ -243,6 +254,25 @@ function sessionPanel(el: HTMLElement, input: MapInput, s: MapSession, deps: Pan
   });
 }
 
+/** A bot: where and with which AI, its line as its card says it, its next run, its recent runs, and the way to its page. */
+function botPanel(el: HTMLElement, input: MapInput, m: MapModel, n: MNode, deps: PanelDeps) {
+  const b = n.bot!;
+  const f = input.folders.find((x) => x.id === b.folder);
+  const pc = input.pcs.find((p) => p.id === f?.pc);
+  const [, line] = botBlock({ ...b, ...(n.since === undefined ? {} : { since: n.since }) }, m.now, { under: t("wfmap.underMinute"), minutes: t("wfmap.minutes"), hours: t("wfmap.hours"), bot: botWords() });
+  const row = (key: string, body: string) => `<div class="sr"><span class="sk">${esc(key)}</span><div class="sv">${esc(body)}</div></div>`;
+  const when = (at: number) => formatDate(at, { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const runs = b.runs ?? [];
+  el.innerHTML = `${head(b.name.slice(0, 1), b.name, `${dot(n.mood ?? "idle")}${esc(pc?.label ?? "")} / ${esc(f?.label ?? "")}${b.ai ? ` · ${esc(b.ai)}` : ""}`, botHead(n.mood ?? "idle"))}
+  <div class="pb">
+    <section class="sum"><div class="sumH">${esc(t("wfmap.summary"))}</div>${row(t("wfmap.botState"), line || mood(n.mood ?? "idle"))}${row(t("wfmap.botNextKey"), b.next === undefined ? t("automation.noNext") : when(b.next))}</section>
+    <div class="secH"><b>${esc(t("automation.runs"))}</b> ${runs.length}</div>
+    ${runs.length ? `<ul class="log">${runs.map((r) => `<li><span class="k${r.state === "done" ? " run" : ""}">${esc(t(`wfmap.botRun.${r.state}`))}</span><span class="tx">${esc([r.job, r.why].filter(Boolean).join(" · "))}</span><span class="tm">${esc(when(r.at))}</span></li>`).join("")}</ul>` : `<div class="cap">${esc(t("automation.noRuns"))}</div>`}
+  </div>
+  ${deps.openBot ? `<div class="go"><button type="button" class="goBtn">${esc(t("wfmap.openBot"))} <span>↗</span></button></div>` : ""}`;
+  el.querySelector(".goBtn")?.addEventListener("click", () => deps.openBot?.(b.id));
+}
+
 function hubPanel(el: HTMLElement, input: MapInput, m: MapModel, pcId: string) {
   const pc = input.pcs.find((p) => p.id === pcId)!;
   const folders = input.folders.filter((f) => f.pc === pcId);
@@ -292,6 +322,7 @@ export function renderPanel(el: HTMLElement, input: MapInput, m: MapModel, id: s
   if (!n) return false;
   const s = n.session ? input.sessions.find((x) => x.id === n.session) : undefined;
   if (n.kind === "hub") hubPanel(el, input, m, n.pc);
+  else if (n.kind === "bot" && n.bot) botPanel(el, input, m, n, deps);
   else if (s && (n.kind === "session" || n.kind === "merged" || n.kind === "sub")) sessionPanel(el, input, s, deps);
   else if (n.folder) folderPanel(el, input, n.folder);
   else return false;

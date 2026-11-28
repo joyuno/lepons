@@ -1,11 +1,12 @@
 import * as SecureStore from "expo-secure-store";
 import { getRandomBytes } from "expo-crypto";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 
 import { forgetOpened } from "./open-file.ts";
 import { chatMemory } from "./phone/chat-rows.ts";
 import { draftBook } from "./phone/drafts.ts";
 import { outbox } from "./phone/outbox.ts";
+import { savedBook, type SavedDisk } from "./phone/saved.ts";
 import { DEFAULT_SERVER, bytesToHex, hexToBytes, keyPairFromPrivate, validServer, type KeyPair } from "./relay/protocol.ts";
 import type { Spot } from "../../cockpit/src/renderer/workflowmap/hold.ts";
 
@@ -27,6 +28,62 @@ export const drafts = draftBook({ get, set, del });
 export const sends = outbox(drafts);
 /** The chats seen since the app started, so one opens at once. In memory only. */
 export const chats = chatMemory();
+
+/** saved.ts's paths, under the app's documents: a cache folder the OS may empty is no place for what offline shows. */
+const savedDisk: SavedDisk = {
+  read(path) {
+    const file = new File(Paths.document, path);
+    return file.exists ? file.bytesSync() : undefined;
+  },
+  write(path, bytes) {
+    const file = new File(Paths.document, path);
+    file.parentDirectory.create({ intermediates: true, idempotent: true });
+    const tmp = new File(Paths.document, `${path}.tmp`);
+    tmp.writeSync(bytes);
+    // ponytail: expo-file-system's overwrite deletes the old file just before the rename, so a kill in that gap loses the copy (never leaves half of one); a native replace would close it.
+    tmp.moveSync(file, { overwrite: true });
+  },
+  remove(path) {
+    const dir = new Directory(Paths.document, path);
+    if (dir.exists) return dir.delete();
+    const file = new File(Paths.document, path);
+    if (file.exists) file.delete();
+  },
+  list(path) {
+    const dir = new Directory(Paths.document, path);
+    if (!dir.exists) return [];
+    return dir.list().flatMap((one) => (one instanceof File ? [{ name: one.name, modified: one.lastModified ?? 0 }] : []));
+  },
+};
+
+/**
+ * The key that seals the saved copies, made once per install. A Keychain that throws (locked) gives none and makes none:
+ * a new key then would orphan every copy sealed with the old one. Asked once and kept: two first writes at once would
+ * each make a key, and the copy sealed with the lost one would read as broken.
+ */
+let savedKeyNow: Promise<Uint8Array | undefined> | undefined;
+const savedKey = () => (savedKeyNow ??= readSavedKey().then((key) => {
+  if (!key) savedKeyNow = undefined;
+  return key;
+}));
+async function readSavedKey(): Promise<Uint8Array | undefined> {
+  try {
+    const hex = await get("savedKey");
+    if (hex && /^[0-9a-f]{64}$/.test(hex)) return hexToBytes(hex);
+    const key = getRandomBytes(32);
+    await set("savedKey", bytesToHex(key));
+    return key;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The last list, bots and chats of each PC, for when it cannot be reached (saved.ts). */
+export const saved = savedBook({
+  disk: savedDisk, key: savedKey, random: getRandomBytes,
+  timer: { set: (run, ms) => setTimeout(run, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
+  now: Date.now,
+});
 
 /** The phone's static key pair: made once per install, never leaves the device. */
 export async function phoneKey(): Promise<KeyPair> {
@@ -91,6 +148,8 @@ export async function savePcs(pcs: readonly Pc[], active: string | undefined): P
 
 /** Forgets one PC's sign-in; with the last PC gone, also what was typed, opened and placed on the map. The phone's own key stays. */
 export async function forgetPc(id: string, last: boolean): Promise<void> {
+  // First: a SecureStore that throws must not leave what the PC showed on disk.
+  saved.forgetPc(id);
   await del(`token_${id}`);
   // Its PCs' names in the sessions tab's order go with it.
   if (loadPcOrder(id).length > 0) {
@@ -123,6 +182,14 @@ export async function saveServer(server: string): Promise<void> {
 /** A PC's sign-in, by its id. */
 export const loadToken = async (pc: string) => (await get(`token_${pc}`)) || undefined;
 export const saveToken = (pc: string, token: string) => (token ? set(`token_${pc}`, token) : del(`token_${pc}`));
+
+/** The widget's link heard the PC unpair this phone (android-widget.tsx); the app acts on it when it next opens or comes back. */
+export const markUnpaired = (pc: string) => set("unpairedPc", pc);
+export const takeUnpaired = async () => {
+  const pc = (await get("unpairedPc")) || undefined;
+  if (pc) await del("unpairedPc");
+  return pc;
+};
 
 /** "입력 대기 알림" turned off in settings; on unless the user said so. */
 export const loadPushOff = async () => (await get("pushOff")) === "1";

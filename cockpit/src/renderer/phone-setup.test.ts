@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { base32Decode } from "../phone/totp.ts";
-import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, type SetupFacts } from "./phone-setup.ts";
+import { cleanCode, codeShaped, firstUnfinished, keyInGroups, passwordProblem, progressShare, progressText, stepAfter, stepBefore, stepForward, STORE_LINKS, timeLeft, type SetupFacts } from "./phone-setup.ts";
 
 const nothing: SetupFacts = { hasPassword: false, totpReady: false, appSeen: false, paired: false };
 
@@ -69,4 +69,15 @@ test("the grouped key is still the same key to an authenticator app", () => {
   const key = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
   assert.equal(keyInGroups(key), "JBSW Y3DP EHPK 3PXP JBSW Y3DP EHPK 3PXP");
   assert.deepEqual(base32Decode(keyInGroups(key)), base32Decode(key));
+});
+
+test("store links are the two stores' pages", () => {
+  assert.deepEqual(STORE_LINKS, { ios: "https://apps.apple.com/app/id6829282468", android: "https://play.google.com/store/apps/details?id=app.lepons.mobile" });
+});
+
+test("time left reads m:ss and stops at 0:00", () => {
+  const now = 1_000_000;
+  assert.equal(timeLeft(now + 83_000, now), "1:23");
+  assert.equal(timeLeft(now + 120_000, now), "2:00");
+  assert.equal(timeLeft(now - 1, now), "0:00");
 });

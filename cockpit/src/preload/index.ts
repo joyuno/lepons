@@ -94,17 +94,18 @@ const api: CockpitApi = {
   installTmux: (nodeId: string) => ipcRenderer.invoke(channels.installTmux, nodeId),
   openSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string) =>
     ipcRenderer.invoke(channels.openSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt, bot),
-  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string) =>
-    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt, bot),
+  restartSession: (nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string, model?: string) =>
+    ipcRenderer.invoke(channels.restartSession, nodeId, repoId, cols, rows, executor, resume, bypass, terminal, firstPrompt, bot, model),
   writeSession: (key: string, data: string) => ipcRenderer.send(channels.writeSession, key, data),
   resizeSession: (key: string, cols: number, rows: number) =>
     ipcRenderer.send(channels.resizeSession, key, cols, rows),
   tmuxScroll: (key: string, to?: number, find?: { text: string; up: boolean }) => ipcRenderer.invoke(channels.tmuxScroll, key, to, find),
   stopSession: (nodeId: string, repoId: string | null) =>
     ipcRenderer.invoke(channels.stopSession, nodeId, repoId),
-  sessionWorkflow: (nodeId: string, repoId: string, bot?: string) =>
-    ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId, bot),
-  handoffText: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.handoffText, nodeId, repoId),
+  sessionWorkflow: (nodeId: string, repoId: string, bot?: string, full?: boolean, before?: number) =>
+    ipcRenderer.invoke(channels.sessionWorkflow, nodeId, repoId, bot, full, before),
+  handoffText: (nodeId: string, repoId: string, to?: AgentKind) => ipcRenderer.invoke(channels.handoffText, nodeId, repoId, to),
+  codexModels: (nodeId: string) => ipcRenderer.invoke(channels.codexModels, nodeId),
   sessionTurn: (nodeId: string, repoId: string, workedMs: number, bot?: string) =>
     ipcRenderer.invoke(channels.sessionTurn, nodeId, repoId, workedMs, bot),
   restartAgent: (nodeId: string, repoId: string) => ipcRenderer.invoke(channels.restartAgent, nodeId, repoId),
@@ -187,6 +188,9 @@ const api: CockpitApi = {
     ipcRenderer.invoke(channels.saveEdited, nodeId, path, edit, force),
   readText: (nodeId: string, path: string) => ipcRenderer.invoke(channels.readText, nodeId, path),
   readBinary: (nodeId: string, path: string) => ipcRenderer.invoke(channels.readBinary, nodeId, path),
+  chatImage: (nodeId: string, repoId: string, path: string) => ipcRenderer.invoke(channels.chatImage, nodeId, repoId, path),
+  chatPhoto: (nodeId: string, repoId: string, bot: string | undefined, name: string) => ipcRenderer.invoke(channels.chatPhoto, nodeId, repoId, bot, name),
+  chatCommands: (nodeId: string, repoId: string, agent: AgentKind, own: boolean) => ipcRenderer.invoke(channels.chatCommands, nodeId, repoId, agent, own),
   makeFolder: (nodeId: string, parent: string, name: string) =>
     ipcRenderer.invoke(channels.makeFolder, nodeId, parent, name),
   makeFile: (nodeId: string, directory: string, name: string, contents: string) =>
@@ -204,7 +208,7 @@ const api: CockpitApi = {
     const url = process.platform === "darwin" ? clipboard.read("public.file-url") : "";
     return url.startsWith("file://") ? decodeURIComponent(new URL(url).pathname) : "";
   },
-  pasteImage: (nodeId: string) => ipcRenderer.invoke(channels.pasteImage, nodeId),
+  pasteImage: (nodeId: string, bytes?: Uint8Array, type?: string) => ipcRenderer.invoke(channels.pasteImage, nodeId, bytes, type),
   dropFiles: (nodeId: string, paths: string[]) => ipcRenderer.invoke(channels.dropFiles, nodeId, paths),
   usage: (only?: string) => ipcRenderer.invoke(channels.usage, only),
   tokenStats: () => ipcRenderer.invoke(channels.tokenStats),
@@ -224,6 +228,9 @@ const api: CockpitApi = {
   onNodes: (handler: (nodes: NodeConfig[]) => void) => {
     ipcRenderer.on(channels.nodesChanged, (_event, list: NodeConfig[]) => handler(list));
   },
+  onBotsChanged: (handler: () => void) => {
+    ipcRenderer.on(channels.botsChanged, () => handler());
+  },
   onOpenWith: (handler: (opens: OpenWith[]) => void) => {
     ipcRenderer.on(channels.openWith, (_event, opens: OpenWith[]) => handler(opens));
   },
@@ -232,6 +239,13 @@ const api: CockpitApi = {
       handler(nodeId, nudge, restart));
   },
   watchTranscripts: (on: boolean) => ipcRenderer.send(channels.watchTranscripts, on),
+  watchChat: (key: string, nodeId: string, repoId: string, on: boolean) => ipcRenderer.send(channels.watchChat, key, nodeId, repoId, on),
+  onChatRecord: (handler: (key: string) => void) => {
+    ipcRenderer.on(channels.chatRecordChanged, (_event, key: string) => handler(key));
+  },
+  onHandoffHeld: (handler: (key: string, text: string) => void) => {
+    ipcRenderer.on(channels.handoffHeld, (_event, key: string, text: string) => handler(key, text));
+  },
   onTranscript: (handler: (nodeId: string, repoId: string) => void) => {
     ipcRenderer.on(channels.transcriptChanged, (_event, nodeId: string, repoId: string) =>
       handler(nodeId, repoId),
@@ -248,6 +262,11 @@ const api: CockpitApi = {
     ipcRenderer.on(channels.dialogRequest, (_event, request: DialogRequest) => handler(request));
   },
   replyDialog: (requestId: string, response: number) => ipcRenderer.send(channels.dialogReply, requestId, response),
+  onApprovalRequest: (handler) => {
+    ipcRenderer.on(channels.approvalRequest, (_event, ask) => handler(ask));
+  },
+  replyApproval: (requestId, reply) => ipcRenderer.send(channels.approvalReply, requestId, reply),
+  approvalEditing: (requestId) => ipcRenderer.send(channels.approvalEditing, requestId),
   phoneSnapshot: (sessions) => ipcRenderer.send(channels.phoneSnapshot, sessions),
   phoneSettings: () => ipcRenderer.invoke(channels.phoneSettings),
   setPhoneAllowed: (on) => ipcRenderer.invoke(channels.setPhoneAllowed, on),

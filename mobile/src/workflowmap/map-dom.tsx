@@ -45,7 +45,7 @@ interface Engine {
 /**
  * The cockpit's workflow map (model.ts, paint.ts: its files, word for word)
  * in a web view, one PC's constellation. Watch only: a tap on a session
- * calls `onPick` back in the app, which opens its sheet. It centers the map
+ * calls `onPick` back in the app, which opens its sheet; a tap on a bot, `onPickBot`. It centers the map
  * on open and as it grows, until a pan or pinch moves it. A long press lifts
  * a project; where it is dropped goes to `onMoved`, for the app to keep.
  */
@@ -60,6 +60,7 @@ export default function WorkflowMapView(props: {
   /** The session whose sheet is open, outlined on the map. */
   selected?: string;
   onPick: (session: string) => Promise<void>;
+  onPickBot?: (bot: string) => Promise<void>;
   onMoved: (pc: string, id: string, spot: Spot) => Promise<void>;
   /**
    * What the map is doing, for the app to show or test on: "drawn WxH @dpr z=…"
@@ -98,7 +99,7 @@ export default function WorkflowMapView(props: {
     document.body.style.margin = "0";
     document.body.style.overflow = "hidden";
     guard(() => {
-      engine.current = createEngine(canvas.current!, latest.current, (session) => void latest.current.onPick(session), (pc, id, spot) => void latest.current.onMoved(pc, id, spot), report);
+      engine.current = createEngine(canvas.current!, latest.current, (node) => void (node.bot ? latest.current.onPickBot?.(node.bot.id) : latest.current.onPick(node.session!)), (pc, id, spot) => void latest.current.onMoved(pc, id, spot), report);
     });
     return () => {
       window.removeEventListener("error", onError);
@@ -116,7 +117,7 @@ export default function WorkflowMapView(props: {
   return <canvas ref={canvas} style={{ position: "fixed", inset: 0, width: "100%", height: "100%", display: "block", touchAction: "none", userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }} />;
 }
 
-function createEngine(canvas: HTMLCanvasElement, first: { input: MapInput; palette: MapPalette; words: MapWords; active: boolean; spots: Record<string, Spot> }, pick: (session: string) => void, moved: (pc: string, id: string, spot: Spot) => void, report: (state: string) => void): Engine {
+function createEngine(canvas: HTMLCanvasElement, first: { input: MapInput; palette: MapPalette; words: MapWords; active: boolean; spots: Record<string, Spot> }, pick: (node: MNode) => void, moved: (pc: string, id: string, spot: Spot) => void, report: (state: string) => void): Engine {
   let spots = first.spots;
   let pcId = first.input.pcs[0]?.id ?? "";
   let model: MapModel = build(first.input, undefined, spots);
@@ -311,7 +312,7 @@ function createEngine(canvas: HTMLCanvasElement, first: { input: MapInput; palet
     const p = where(e);
     const id = painter.hit(p.x, p.y);
     const node = id ? model.byId.get(id) : undefined;
-    if (node?.session) pick(node.session);
+    if (node?.session || node?.bot) pick(node);
   };
   canvas.addEventListener("pointerdown", down);
   canvas.addEventListener("pointermove", move);

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
 import { closeSync, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +53,14 @@ export interface FakeNode {
     ignoreRequests?: boolean;
     /** What every exec prints, one channel write per chunk, so a test can split a character across packets. */
     execChunks?: Buffer[];
+    /**
+     * With `shell`: a client hanging up only closes the command's output pipe, as an sshd may -- a command left running
+     * ends by a signal sent before (delivered) or by its own doing.
+     */
+    keepHungUp?: boolean;
   };
+  /** With `shell`: the commands still running there, a loop left over included. */
+  readonly running: () => number;
   received(): string;
   send(text: string): void;
   endStream(): void;
@@ -312,14 +319,16 @@ export function generateHostKey(): string {
  * `disk` serves SFTP from a real folder, and `shell` runs each exec there for
  * real, its environment's HOME and SHELL pointing at this node rather than at
  * the account running the test, whose rc files are not this node's.
+ * `interactive` also runs the pane's shell channel in that shell.
  */
-export function startFakeNode(hostKey: string, disk?: { home: string; shell?: string }): Promise<FakeNode> {
+export function startFakeNode(hostKey: string, disk?: { home: string; shell?: string; interactive?: boolean }): Promise<FakeNode> {
   const ptyRequests: FakeNode["ptyRequests"] = [];
   const windowChanges: FakeNode["windowChanges"] = [];
   const authAttempts: string[] = [];
   const writtenFiles: FakeNode["writtenFiles"] = new Map();
   const execCommands: FakeNode["execCommands"] = [];
   const faults: FakeNode["faults"] = { failWrites: false, refuseConnections: false };
+  const live = new Set<ReturnType<typeof spawn>>();
   let inbound = "";
   let channel: ServerChannel | undefined;
   const state = { connectionCount: 0, disconnectCount: 0 };
@@ -352,6 +361,10 @@ export function startFakeNode(hostKey: string, disk?: { home: string; shell?: st
     });
     client.on("session", (accept) => {
       const session = accept();
+      let ran: ReturnType<typeof spawn> | undefined;
+      session.on("signal", (_accept, _reject, info: { name: string }) => {
+        ran?.kill(info.name === "KILL" ? "SIGKILL" : "SIGTERM");
+      });
       session.on("pty", (ptyAccept, _reject, info: PtyInfo) => {
         ptyRequests.push({ term: info.term ?? "", cols: info.cols, rows: info.rows });
         if (typeof ptyAccept === "function") ptyAccept();
@@ -361,9 +374,26 @@ export function startFakeNode(hostKey: string, disk?: { home: string; shell?: st
         if (typeof wcAccept === "function") wcAccept();
       });
       session.on("shell", (shellAccept) => {
-        channel = shellAccept();
-        channel.on("data", (chunk: Buffer) => {
+        const opened = shellAccept();
+        channel = opened;
+        // `interactive`: typed lines run in that shell for real (a login shell, as sshd starts; no terminal), its output back.
+        const real = disk?.shell !== undefined && disk.interactive ? spawn(disk.shell, ["-il"], { cwd: disk.home, env: { ...process.env, HOME: disk.home, SHELL: disk.shell } }) : undefined;
+        if (real) {
+          live.add(real);
+          real.on("exit", () => {
+            live.delete(real);
+            opened.end();
+          });
+          real.stdout.on("data", (chunk: Buffer) => opened.write(chunk));
+          real.stderr.on("data", (chunk: Buffer) => opened.write(chunk));
+          real.stdin.on("error", () => {});
+          opened.on("close", () => real.kill());
+          client.once("close", () => real.kill());
+        }
+        opened.on("data", (chunk: Buffer) => {
           inbound += chunk.toString("utf8");
+          // A terminal's Enter is CR; a shell reading a pipe ends a line at LF.
+          real?.stdin.write(chunk.toString("utf8").replace(/\r/g, "\n"));
         });
       });
       // Recorded so a test can prove a write never travelled as a command
@@ -374,12 +404,28 @@ export function startFakeNode(hostKey: string, disk?: { home: string; shell?: st
         const execChannel = execAccept();
         if (disk?.shell !== undefined) {
           const env = { ...process.env, HOME: disk.home, SHELL: disk.shell };
-          execFile(disk.shell, ["-c", info.command], { cwd: disk.home, env, encoding: "buffer", maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-            execChannel.write(stdout);
-            execChannel.write(stderr);
-            execChannel.exit(typeof error?.code === "number" ? error.code : error ? 1 : 0);
+          // Its output as it comes, as sshd sends it, so a command left running (a watch loop) is heard; stderr after.
+          const child = spawn(disk.shell, ["-c", info.command], { cwd: disk.home, env });
+          ran = child;
+          live.add(child);
+          child.on("exit", () => live.delete(child));
+          const stderr: Buffer[] = [];
+          child.stdout.on("data", (chunk: Buffer) => execChannel.write(chunk));
+          child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+          // What the client sends goes to the command's stdin, its EOF too (`cat > file` ends on it).
+          child.stdin.on("error", () => {});
+          execChannel.on("data", (chunk: Buffer) => child.stdin.write(chunk));
+          execChannel.on("end", () => child.stdin.end());
+          child.on("close", (code) => {
+            execChannel.write(Buffer.concat(stderr));
+            execChannel.exit(code ?? 1);
             execChannel.end();
           });
+          // The client hung up: a loop there ends, as it does when sshd closes its pipes (keepHungUp: its pipe only).
+          const hungUp = () => (faults.keepHungUp ? child.stdout.destroy() : child.kill());
+          execChannel.on("close", hungUp);
+          // A dropped connection closes no channel here: sshd closes its pipes all the same.
+          client.once("close", hungUp);
           return;
         }
         for (const chunk of faults.execChunks ?? []) execChannel.write(chunk);
@@ -419,6 +465,7 @@ export function startFakeNode(hostKey: string, disk?: { home: string; shell?: st
         writtenFiles,
         execCommands,
         faults,
+        running: () => live.size,
         ptyRequests,
         windowChanges,
         authAttempts,

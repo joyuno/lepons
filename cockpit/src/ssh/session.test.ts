@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { MemoryKnownHosts, hostId } from "./known-hosts.ts";
 import { generateHostKey, startFakeNode, type FakeNode } from "./fake-node.ts";
 import { NodeSession, type SessionState } from "./session.ts";
+import { tmuxScrollCommand } from "../session/tmux.ts";
+import { typeLine } from "../renderer/chat-view.ts";
+import { chatLine, type SendResult } from "../renderer/tmux-bar.ts";
 
 const hostKey = generateHostKey();
 let node: FakeNode;
@@ -205,4 +208,61 @@ test("a short start line is typed as it is, with no file", async () => {
   await waitFor(() => node.received().includes("cd '/srv/app' && claude"));
   session.close();
   assert.equal(node.execCommands.length, execsBefore);
+});
+
+// What the PC chat does for a remote tmux pane (renderer/main.ts sendFromChat): typed straight, a line landed in
+// tmux's copy mode (a pane left scrolled up) and was lost with no sign. Out of it first, then the paste, then the Enter.
+test("a chat line reaches a remote tmux pane after copy mode is left, its Enter after the paste, over the pane's own connection", async () => {
+  const session = sessionTo({ knownHosts: await trustingStore() });
+  await session.open();
+  const connections = node.connectionCount;
+  const typedBefore = node.received().length;
+  const typed = () => node.received().slice(typedBefore);
+  const cancel = tmuxScrollCommand("lepons-api-claude", 0);
+  let typedAtLeave: string | undefined;
+  const leave = async () => {
+    const output = await session.exec(cancel);
+    typedAtLeave = typed();
+    return output !== undefined;
+  };
+  const line = (entered: (result: SendResult) => void) => typeLine("원격에 보내기", {
+    blocked: () => false,
+    bracketed: true,
+    paste: (text) => session.write(`\x1b[200~${text}\x1b[201~`),
+    enter: () => {
+      session.write("\r");
+      entered("sent");
+    },
+    later: (run, ms) => setTimeout(() => {
+      run();
+      entered("typed");
+    }, ms),
+  });
+  const started = performance.now();
+  assert.equal(await chatLine(leave, line), "sent");
+  await waitFor(() => typed().endsWith("\r"));
+  const took = performance.now() - started;
+  assert.equal(typedAtLeave, "", "nothing typed before tmux left copy mode");
+  assert.ok(node.execCommands.includes(cancel));
+  assert.equal(typed(), "\x1b[200~원격에 보내기\x1b[201~\r");
+  assert.equal(node.connectionCount, connections, "no sign-in of its own");
+  assert.ok(took < 1000, `arrived in ${Math.round(took)} ms`);
+
+  // Copy mode could not be left: nothing is typed, and the chat is told.
+  assert.equal(await chatLine(async () => false, line), "notSent");
+  assert.equal(typed(), "\x1b[200~원격에 보내기\x1b[201~\r");
+  session.close();
+  assert.equal(await session.exec("true"), undefined, "a closed session runs nothing");
+});
+
+test("a command followed over the session's connection hands on what it prints, and says when it ends", async () => {
+  const session = sessionTo({ knownHosts: await trustingStore() });
+  await session.open();
+  node.faults.execChunks = [Buffer.from("x\n"), Buffer.from(".\n")];
+  let heard = "";
+  await new Promise<void>((ended) => session.follow("watch", (chunk) => (heard += chunk), ended));
+  node.faults.execChunks = undefined;
+  assert.equal(heard, "x\n.\n");
+  session.close();
+  assert.equal(session.follow("watch", () => {}, () => {}), undefined);
 });

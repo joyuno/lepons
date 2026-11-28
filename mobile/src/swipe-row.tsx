@@ -4,7 +4,8 @@ import { Animated, PanResponder, Pressable, Text, View, type ViewStyle } from "r
 import { font, space, useTheme } from "./ui";
 import { useReducedMotion } from "./motion";
 
-export interface RowAction { label: string; color: string; onPress: () => void }
+/** `disabled`: shown, dimmed, and not pressed (what needs the PC, while it cannot be reached). */
+export interface RowAction { label: string; color: string; onPress: () => void; disabled?: boolean }
 
 const WIDTH = 76;
 
@@ -45,8 +46,8 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?:
       <View style={[{ overflow: "hidden", flexDirection: "row", alignItems: "center", backgroundColor: props.surface ?? c.card }, props.style]}>
         <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
         {props.actions.map((action) => (
-          <Pressable key={action.label} accessibilityRole="button" onPress={action.onPress} hitSlop={4}
-            style={({ pressed }) => ({ minHeight: 44, justifyContent: "center", paddingHorizontal: space.md, opacity: pressed ? 0.5 : 1 })}>
+          <Pressable key={action.label} accessibilityRole="button" accessibilityState={{ disabled: !!action.disabled }} disabled={action.disabled} onPress={action.onPress} hitSlop={4}
+            style={({ pressed }) => ({ minHeight: 44, justifyContent: "center", paddingHorizontal: space.md, opacity: action.disabled ? 0.4 : pressed ? 0.5 : 1 })}>
             <Text style={[font.semibold, { color: action.color }]} numberOfLines={1}>{action.label}</Text>
           </Pressable>
         ))}
@@ -57,13 +58,13 @@ export function SwipeRow(props: { actions: RowAction[]; open: boolean; editing?:
     <View
       style={[{ overflow: "hidden" }, props.style]}
       accessibilityActions={props.actions.map((action) => ({ name: action.label, label: action.label }))}
-      onAccessibilityAction={(event) => props.actions.find((action) => action.label === event.nativeEvent.actionName)?.onPress()}
+      onAccessibilityAction={(event) => props.actions.find((action) => action.label === event.nativeEvent.actionName && !action.disabled)?.onPress()}
     >
       {/* Shown only as the row moves: at rest its colour would edge out past the row's rounded corner. */}
       <Animated.View style={{ position: "absolute", top: 0, bottom: 0, right: 0, flexDirection: "row", opacity: x.interpolate({ inputRange: [-8, 0], outputRange: [1, 0], extrapolate: "clamp" }) }}>
         {props.actions.map((action) => (
-          <Pressable key={action.label} accessibilityRole="button" onPress={action.onPress}
-            style={({ pressed }) => ({ width: WIDTH, alignItems: "center", justifyContent: "center", backgroundColor: action.color, opacity: pressed ? 0.7 : 1 })}>
+          <Pressable key={action.label} accessibilityRole="button" accessibilityState={{ disabled: !!action.disabled }} disabled={action.disabled} onPress={action.onPress}
+            style={({ pressed }) => ({ width: WIDTH, alignItems: "center", justifyContent: "center", backgroundColor: action.color, opacity: action.disabled ? 0.4 : pressed ? 0.7 : 1 })}>
             <Text style={[font.semibold, { color: c.onStop, paddingHorizontal: space.xs }]} numberOfLines={1} adjustsFontSizeToFit>{action.label}</Text>
           </Pressable>
         ))}

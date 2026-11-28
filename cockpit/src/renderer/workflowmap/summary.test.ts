@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { WorkflowItem } from "../../shared/ipc.ts";
-import { agentBlock, doingOf, finishedSubagents, finishedToday, folderBlock, forPhone, type BlockWords, goalIsLong, minutesSince, oneLine, pcCounts, runningSubagents, scrub, sentences, stepsOf, summarize, unpath } from "./summary.ts";
+import { agentBlock, botBlock, doingOf, finishedSubagents, finishedToday, folderBlock, forPhone, type BlockWords, goalIsLong, minutesSince, oneLine, pcCounts, runningSubagents, scrub, sentences, stepsOf, summarize, unpath } from "./summary.ts";
 
 const T = new Date(2026, 9, 31, 12, 0).getTime();
 const min = (n: number) => T + n * 60000;
@@ -348,4 +348,18 @@ test("doingOf: the goal's first line, else the newest step; finishedSubagents: t
   assert.equal(doingOf(undefined), undefined);
   const events = [sub(min(-30), "old", "x"), prompt(min(-20), "go"), sub(min(-10), "a", "A."), sub(min(-8), "b", "B."), sub(min(-5), "c")];
   assert.deepEqual(finishedSubagents({ events }).map((e) => e.description), ["b", "a"]);
+});
+
+test("a bot's block: its name, then at work and for how long, paused, missed, why it failed, or its next and last runs", () => {
+  const w = { ...ko, bot: { working: "일하는 중", failed: "실패", paused: "멈춤", missed: "놓친 실행 {n}", next: "다음 {when}", last: "마지막 {when} {how}", run: { done: "완료", failed: "실패", skipped: "건너뜀", missed: "놓침" } } };
+  const at = (h: number, m: number) => new Date(2026, 9, 31, h, m).getTime();
+  assert.deepEqual(botBlock({ name: "정리봇", running: true, since: min(-3) }, T, w), ["정리봇", "일하는 중 · 3분"]);
+  assert.deepEqual(botBlock({ name: "정리봇", running: true, paused: true }, T, w), ["정리봇", "일하는 중"], "no start: no made-up time");
+  assert.deepEqual(botBlock({ name: "정리봇", paused: true, next: at(0, 30) }, T, w), ["정리봇", "멈춤"]);
+  assert.deepEqual(botBlock({ name: "정리봇", missed: 2, next: at(0, 30) }, T, w), ["정리봇", "놓친 실행 2"]);
+  assert.deepEqual(botBlock({ name: "정리봇", last: { at: at(0, 51), state: "failed", why: "오류" } }, T, w), ["정리봇", "실패 · 오류"]);
+  assert.deepEqual(botBlock({ name: "정리봇", next: at(0, 30), last: { at: at(0, 51), state: "done" } }, T, w), ["정리봇", "다음 00:30 · 마지막 00:51 완료"]);
+  assert.deepEqual(botBlock({ name: "정리봇", last: { at: at(9, 5), state: "skipped" } }, T, w), ["정리봇", "마지막 09:05 건너뜀"]);
+  assert.deepEqual(botBlock({ name: "정리봇" }, T, w), ["정리봇", ""], "nothing due, never run: nothing said");
+  assert.deepEqual(botBlock({ name: "정리봇", running: true }, T, ko), ["정리봇", ""], "no bot words: the line stays empty");
 });

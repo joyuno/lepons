@@ -47,7 +47,7 @@ export function nextAction(bot: Bot, job: BotJob, view: BotSessionView, waitingS
 }
 
 /** The next minute (ISO) one of the bot's jobs comes due, within a week; none when paused. */
-export function nextRunOf(bot: Bot, from: Date): string | undefined {
+export function nextRunOf(bot: Pick<Bot, "paused" | "jobs">, from: Date): string | undefined {
   const start = Math.floor(from.getTime() / MINUTE) * MINUTE;
   for (let minute = 1; minute <= 8 * 24 * 60; minute++) {
     const at = new Date(start + minute * MINUTE);

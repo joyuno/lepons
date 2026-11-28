@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { bandOf, dropAllowed, dropZone, place, projectOf, projectOfFile, type LeafView } from "./tabs.ts";
+import { bandOf, botTabName, dropAllowed, dropZone, place, projectOf, projectOfFile, type LeafView } from "./tabs.ts";
+
+test("a bot's tab says Bot, with its name when it has one", () => {
+  assert.equal(botTabName("라피드-마케팅"), "Bot · 라피드-마케팅");
+  assert.equal(botTabName(undefined), "Bot");
+  assert.equal(botTabName(""), "Bot");
+});
 
 test("a folder's terminal and its bots belong to the folder's project", () => {
   assert.equal(projectOf("pc::a::terminal"), "pc::a");

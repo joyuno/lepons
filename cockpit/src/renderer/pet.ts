@@ -26,6 +26,17 @@ const SLEEP_MS = 10 * 60_000;
  * (measured: Codex 0.166, 1 chunk a second, for as long as the prompt stands).
  */
 const BLOCKED = "\x1b]7501;state=blocked";
+/**
+ * What draws no work: escapes (CSI, OSC, DCS, a charset, a lone one), control characters, blanks, braille dots, and
+ * the replacement character a braille dot becomes when its bytes are split between two SSH chunks (main decodes each
+ * alone). Codex at rest animates dots around its prompt for as long as it waits (the owner's Mac, Codex 0.172,
+ * 2026-11-28), so it never went quiet; a CLI at work writes words (its spinner's verb, its counter).
+ */
+const quietDraw = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[PX^_][^\x1b]*\x1b\\|[ -/]*[0-~])|[\x00-\x1f\x7f\s\u2800-\u28ff\ufffd]/g;
+/** An escape a chunk ends inside of: its start is held for the next chunk, or its rest would read as words. */
+const unfinished = /\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*\x1b?|[PX^_][^\x1b]*\x1b?|[ -/]*)$/;
+/** The most held: a title is shorter; past this, the piece reads as it is. */
+const CARRY_MAX = 1024;
 
 export interface Activity {
   burstStart: number;
@@ -44,6 +55,8 @@ export interface Activity {
   menu?: string;
   /** Main is sure its AI has left its terminal (session/agent-life.ts). */
   agentGone?: boolean;
+  /** The unfinished escape the last chunk ended with (`unfinished`). */
+  carry?: string;
 }
 
 export function newActivity(): Activity {
@@ -52,14 +65,21 @@ export function newActivity(): Activity {
 
 /** Output arrived. True when it says this session has just turned to the operator. */
 export function onOutput(activity: Activity, now: number, chunk = ""): boolean {
-  if (now - activity.lastOutput > BURST_GAP_MS) activity.burstStart = now;
-  activity.lastOutput = now;
-  if (!activity.working && now - activity.burstStart >= WORK_MS) {
-    activity.working = true;
-    activity.workSince = activity.burstStart;
-    activity.finished = false;
+  const text = (activity.carry ?? "") + chunk;
+  const cut = unfinished.exec(text);
+  activity.carry = cut && cut[0].length <= CARRY_MAX ? cut[0] : undefined;
+  const drawn = activity.carry === undefined ? text : text.slice(0, cut!.index);
+  // A chunk is no work when it draws nothing (quietDraw); with no chunk given (the tests' rhythm), it is.
+  if (chunk === "" || drawn.replace(quietDraw, "") !== "") {
+    if (now - activity.lastOutput > BURST_GAP_MS) activity.burstStart = now;
+    activity.lastOutput = now;
+    if (!activity.working && now - activity.burstStart >= WORK_MS) {
+      activity.working = true;
+      activity.workSince = activity.burstStart;
+      activity.finished = false;
+    }
   }
-  if (!chunk.includes(BLOCKED)) return false;
+  if (!text.includes(BLOCKED)) return false;
   activity.waiting = true;
   activity.finished = false;
   activity.doneAt = now;

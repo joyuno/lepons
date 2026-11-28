@@ -2,8 +2,9 @@ import { open, readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { SessionWorkflow, WorkflowItem } from "../shared/ipc.ts";
-import { cancelTurn, recentEvents, tailBytes } from "./codex.ts";
+import type { SessionWorkflow, ToolStep, WorkflowItem } from "../shared/ipc.ts";
+import { isConversationId } from "../agent/agents.ts";
+import { cancelTurn, outputOf, recentEvents, tailBytes } from "./codex.ts";
 import { ownerScan, owns, pickScript } from "./owner.ts";
 
 /**
@@ -105,6 +106,39 @@ export const remoteTranscriptTailScript = (repoPath: string, bot?: string): stri
 /** What Claude Code writes when the operator stops a turn: an array's text block in every record counted (15 of 15, 2.1.268-2.1.317). */
 const interrupted = (text: unknown): boolean => typeof text === "string" && text.trimStart().startsWith("[Request interrupted");
 
+/** How much of a waiting command its question card shows (ToolStep.command). */
+export const COMMAND_SHOWN = 2000;
+/** A picture's base64 past this (about 5 MB once decoded) is not drawn: its chip stays. */
+const PICTURE_MAX = Math.ceil((5 * 1024 * 1024 * 4) / 3);
+
+/** A prompt's image block as a data URL the page can draw, or "" for one not drawn: an address (never loaded), too big, or not a plain picture. */
+function picture(block: { source?: { type?: unknown; media_type?: unknown; data?: unknown } }): string {
+  const { type, media_type: media, data } = block.source ?? {};
+  return type === "base64" && typeof media === "string" && /^image\/(png|jpeg|gif|webp)$/.test(media) && typeof data === "string" && data.length <= PICTURE_MAX
+    ? `data:${media};base64,${data}`
+    : "";
+}
+
+/**
+ * A read's prompt pictures (data URLs) swapped for short names, `at:index:length`, before it crosses to the page: kept
+ * in `held` under `place` and that name, newest last, `max` at most, for the chat to ask once each (chatPhoto). A
+ * read then carries a few bytes per picture, not megabytes, however often the record is read.
+ */
+export function heldPictures(events: WorkflowItem[], place: string, held: Map<string, string>, max = 200): WorkflowItem[] {
+  return events.map((event) => {
+    if (event.kind !== "prompt" || !event.images) return event;
+    const images = event.images.map((src, index) => {
+      if (src === "") return "";
+      const name = `${event.at}:${index}:${src.length}`;
+      held.delete(`${place}\0${name}`);
+      held.set(`${place}\0${name}`, src);
+      return name;
+    });
+    for (const old of held.keys()) if (held.size > max) held.delete(old);
+    return { ...event, images };
+  });
+}
+
 function clip(text: string, max: number): string {
   const trimmed = text.trim();
   return trimmed.length > max ? trimmed.slice(0, max) + "…" : trimmed;
@@ -153,8 +187,9 @@ const launchNotice = (text: string) => text.startsWith("Async agent launched");
  * -- the terminal tail never showed this. Bookkeeping tools return
  * undefined and stay out of the story.
  */
+const base = (p: unknown): string => (typeof p === "string" ? (p.split(/[\\/]/).pop() ?? p) : "");
+
 function actionLabel(name: string, input: Record<string, unknown>): string | undefined {
-  const base = (p: unknown): string => (typeof p === "string" ? (p.split(/[\\/]/).pop() ?? p) : "");
   switch (name) {
     case "Edit":
     case "Write":
@@ -184,6 +219,14 @@ function actionLabel(name: string, input: Record<string, unknown>): string | und
   }
 }
 
+/** What a labelled call did, for a full read: a file by its name only, as the label has it. */
+function stepOf(name: string, input: Record<string, unknown>, label: string): ToolStep {
+  if (name === "Bash") return { tool: "command", target: clip(typeof input["command"] === "string" ? (input["command"].split("\n")[0] ?? "") : "", 80) };
+  if (name === "Read") return { tool: "read", target: base(input["file_path"]) };
+  if (name === "Edit" || name === "Write" || name === "NotebookEdit") return { tool: "edit", target: base(input["file_path"]) };
+  return { tool: "other", target: label };
+}
+
 /** tool_result content is either a plain string or an array of text blocks. */
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -194,6 +237,12 @@ function resultText(content: unknown): string {
       .join("\n");
   }
   return "";
+}
+
+/** The conversation a transcript's newest lines are written under, read from its end: what `claude --resume` takes. */
+export function transcriptId(jsonl: string): string | undefined {
+  const id = jsonl.slice(-1_000_000).match(/"sessionId":"[0-9a-f-]{36}"/g)?.at(-1)?.slice('"sessionId":"'.length, -1);
+  return isConversationId(id) ? id : undefined;
 }
 
 /**
@@ -213,6 +262,8 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
   const events: WorkflowItem[] = [];
   const pending = new Map<string, WorkflowItem & { kind: "subagent" }>();
   let title: string | undefined;
+  /** The newest answer's model, as the record names it. */
+  let model: string | undefined;
 
   // The board keeps a prompt to a line or two: a paste goes first, or the clip eats what the operator said after it (19 of 24 such prompts counted).
   const promptText = (said: string) => clipSmart((!full && said.replace(PASTE, "").trim()) || said, limit(240));
@@ -230,7 +281,11 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
   // A working agent fires dozens of tool calls between narration lines;
   // one timeline row each would drown the story. Consecutive calls pool
   // here and flush as a single "action" row when narration resumes.
-  let actions: { at: number; labels: string[]; paths: string[] } | null = null;
+  let actions: { at: number; labels: string[]; paths: string[]; steps: ToolStep[] } | null = null;
+  // A full read's steps by their call's id, until its tool_result says how it ended.
+  const calls = new Map<string, ToolStep>();
+  /** Each Bash call's whole command, by its id: kept on the step only while it has no result (ToolStep.command). */
+  const commands = new Map<string, string>();
   const flushActions = (): void => {
     if (!actions) return;
     const unique = [...new Set(actions.labels)];
@@ -238,7 +293,7 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
     const extra = unique.length > 4 ? `  +${unique.length - 4}` : "";
     // Whole paths for the PC's worktree checks; `full` is the phone's read, which gets base names only.
     const paths = full ? [] : [...new Set(actions.paths)];
-    events.push({ kind: "action", at: actions.at, text: shown + extra, labels: actions.labels, ...(paths.length ? { paths } : {}) });
+    events.push({ kind: "action", at: actions.at, text: shown + extra, labels: actions.labels, ...(paths.length ? { paths } : {}), ...(full ? { steps: actions.steps } : {}) });
     actions = null;
   };
 
@@ -253,10 +308,10 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
   // Cancelled before its first word, a prompt gets no mark at all: the next one
   // simply branches from the same parent (all 10 prompts in a row counted, 2.1.296-2.1.317).
   let promptParent: unknown;
-  const addPrompt = (parent: unknown, at: number, text: string): void => {
+  const addPrompt = (parent: unknown, at: number, text: string, images: string[] = []): void => {
     if (!actions && events.at(-1)?.kind === "prompt" && parent !== undefined && parent === promptParent) events.pop();
     flushActions();
-    events.push({ kind: "prompt", at, text });
+    events.push({ kind: "prompt", at, text, ...(full && images.length ? { images } : {}) });
     promptParent = parent;
     unlisted = [];
   };
@@ -312,11 +367,20 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
         const image = content.some((block) => block?.type === "image" || block?.type === "document");
         if (content.some((block) => block?.type === "text" && interrupted(block.text))) cancel(at);
         if (entry["isMeta"] !== true && !content.some((block) => block?.type === "tool_result") && (typed.length > 0 || image)) {
-          addPrompt(entry["parentUuid"], at, typed.length ? promptText(typed.join("\n")) : "[image]");
+          const pictures = full ? content.filter((block) => block?.type === "image").map(picture) : [];
+          addPrompt(entry["parentUuid"], at, typed.length ? promptText(typed.join("\n")) : "[image]", pictures);
         }
         for (const text of texts) if (text.startsWith("<task-notification>")) cameBack(text, at);
         for (const block of content) {
           if (block?.type === "tool_result" && typeof block.tool_use_id === "string") {
+            const step = calls.get(block.tool_use_id);
+            if (step) {
+              step.result = block.is_error === true ? "failed" : "done";
+              step.endAt = at;
+              const output = outputOf(resultText(block.content));
+              if (output !== "") step.output = output;
+              calls.delete(block.tool_use_id);
+            }
             const item = pending.get(block.tool_use_id);
             if (item) {
               const text = resultText(block.content);
@@ -336,6 +400,9 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
     }
 
     if (entry["type"] === "assistant" && Array.isArray(message?.content)) {
+      // An answer Claude Code wrote itself (an error, a stop) says "<synthetic>": no model's.
+      const named = (message as { model?: unknown }).model;
+      if (typeof named === "string" && named !== "<synthetic>") model = named;
       for (const block of message.content) {
         if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
           flushActions();
@@ -356,8 +423,14 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
           const input = (block.input ?? {}) as Record<string, unknown>;
           const label = actionLabel(block.name, input);
           if (label !== undefined) {
-            actions ??= { at, labels: [], paths: [] };
+            actions ??= { at, labels: [], paths: [], steps: [] };
             actions.labels.push(label);
+            if (full) {
+              const step = stepOf(block.name, input, label);
+              actions.steps.push(step);
+              if (typeof block.id === "string") calls.set(block.id, step);
+              if (typeof block.id === "string" && block.name === "Bash" && typeof input["command"] === "string") commands.set(block.id, input["command"]);
+            }
             if (/^(Edit|Write|NotebookEdit)$/.test(block.name) && typeof input["file_path"] === "string") actions.paths.push(input["file_path"]);
           } else unlisted.push(block.name);
         }
@@ -365,6 +438,11 @@ export function parseTranscript(jsonl: string, full = false, keep = 80): Session
     }
   }
   flushActions();
+  // The calls still waiting: a question on screen may be asking about one, and it is shown whole there.
+  for (const [id, step] of calls) {
+    const command = commands.get(id);
+    if (command !== undefined) step.command = clip(command, COMMAND_SHOWN);
+  }
 
-  return { ...(title === undefined ? {} : { title }), events: recentEvents(events, keep) };
+  return { ...(title === undefined ? {} : { title }), ...(model === undefined ? {} : { model }), events: recentEvents(events, keep) };
 }

@@ -1,0 +1,18 @@
+{
+  "note": "A Codex 0.172 thread as ~/.codex/thread_history_1.sqlite keeps it: thread_items and thread_turns rows, fields as seen on 2026-11-26 (names and types only; the content is made up). Turn u2 was stopped.",
+  "thread": "0a000000-0000-4000-8000-000000000001",
+  "turns": [
+    { "turn_id": "u1", "rollout_ordinal": 2, "status": "completed", "started_at": 1795000000, "completed_at": 1795000030 },
+    { "turn_id": "u2", "rollout_ordinal": 11, "status": "interrupted", "started_at": 1795000100, "completed_at": 1795000110 }
+  ],
+  "items": [
+    { "turn_id": "u1", "rollout_ordinal": 3, "created_at_ms": 1795000000100, "completed_at_ms": null, "item": { "type": "userMessage", "id": "i1", "clientId": null, "content": [{ "type": "text", "text": "<environment_context>made up</environment_context>", "text_elements": [] }] } },
+    { "turn_id": "u1", "rollout_ordinal": 4, "created_at_ms": 1795000000200, "completed_at_ms": null, "item": { "type": "userMessage", "id": "i2", "clientId": "c1", "content": [{ "type": "text", "text": "fix the login bug", "text_elements": [] }] } },
+    { "turn_id": "u1", "rollout_ordinal": 5, "created_at_ms": 1795000001000, "completed_at_ms": 1795000001500, "item": { "type": "reasoning", "id": "i3", "summary": [], "content": [] } },
+    { "turn_id": "u1", "rollout_ordinal": 7, "created_at_ms": 1795000002000, "completed_at_ms": null, "item": { "type": "commandExecution", "id": "i4", "pluginId": null, "scriptPath": null, "command": "npm test\nmore", "cwd": "/w/app", "processId": "p1", "source": "agent", "status": "failed", "commandActions": [{ "type": "unknown", "command": "npm test" }], "aggregatedOutput": "1 failing", "exitCode": 1, "durationMs": 3000 } },
+    { "turn_id": "u1", "rollout_ordinal": 8, "created_at_ms": 1795000006000, "completed_at_ms": null, "item": { "type": "fileChange", "id": "i5", "changes": [{ "path": "/w/app/src/login.ts", "kind": { "type": "update", "move_path": null }, "diff": "-a\n+b" }, { "path": "/w/app/NOTES.md", "kind": { "type": "add" }, "diff": "+notes" }], "status": "completed" } },
+    { "turn_id": "u1", "rollout_ordinal": 9, "created_at_ms": 1795000007000, "completed_at_ms": null, "item": { "type": "agentMessage", "id": "i6", "text": "Fixed; tests pass.", "phase": "final_answer", "memoryCitation": null, "delivery": null, "questions": null } },
+    { "turn_id": "u2", "rollout_ordinal": 12, "created_at_ms": 1795000100000, "completed_at_ms": null, "item": { "type": "userMessage", "id": "i7", "clientId": "c2", "content": [{ "type": "text", "text": "now the signup page", "text_elements": [] }] } },
+    { "turn_id": "u2", "rollout_ordinal": 13, "created_at_ms": 1795000101000, "completed_at_ms": null, "item": { "type": "commandExecution", "id": "i8", "pluginId": null, "scriptPath": null, "command": "ls", "cwd": "/w/app", "processId": "p2", "source": "agent", "status": "completed", "commandActions": [], "aggregatedOutput": "", "exitCode": 0, "durationMs": 100 } }
+  ]
+}

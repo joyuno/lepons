@@ -3,9 +3,9 @@ import { SymbolView } from "expo-symbols";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { LinkNotice } from "@/link-notice";
+import { LinkNotice, useStillLoading } from "@/link-notice";
 import { PcReconnectButton, usePcReconnect } from "@/pc-reconnect";
-import { halted, useConnection } from "@/connection";
+import { useConnection } from "@/connection";
 import { fmt, t, type StringKey } from "@/i18n";
 import { Level, Press, Spin, SwapText, Tally } from "@/motion";
 import { folderName, lampState, type AgentUsage, type PhoneSessionView, type UsageWindow } from "@/phone/types";
@@ -29,6 +29,7 @@ export default function Dashboard() {
   const waiting = sessions.filter((session) => session.mood === "waiting");
   const active = sessions.find((session) => session.mood === "working" && (session.summary?.now || session.summary?.goal || session.preview)) ?? sessions.find((session) => session.mood === "working");
   const pcReconnect = usePcReconnect();
+  const loading = useStillLoading();
   const [tokens, setTokens] = useState<TokenStats>();
   const [tokenBusy, setTokenBusy] = useState(false);
   const [project, setProject] = useState("all");
@@ -75,13 +76,8 @@ export default function Dashboard() {
     <Screen refresh={<RefreshControl refreshing={false} onRefresh={pullToRefresh} tintColor={p.muted} />}>
       <View style={{ gap: space.xxl }}>
         {c.demo ? <Text style={[s.dim, { color: p.live }]}>{t.demoBanner}</Text> : null}
-        <LinkNotice after={space.xxl} />
-
-        {halted(c.status) && !c.demo ? (
-          <Pressable accessibilityRole="button" onPress={c.reconnect} style={{ minWidth: 44, minHeight: 44, alignSelf: "flex-end", justifyContent: "center" }}>
-            <Text style={s.dim}>{t.reconnect}</Text>
-          </Pressable>
-        ) : null}
+        {/* Its button is the way back in: a second "다시 연결" here would say less than it does. */}
+        <LinkNotice after={space.xxl} savedAt={c.savedAt} />
 
         <Section title={t.dashboardActivity}>
           <View style={[s.card, { gap: space.lg }]}>
@@ -101,7 +97,7 @@ export default function Dashboard() {
           </View>
         </Section>
 
-        {c.phone === undefined ? halted(c.status) && !c.demo ? null : (
+        {c.phone === undefined ? !loading ? <Text style={s.dim}>{t.noSavedYet}</Text> : (
           <View accessible accessibilityLabel={t.loadingList} accessibilityLiveRegion="polite" style={{ gap: space.sm }}>
             <Skeleton width="30%" />
             <Skeleton height={68} style={{ borderRadius: radius.lg }} />
@@ -132,7 +128,7 @@ export default function Dashboard() {
           </Section>
         ) : null}
 
-        <UsageChart tokens={tokens} busy={tokenBusy} loading={tokenBusy || (c.phone === undefined && !halted(c.status))} demo={c.demo} project={project} onProject={setProject} onRefresh={() => void refreshTokens()} />
+        <UsageChart tokens={tokens} busy={tokenBusy} loading={tokenBusy || (c.phone === undefined && loading)} off={!c.canAsk} demo={c.demo} project={project} onProject={setProject} onRefresh={() => void refreshTokens()} />
 
         {c.phone?.usage ? <Limits usage={c.phone.usage} /> : null}
 
@@ -160,7 +156,7 @@ export default function Dashboard() {
 }
 
 /** Daily dollars at list prices, stacked by model, for all projects or one, with each AI's total under them. */
-function UsageChart({ tokens, busy, loading, demo, project, onProject, onRefresh }: { tokens: TokenStats | undefined; busy: boolean; loading: boolean; demo: boolean; project: string; onProject: (id: string) => void; onRefresh: () => void }) {
+function UsageChart({ tokens, busy, loading, off, demo, project, onProject, onRefresh }: { tokens: TokenStats | undefined; busy: boolean; loading: boolean; off: boolean; demo: boolean; project: string; onProject: (id: string) => void; onRefresh: () => void }) {
   const { c: p, s } = useTheme();
   const dates = tokens ? tokenDates(tokens) : [];
   const { usd, partial } = tokens ? usdDays(tokens, dates, project) : { usd: [], partial: false };
@@ -174,8 +170,8 @@ function UsageChart({ tokens, busy, loading, demo, project, onProject, onRefresh
           <Text style={[s.dim, { fontSize: size.caption, lineHeight: 16 }]}>{scope}</Text>
           {tokens ? <Text style={[s.dim, { fontSize: size.caption, lineHeight: 16 }]}>{t.usageEstimate}</Text> : null}
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel={t.refresh} accessibilityState={{ busy, disabled: busy }} disabled={busy} hitSlop={8} onPress={onRefresh}
-          style={({ pressed }) => ({ minWidth: 44, minHeight: 44, marginTop: -space.sm, marginRight: -space.sm, alignItems: "center", justifyContent: "center", opacity: busy ? 0.4 : pressed ? 0.5 : 1 })}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t.refresh} accessibilityState={{ busy, disabled: busy || off }} disabled={busy || off} hitSlop={8} onPress={onRefresh}
+          style={({ pressed }) => ({ minWidth: 44, minHeight: 44, marginTop: -space.sm, marginRight: -space.sm, alignItems: "center", justifyContent: "center", opacity: busy || off ? 0.4 : pressed ? 0.5 : 1 })}>
           <Spin busy={busy}><SymbolView name={{ ios: "arrow.clockwise", android: "refresh" }} tintColor={p.muted} size={20} /></Spin>
         </Pressable>
       </View>
@@ -334,3 +330,5 @@ function Limits({ usage }: { usage: AgentUsage[] }) {
     </Section>
   );
 }
+
+export { ScreenFailed as ErrorBoundary } from "@/screen-failed";

@@ -162,6 +162,19 @@ test("reconnect skips the digits; the PC refusing a pairing stops the phone", as
   assert.equal(refused.t.set.length, 0);
 });
 
+test("the PC unpairing this phone stops it as unpaired, with no dialing again", async () => {
+  const { pc, phone, t } = setup({ pair: false });
+  pc.start();
+  phone.start();
+  await tick();
+  assert.equal(phone.status.kind, "connected");
+  const pending = phone.request("GET", "/api/never");
+  pc.unpair();
+  assert.deepEqual(phone.status, { kind: "unpaired" });
+  await assert.rejects(pending, /disconnected/);
+  assert.ok(t.set.every((entry) => entry.cleared), "no redial waits");
+});
+
 test("close codes: 4000, 1003 and 1009 stop for good, others back off and dial again", async () => {
   for (const [code, kind] of [[4000, "replaced"], [1003, "error"], [1009, "error"]] as const) {
     const { net, phone, t } = setup({ pair: false });

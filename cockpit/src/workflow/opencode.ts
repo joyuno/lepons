@@ -1,5 +1,6 @@
-import type { SessionWorkflow, WorkflowItem } from "../shared/ipc.ts";
+import type { SessionWorkflow, ToolStep, WorkflowItem } from "../shared/ipc.ts";
 import { cancelTurn, recentEvents } from "./codex.ts";
+import { COMMAND_SHOWN } from "./transcript.ts";
 
 /**
  * OpenCode keeps sessions in SQLite; the stable way in is its CLI (1.19.5):
@@ -63,6 +64,23 @@ function actionLabels(tool: string, input: Row): string[] {
   }
 }
 
+/** What a labelled call did, for a full read: a file by its name only, as the label has it. */
+function actionSteps(tool: string, input: Row, state: Row, labels: string[]): ToolStep[] {
+  const end = num(row(state["time"])["end"]);
+  const ended = {
+    ...(state["status"] === "completed" ? { result: "done" as const } : state["status"] === "error" ? { result: "failed" as const } : {}),
+    ...(end === undefined ? {} : { endAt: end }),
+  };
+  if (tool === "bash") {
+    // Still waiting: whole, for the question card that may be asking about it (ToolStep.command).
+    const waiting = !("result" in ended) ? { command: clip(str(input["command"]), COMMAND_SHOWN) } : {};
+    return [{ tool: "command", target: clip(str(input["command"]).split("\n")[0] ?? "", 80), ...ended, ...waiting }];
+  }
+  if (tool === "read") return [{ tool: "read", target: base(str(input["filePath"])), ...ended }];
+  if (tool === "edit" || tool === "write" || tool === "multiedit") return [{ tool: "edit", target: base(str(input["filePath"])), ...ended }];
+  return labels.map((target) => ({ tool: "other", target, ...ended }));
+}
+
 /** A task's output wraps the subagent's last word: `<task id=…><task_result>…</task_result></task>`. */
 const taskResult = (output: string): string => /<task_result>([^]*?)<\/task_result>/.exec(output)?.[1] ?? output;
 
@@ -82,15 +100,22 @@ export function parseOpencodeExport(json: string, full = false): SessionWorkflow
   }
   const events: WorkflowItem[] = [];
   let unlisted: string[] = [];
+  /** The newest answer's model. */
+  let model: string | undefined;
 
-  let actions: { at: number; labels: string[]; paths: string[] } | null = null;
+  let actions: { at: number; labels: string[]; paths: string[]; steps: ToolStep[] } | null = null;
   const flushActions = (): void => {
     if (!actions) return;
     const unique = [...new Set(actions.labels)];
     const extra = unique.length > 4 ? `  +${unique.length - 4}` : "";
     // As parseTranscript's: whole paths for the PC only.
     const paths = full ? [] : [...new Set(actions.paths)];
-    if (unique.length > 0) events.push({ kind: "action", at: actions.at, text: unique.slice(0, 4).join("  ·  ") + extra, labels: actions.labels, ...(paths.length ? { paths } : {}) });
+    if (unique.length > 0) {
+      events.push({
+        kind: "action", at: actions.at, text: unique.slice(0, 4).join("  ·  ") + extra, labels: actions.labels,
+        ...(paths.length ? { paths } : {}), ...(full ? { steps: actions.steps } : {}),
+      });
+    }
     actions = null;
   };
 
@@ -110,6 +135,7 @@ export function parseOpencodeExport(json: string, full = false): SessionWorkflow
       continue;
     }
     if (info["role"] !== "assistant") continue;
+    model = str(info["modelID"]) || model;
 
     for (const part of parts) {
       const state = row(part["state"]);
@@ -141,8 +167,9 @@ export function parseOpencodeExport(json: string, full = false): SessionWorkflow
         const input = row(state["input"]);
         const labels = actionLabels(tool, input);
         if (labels.length > 0) {
-          actions ??= { at, labels: [], paths: [] };
+          actions ??= { at, labels: [], paths: [], steps: [] };
           actions.labels.push(...labels);
+          if (full) actions.steps.push(...actionSteps(tool, input, state, labels));
           if (tool === "edit" || tool === "write" || tool === "multiedit") {
             const path = str(input["filePath"]);
             if (path) actions.paths.push(path);
@@ -165,7 +192,7 @@ export function parseOpencodeExport(json: string, full = false): SessionWorkflow
   }
   flushActions();
   const title = str(row(record["info"])["title"]);
-  return { ...(title ? { title } : {}), events: recentEvents(events) };
+  return { ...(title ? { title } : {}), ...(model === undefined ? {} : { model }), events: recentEvents(events) };
 }
 
 /** Folders as OpenCode and the cockpit may each spell them: macOS's /private realpath, Windows' backslashes and case. */

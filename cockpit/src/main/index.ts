@@ -5,14 +5,15 @@ import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } 
 import { exec, execFile, spawn } from "node:child_process";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { dirname, join, normalize } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 
 import { NodeSession } from "../ssh/session.ts";
 import { LocalSession } from "../session/local.ts";
 import { localMachine, machineFor, type Changed, type Machine } from "../machine/machine.ts";
 import { execInPty, probeCapabilities, runRemote, runRemoteStatus } from "../ssh/capabilities.ts";
-import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor } from "../agent/agents.ts";
+import { agents, agentSpec, delegateAgents, envPrefix, isAgentKind, isConversationId, botDenyFlag, launchFlags, launchResume, mcpCommandAgents, mcpFileAgents, mcpFileWith, mcpRegisterScript, mcpUnregisterScript, resumeLine, startQuestion, toolsBridgeAgents, typeWhenSettled, usageLimitAgents, withUpdate, type Executor, type Resume } from "../agent/agents.ts";
 import { ExecutorCheckError, localLaunch, localProbe } from "../agent/delegate.ts";
-import { removeBot, saveBot, type BotInput } from "./bots.ts";
+import { approveInDialog, removeBot, saveBot, schedulesInstead, type BotDeps, type BotInput } from "./bots.ts";
 import { botPreamble, botProfilePath, botSlug, type Bot } from "../agent/bots.ts";
 import { listRoutines } from "../agent/routines.ts";
 import { parseAutomationRows, parseCloudList, type CodexCloudTask } from "../agent/codex-automations.ts";
@@ -57,7 +58,7 @@ import { folderPath, resolveTarget } from "../browse/target.ts";
 import { containedBy } from "../read/wire-path.ts";
 import { isSecretName } from "../repo/protect.ts";
 import { removeFoldersAsk, validateRepoLabel } from "../repo/label.ts";
-import { dictionaries, setLocale, isLocale, t, formatDate, type Locale } from "../i18n/i18n.ts";
+import { dictionaries, setLocale, isLocale, t, formatDate, inEnglish, type Locale } from "../i18n/i18n.ts";
 import { startMcpEndpoint, type McpEndpoint } from "../mcp/http.ts";
 import { startRepoBridge, type RepoBridge } from "../mcp/bridge.ts";
 import { OutputRing } from "../phone/screen.ts";
@@ -106,6 +107,7 @@ import {
   type ScheduleList,
   type ScheduleRow,
   type PastConversation,
+  type Handoff,
   extraRoots,
   botOfKey,
   projectOf,
@@ -120,11 +122,11 @@ import {
   type TmuxInstallResult,
   type WorktreeDiff,
 } from "../shared/ipc.ts";
-import { parseTranscript, projectSlug, transcriptDir } from "../workflow/transcript.ts";
+import { heldPictures, parseTranscript, projectSlug, transcriptDir, transcriptId } from "../workflow/transcript.ts";
 import { startLlmHost, type LlmHost, type LlmLaunch } from "./llm-host.ts";
 import { LLM_KEY_ENV } from "../agent/local-llm.ts";
 import { addWorktree, goneWorktrees, localHost, mergeWorktree, movedTranscript, pendingWork, remoteHost, removeWorktree, startRepo, type WorktreeHost } from "./worktree.ts";
-import { parseCodexRollout, recentEvents } from "../workflow/codex.ts";
+import { codexModelList, codexRecordFromDb, earlierOnly, parseCodexRollout, recentEvents, remoteCodexRecord, rolloutId } from "../workflow/codex.ts";
 import { answerOfRun, recordsBefore } from "./bot-answer.ts";
 import { PHONE_EVENTS } from "../phone/contract.ts";
 import { parseOpencodeExport } from "../workflow/opencode.ts";
@@ -135,11 +137,15 @@ import { dropFolder } from "../shared/term-paths.ts";
 import { agySettingsFile, agyStatusLineWith, agyUsageFile, asStatusLineInput, claudeAskHookSettings, claudeStatusLineSettings, claudeUsageFile, localUsage, newestUsage, parseUsageCommand, UsageGate, ownStatusLine, readRemoteUsage, remoteStatusLineFile, remoteUsageScript, splitRemoteUsage, statusLineSettings, type Usage } from "../agent/usage.ts";
 import { collectTokenStats, type TokenStats } from "../agent/token-stats.ts";
 import { mergeTokenStats, remoteTokenStats, remoteUsageCommand } from "../agent/remote-token-stats.ts";
-import { TranscriptWatchers, type TranscriptTarget, type WatchHandle } from "./transcript-watch.ts";
+import { codexWatchList, TranscriptWatchers, watchRemoteRecord, type TranscriptTarget, type WatchHandle } from "./transcript-watch.ts";
+import { chatImagePath, localPath } from "../shared/image-path.ts";
+import { sessionCommands, sessionSkills } from "../phone/suggest.ts";
 import { posixQuote } from "../session/state.ts";
 import type { ProbedRead } from "../workflow/probe.ts";
 import { ProbePool } from "../ssh/pool.ts";
 import type { DelegationHub } from "../mcp/server.ts";
+import { approvalLine } from "./approval.ts";
+import { changeNote, changesOf, scheduleFromReply, type ApprovalRequest } from "../shared/approval.ts";
 
 /** Stamped in by build.mjs: the runtime this build fits, for app-only updates (app-patch.ts). */
 declare const __RUNTIME_FINGERPRINT__: string;
@@ -247,6 +253,30 @@ function appDialog(window: BrowserWindow | undefined, options: Electron.MessageB
     contents.send(channels.dialogRequest, request);
   });
 }
+
+/**
+ * An AI's schedule request, asked in the app's own editable dialog
+ * (renderer/approval.ts), one at a time. No window is no answer; a page still
+ * loading is waited for, and one that goes away answers every waiting request.
+ */
+const approvals = approvalLine((ask) => {
+  const target = mainWindow;
+  if (!target || target.isDestroyed()) return false;
+  const contents = target.webContents;
+  const show = () => {
+    if (target.isDestroyed()) return;
+    // As appDialog's: a window minimized or behind others flashes its taskbar button until it is looked at.
+    if (target.isMinimized() || !target.isFocused()) {
+      target.flashFrame(true);
+      target.once("focus", () => target.flashFrame(false));
+    }
+    contents.send(channels.approvalRequest, ask);
+  };
+  if (contents.isLoading()) contents.once("did-stop-loading", show);
+  else show();
+  return true;
+});
+
 /**
  * One endpoint per shared node, so a token grants one node's view. A local
  * node has no tunnel: its Claude reaches the endpoint on this machine directly.
@@ -354,6 +384,45 @@ const transcriptWatchers = new TranscriptWatchers(watchDir, (nodeId, repoId) => 
 });
 
 /**
+ * The record folder of each chat open on a Claude session of this PC, watched (with its subfolders, so a new record
+ * file in it counts too) while the chat is open; a burst of writes is told once, 100 ms after it settles or 300 ms after it began. A folder
+ * not there yet (no record so far) is looked for again every 5 s. The chat's 2.5 s read stays as the floor.
+ */
+const chatWatchers = new Map<string, { watchers: TranscriptWatchers; retry?: ReturnType<typeof setTimeout> }>();
+function unwatchChat(key: string): void {
+  const held = chatWatchers.get(key);
+  held?.watchers.stop();
+  clearTimeout(held?.retry);
+  chatWatchers.delete(key);
+  remoteChatWatchers.get(key)?.();
+  remoteChatWatchers.delete(key);
+}
+
+/** Each chat on another PC's session, told as its record changes there over the pane's own connection (watchRemoteRecord): its stop. */
+const remoteChatWatchers = new Map<string, () => void>();
+function watchRemoteChat(key: string, nodeId: string, list: string, gapMs = 0): void {
+  unwatchChat(key);
+  remoteChatWatchers.set(key, watchRemoteRecord(list, (script, data, ended) => openTerminal(nodeId, key)?.follow(script, data, ended), () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channels.chatRecordChanged, key);
+  }, 1000, gapMs));
+}
+function watchChat(key: string, target: TranscriptTarget): void {
+  unwatchChat(key);
+  const held: { watchers: TranscriptWatchers; retry?: ReturnType<typeof setTimeout> } = {
+    watchers: new TranscriptWatchers(watchDir, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channels.chatRecordChanged, key);
+    }, 100, 300),
+  };
+  chatWatchers.set(key, held);
+  const arm = () => {
+    if (chatWatchers.get(key) !== held) return;
+    if (existsSync(target.dir)) held.watchers.start([target]);
+    else held.retry = setTimeout(arm, 5000);
+  };
+  arm();
+}
+
+/**
  * One connection per remote node, reused across the 5s poll so a quiet
  * session costs a directory listing instead of a fresh SSH handshake plus
  * a transfer. `probeCache` holds the last listing and last-read text per
@@ -361,6 +430,25 @@ const transcriptWatchers = new TranscriptWatchers(watchDir, (nodeId, repoId) => 
  */
 const probePool = new ProbePool();
 const probeCache = new Map<string, ProbedRead>();
+
+/** A terminal open on that PC now (the session `key`'s own, else any): its connection takes commands with no sign-in of their own. */
+function openTerminal(nodeId: string, key?: string): NodeSession | undefined {
+  const own = key === undefined ? undefined : sessions.get(key);
+  if (own instanceof NodeSession && own.state.kind === "ready") return own;
+  for (const [each, session] of sessions) {
+    if ((each === nodeId || each.startsWith(`${nodeId}::`)) && session instanceof NodeSession && session.state.kind === "ready") return session;
+  }
+  return undefined;
+}
+
+/**
+ * A PC's reads (a chat's record, tmux's view, the board's listings) over a terminal already connected to it, channels on
+ * its one connection; with none up, the pool while a view holds it, else a caller's own one-shot connection.
+ */
+const sharedRun = {
+  run: async (nodeId: string, options: ConnectOptions, command: string): Promise<string | undefined> =>
+    (await openTerminal(nodeId)?.exec(command)) ?? probePool.run(nodeId, options, command),
+};
 
 /**
  * The trust prompt, asked in Lepons's own dialog like every other question.
@@ -526,7 +614,7 @@ async function ensureKeyReady(
 const trash = (path: string): Promise<void> => shell.trashItem(normalize(path));
 
 const machineOf = (node: NodeConfig): Machine =>
-  machineFor(node, { ensureKeyReady, sshOptions, runRemote, runRemoteStatus, trash, probePool, probeCache });
+  machineFor(node, { ensureKeyReady, sshOptions, runRemote, runRemoteStatus, trash, probePool: sharedRun, probeCache });
 
 /**
  * Variables the agent needs in its own environment.
@@ -557,6 +645,8 @@ let localStatusLine: string | undefined;
 
 /** Each session's 내 LLM for OpenCode (llm-host.ts launchFor), set before it is built; asked again for a relaunch. */
 const llmLaunches = new Map<string, LlmLaunch>();
+/** A Codex session's model picked in the chat (codexModelList's slug), for its launch and relaunches; none: Codex's own default. */
+const modelLaunches = new Map<string, string>();
 let llmHost: LlmHost | undefined;
 
 function usageFlag(node: NodeConfig, shell: "posix" | "cmd"): string {
@@ -704,7 +794,7 @@ function launchLine(
   node: NodeConfig,
   scope: string,
   cwd: string | undefined,
-  resume: boolean | string,
+  resume: Resume,
   update: boolean,
   plain: boolean,
   bypass: boolean,
@@ -713,15 +803,16 @@ function launchLine(
 ): string | undefined {
   const spec = agentSpec(node.agent);
   const llm = node.agent === "opencode" ? llmLaunches.get(scope) : undefined;
+  const model = node.agent === "codex" ? modelLaunches.get(scope) : undefined;
   // The deny flag must stay last: Claude's --disallowedTools is variadic and would swallow any positional argument after it.
-  const extra = (shell: "posix" | "cmd") => [usageFlag(node, shell), llm?.flags ?? "", botDenyFlag(spec, shell, bot)].filter((flag) => flag !== "").join(" ");
+  const extra = (shell: "posix" | "cmd") => [usageFlag(node, shell), llm?.flags ?? "", model ? `-m ${model}` : "", botDenyFlag(spec, shell, bot)].filter((flag) => flag !== "").join(" ");
   // Only a session that is started runs this: one reattached in tmux keeps
   // its own conversation, which is the better answer anyway. `wrap` is what
   // each launch needs on its way out -- an environment, on the remote nodes.
   // A plain terminal runs no command: the shell it lands in is the point.
   const agentLine = (wrap: (command: string) => string, shell: "posix" | "cmd"): string | undefined =>
     plain ? undefined
-      : resume !== false ? resumeLine(spec, wrap, shell, launchFlags(spec, shell, bypass, name, extra(shell)), typeof resume === "string" ? resume : undefined)
+      : resume !== false ? resumeLine(spec, wrap, shell, launchFlags(spec, shell, bypass, name, extra(shell)), typeof resume === "object" ? resume.own : typeof resume === "string" ? resume : undefined, typeof resume === "object")
       : wrap(spec.sessionCommand + launchFlags(spec, shell, bypass, name, extra(shell)));
   const launch = (line: string | undefined, shell: "posix" | "cmd"): string | undefined =>
     line !== undefined && update ? withUpdate(node.agent, line, shell) : line;
@@ -751,7 +842,7 @@ function buildSession(
   cwd: string | undefined,
   cols: number,
   rows: number,
-  resume: boolean | string = false,
+  resume: Resume = false,
   update = false,
   plain = false,
   bypass = false,
@@ -1260,16 +1351,38 @@ function osJobApprover(node: NodeConfig): OsJobApprove {
   };
 }
 
-/** saveBot with this PC's store, machines and dialog. */
-function saveBotHere(source: string, input: BotInput, editing?: string) {
+/** The bot question in the app window. */
+const askBotHere = (source: string): BotDeps["approve"] => (bot, existing) =>
+  approveDelegation(false, askToBot(source, bot, sessions.get(sessionKey(bot.nodeId, bot.repoId))?.state.kind === "ready", existing), () => {});
+
+/** An AI's create_bot or update_bot in the approval dialog, with askToBot's extra lines as notes. */
+const askBotInDialog = (source: string) => approveInDialog(approvals.ask, (bot, existing) => {
+  const target = nodes.list().find((node) => node.id === bot.nodeId);
+  const plainOpen = sessions.get(sessionKey(bot.nodeId, bot.repoId))?.state.kind === "ready";
+  const notes = [
+    ...(plainOpen ? [t("bot.askPlain")] : []),
+    ...(bot.linked?.length ? [t("bot.askLinked", { jobs: bot.linked.map(osJobName).join(", ") })] : []),
+    ...(existing === undefined ? [] : [t("bot.askExisting", { text: existing })]),
+  ];
+  const editing = bots.get(bot.id) !== undefined;
+  // A new bot's jobs may be made as schedules instead; an edit stays a bot.
+  return { source, machine: target ? machineLabel(target) : bot.nodeId, editing, notes: notes.map((line) => line.trim()), canSchedule: !editing && bot.jobs.length > 0 };
+});
+
+/**
+ * saveBot with this PC's store, machines and dialog; `approve` stands in for the question when it was already asked.
+ * `ready`: an AI's request also needs the PC to answer and the AI to be there (the settings form saves as it did).
+ */
+function saveBotHere(source: string, input: BotInput, editing?: string, approve = askBotHere(source), ready?: BotDeps["ready"]) {
   return saveBot({
+    ...(ready ? { ready } : {}),
     store: bots,
     machine: (nodeId) => {
       const node = nodes.list().find((each) => each.id === nodeId);
       return node ? machineOf(node) : undefined;
     },
     watched: (nodeId) => nodes.list().some((each) => each.id === nodeId && (each.kind === "local" || each.useTmux === true)),
-    approve: (bot, existing) => approveDelegation(false, askToBot(source, bot, sessions.get(sessionKey(bot.nodeId, bot.repoId))?.state.kind === "ready", existing), () => {}),
+    approve,
   }, input, editing);
 }
 
@@ -1320,12 +1433,30 @@ function scheduleHost(id: string): { node: NodeConfig; home: string } | { error:
   return node.home ? { node, home: node.home } : { error: UNKNOWN_HOME };
 }
 
+/** Whether that PC can take a schedule for `executor` now: its home known, it answers, and the AI is there. */
+async function scheduleMachineReady(owner: NodeConfig, executor: AgentKind): Promise<Outcome> {
+  if (!owner.home) return { ok: false, error: UNKNOWN_HOME };
+  return agentReady(machineOf(owner), executor);
+}
+
+/** Whether that machine answers and has `executor`'s AI to run. */
+async function agentReady(machine: Machine, executor: AgentKind): Promise<Outcome> {
+  try {
+    const ready = await machine.ready();
+    if (!ready.ok) return { ok: false, error: ready.reason };
+    await machine.checkAgent(executor);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  return { ok: true };
+}
+
 /**
  * Makes a schedule on the PC that owns the folder, or rewrites `editing` there,
  * once someone at this PC says yes. An edit keeps what the form does not
  * change: its folder, name, agent and a pause.
  */
-async function saveSchedule(source: string, owner: NodeConfig, folder: string, input: ScheduleInput, editing?: { id: string; info: ScheduleInfo }): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }> {
+async function saveSchedule(source: string, owner: NodeConfig, folder: string, input: ScheduleInput, editing?: { id: string; info: ScheduleInfo }, approved = false): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }> {
   const problem = scheduleTextProblem(input.instructions, input.precheck);
   if (problem) return { ok: false, error: problem };
   const kept = editing?.info;
@@ -1335,14 +1466,9 @@ async function saveSchedule(source: string, owner: NodeConfig, folder: string, i
     return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no scheduled tasks; pass executor ${delegateAgents.join(" or ")}` };
   }
   if (!owner.home) return { ok: false, error: UNKNOWN_HOME };
+  const reachable = await scheduleMachineReady(owner, executor);
+  if (!reachable.ok) return reachable;
   const machine = machineOf(owner);
-  try {
-    const ready = await machine.ready();
-    if (!ready.ok) return { ok: false, error: ready.reason };
-    await machine.checkAgent(executor);
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
   const id = editing?.id ?? `s-${randomUUID().slice(0, 8)}`;
   const asked: { answer: Awaited<ReturnType<typeof approveDelegation>> } = { answer: "unanswered" };
   const installed = await installSchedule(machine, owner.home, {
@@ -1351,7 +1477,8 @@ async function saveSchedule(source: string, owner: NodeConfig, folder: string, i
     ...(input.precheck ? { precheck: input.precheck } : {}),
     ...(kept?.paused ? { paused: true } : {}),
   }, async () => {
-    asked.answer = await approveDelegation(false, askToSchedule(source, owner, folder, input, agentSpec(executor).label), () => {});
+    // Already allowed in the approval dialog (an AI's request): not asked twice.
+    asked.answer = approved ? "allowed" : await approveDelegation(false, askToSchedule(source, owner, folder, input, agentSpec(executor).label), () => {});
     return asked.answer === "allowed";
   }, (work) => onMachine(owner.id, work));
   if (asked.answer === "refused") return { ok: false, error: `refused: the operator on ${hostname()} said no to this schedule` };
@@ -1565,8 +1692,58 @@ function delegationHub(fromNodeId: string): DelegationHub {
     schedule: async (request) => {
       const place = schedulableFolder(fromNodeId, request.repo);
       if (!place) return { ok: false, error: `unknown_repo: ${request.repo} is neither a project folder on this machine nor one shared with it. Try list_repos.` };
-      const source = nodes.list().find((node) => node.id === fromNodeId);
-      return saveSchedule(source ? machineLabel(source) : fromNodeId, place.owner, place.folder, request);
+      // What cannot run is not put to the person.
+      const problem = scheduleTextProblem(request.instructions, request.precheck);
+      if (problem) return { ok: false, error: problem };
+      const executor = request.executor ?? place.owner.agent;
+      if (agentSpec(executor).can.delegate === null) return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no scheduled tasks; pass executor ${delegateAgents.join(" or ")}` };
+      const reachable = await scheduleMachineReady(place.owner, executor);
+      if (!reachable.ok) return reachable;
+      const node = nodes.list().find((each) => each.id === fromNodeId);
+      const source = node ? machineLabel(node) : fromNodeId;
+      const bare = (path: string) => path.replaceAll("\\", "/").replace(/\/+$/, "");
+      const repo = place.owner.repos.find((each) => bare(each.path) === bare(place.folder));
+      const asked: ApprovalRequest = {
+        kind: "schedule", source, machine: machineLabel(place.owner), folder: place.folder, agent: agentSpec(executor).label, executor,
+        name: request.name ?? request.instructions.trim().split("\n")[0]!.slice(0, 40), when: request.cron, instructions: request.instructions,
+        ...(request.precheck === undefined ? {} : { precheck: request.precheck }),
+        // A bot lives in one of the owner's folders, where Lepons can tell its AI is running (saveBot's no_tmux);
+        // it has no precheck, so a request with one would lose it quietly.
+        canBot: repo !== undefined && (place.owner.kind === "local" || place.owner.useTmux === true) && request.precheck === undefined,
+      };
+      const reply = await approvals.ask(asked);
+      if (reply.answer !== "allowed") {
+        return { ok: false, error: reply.answer === "refused" ? `refused: the operator on ${hostname()} said no to this schedule`
+          : `approval_needed: this schedule needs a yes on ${hostname()} (the Lepons window there), and none came. Ask the operator, then try again.` };
+      }
+      const note = inEnglish(() => changeNote(changesOf(asked, reply), t));
+      if (reply.as === "schedule") {
+        // Edited in the dialog: checked again as schedule_task checks it, then saved without a second question.
+        const checked = scheduleFromReply(reply);
+        if (!checked.ok) return checked;
+        const saved = await saveSchedule(source, place.owner, place.folder, {
+          when: checked.when, cron: checked.cron, instructions: checked.instructions, executor,
+          ...(checked.name ? { name: checked.name } : {}),
+          ...(request.precheck === undefined ? {} : { precheck: request.precheck }),
+        }, undefined, true);
+        return saved.ok ? { ...saved, cron: checked.cron, detail: note ? `${note}. ${saved.detail}` : saved.detail } : saved;
+      }
+      if (!repo) return { ok: false, error: "refused: this request cannot become a bot" };
+      if (reply.role.trim() === "") return { ok: false, error: "no_role: a bot needs a role" };
+      for (const job of reply.jobs) {
+        const jobProblem = scheduleTextProblem(job.instructions);
+        if (jobProblem) return { ok: false, error: jobProblem };
+      }
+      // Allowed in the dialog already; a profile file found in the folder was not shown there, so that one still asks.
+      const saved = await saveBotHere(source, {
+        name: reply.name, nodeId: place.owner.id, repoId: repo.id, folder: place.folder, executor: reply.executor, role: reply.role, fresh: true, jobs: reply.jobs,
+      }, undefined, (bot, existing) => existing === undefined ? Promise.resolve("allowed" as const) : askBotHere(source)(bot, existing), agentReady);
+      if (!saved.ok) return saved;
+      const madeBot = inEnglish(() => t("approval.madeBot", { id: saved.bot.id }));
+      return {
+        ok: true, id: saved.bot.id, detail: note ? `${madeBot}. ${note}` : madeBot,
+        ...(saved.bot.jobs.length === 1 ? { cron: saved.bot.jobs[0]!.cron } : {}),
+      };
     },
     schedules: async (repo) => {
       const place = repo === undefined ? undefined : schedulableFolder(fromNodeId, repo);
@@ -1593,25 +1770,44 @@ function delegationHub(fromNodeId: string): DelegationHub {
       if (!place || !repo) return { ok: false, error: `unknown_repo: ${request.repo} is neither a project folder on this machine nor one shared with it. Try list_repos.` };
       const executor = request.executor ?? place.owner.agent;
       if (agentSpec(executor).can.delegate === null) return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no bots; pass executor ${delegateAgents.join(" or ")}` };
-      const source = nodes.list().find((node) => node.id === fromNodeId);
-      const saved = await saveBotHere(source ? machineLabel(source) : fromNodeId, {
+      const node = nodes.list().find((each) => each.id === fromNodeId);
+      const source = node ? machineLabel(node) : fromNodeId;
+      const dialog = askBotInDialog(source);
+      const saved = await saveBotHere(source, {
         name: request.name, nodeId: place.owner.id, repoId: repo.id, folder: place.folder, executor, role: request.role, fresh: request.fresh, jobs: request.jobs,
-      });
-      return saved.ok ? { ok: true, id: saved.bot.id, detail: `${agentSpec(executor).label} runs "${saved.bot.name}" on ${machineLabel(place.owner)} in ${place.folder}.` } : saved;
+      }, undefined, dialog.approve, agentReady);
+      // Allowed as schedules: each made as an allowed schedule_task is, checked again first; no bot, no profile file.
+      const instead = dialog.schedules();
+      if (instead) {
+        const made = await schedulesInstead(instead, (schedule) => saveSchedule(source, place.owner, place.folder, { ...schedule, executor: instead.executor }, undefined, true));
+        if (!made.ok) return made;
+        const madeSchedules = inEnglish(() => t("approval.madeSchedules", { ids: made.ids.join(", ") }));
+        const changed = dialog.note();
+        return { ok: true, id: made.ids[0]!, detail: changed ? `${madeSchedules}. ${changed}` : madeSchedules };
+      }
+      if (!saved.ok) return saved;
+      const note = dialog.note();
+      const detail = `${agentSpec(saved.bot.executor).label} runs "${saved.bot.name}" on ${machineLabel(place.owner)} in ${place.folder}.`;
+      return { ok: true, id: saved.bot.id, detail: note ? `${note}. ${detail}` : detail };
     },
     updateBot: async (request) => {
       const bot = bots.get(request.id);
       if (!bot || !scheduleVisible(fromNodeId, bot.nodeId, bot.folder)) return { ok: false, error: `unknown_bot: ${request.id}. Try list_bots.` };
       const executor = request.executor ?? bot.executor;
       if (agentSpec(executor).can.delegate === null) return { ok: false, error: `not_delegatable: ${agentSpec(executor).label} takes no bots; pass executor ${delegateAgents.join(" or ")}` };
-      const source = nodes.list().find((node) => node.id === fromNodeId);
+      const node = nodes.list().find((each) => each.id === fromNodeId);
+      const source = node ? machineLabel(node) : fromNodeId;
       const { id: _id, jobs, ...rest } = bot;
-      const saved = await saveBotHere(source ? machineLabel(source) : fromNodeId, {
+      const dialog = askBotInDialog(source);
+      const saved = await saveBotHere(source, {
         ...rest, executor, role: request.role ?? bot.role, fresh: request.fresh ?? bot.fresh,
         // Kept jobs go back in as their cron line, which parseWhen reads as it wrote it.
         jobs: request.jobs ?? jobs.map((job) => ({ id: job.id, when: job.cron, instructions: job.instructions })),
-      }, bot.id);
-      return saved.ok ? { ok: true, detail: `${agentSpec(executor).label} runs "${saved.bot.name}" in ${saved.bot.folder}.` } : saved;
+      }, bot.id, dialog.approve, agentReady);
+      if (!saved.ok) return saved;
+      const note = dialog.note();
+      const detail = `${agentSpec(saved.bot.executor).label} runs "${saved.bot.name}" in ${saved.bot.folder}.`;
+      return { ok: true, detail: note ? `${note}. ${detail}` : detail };
     },
     bots: async () => {
       const seen = bots.list().filter((bot) => scheduleVisible(fromNodeId, bot.nodeId, bot.folder));
@@ -1917,6 +2113,9 @@ app.whenReady().then(() => {
   nodes.onChange((list) => {
     if (!window.isDestroyed()) window.webContents.send(channels.nodesChanged, list);
   });
+  bots.onChange(() => {
+    if (!window.isDestroyed()) window.webContents.send(channels.botsChanged);
+  });
 
   ipcMain.on(channels.passphraseReply, (_event, requestId: string, value: string | null) => {
     const resolve = pendingPassphrases.get(requestId);
@@ -1924,6 +2123,11 @@ app.whenReady().then(() => {
     resolve?.(value);
   });
   ipcMain.on(channels.dialogReply, (_event, requestId: string, response: unknown) => pendingDialogs.get(requestId)?.(response));
+  ipcMain.on(channels.approvalReply, (_event, requestId: unknown, reply: unknown) => approvals.reply(String(requestId), reply));
+  ipcMain.on(channels.approvalEditing, (_event, requestId: unknown) => approvals.editing(String(requestId)));
+  // A page gone mid-question answers it, and every request behind it, as no answer.
+  window.webContents.on("destroyed", () => approvals.gone());
+  window.webContents.on("render-process-gone", () => approvals.gone());
 
   // Cosmetic only: id and path stay put, since they key session keys, grants,
   // the probe cache and the transcript lookup elsewhere. The renderer already
@@ -1964,16 +2168,26 @@ app.whenReady().then(() => {
   // rather than the system's, or a dark app showed light traffic lights.
   // A copied image for an agent on another PC: written there as a PNG under
   // /tmp, new name each time, readable by that account only.
-  ipcMain.handle(channels.pasteImage, async (_event, nodeId: string) => {
+  // The chat's composer sends the picture it was given (`bytes`, a paste or a drop), for this PC too: it has no Alt+V.
+  ipcMain.handle(channels.pasteImage, async (_event, nodeId: string, bytes?: unknown, type?: unknown) => {
     const node = requireNode(nodeId);
-    const image = clipboard.readImage();
-    if (node.kind !== "ssh" || image.isEmpty()) return { ok: false, error: t("err.pasteImage", { detail: "no image" }) };
+    if (bytes instanceof Uint8Array && bytes.length > dropLimitMb * 1024 * 1024) return { ok: false, error: t("err.dropTooBig", { mb: dropLimitMb }) };
+    const given = bytes instanceof Uint8Array && bytes.length > 0 ? Buffer.from(bytes) : undefined;
+    const image = given ?? (node.kind === "ssh" && !clipboard.readImage().isEmpty() ? clipboard.readImage().toPNG() : undefined);
+    if (!image) return { ok: false, error: t("err.pasteImage", { detail: "no image" }) };
+    const ext = given ? ({ "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" } as Record<string, string>)[String(type)] ?? "png" : "png";
+    const name = `lepons-paste-${randomUUID().slice(0, 8)}.${ext}`;
+    if (node.kind === "local") {
+      const path = join(tmpdir(), name);
+      const written = await machineOf(node).create(path, image);
+      return written.ok ? { ok: true, path } : { ok: false, error: t("err.pasteImage", { detail: written.detail ?? written.reason }) };
+    }
     const ready = await ensureKeyReady(node);
     if (!ready.ok) return { ok: false, error: ready.reason };
     // A Windows PC has no /tmp its claude.exe could read; its own temp folder.
     const dir = node.windows ? `${node.home}/AppData/Local/Temp` : "/tmp";
-    const path = `${dir}/lepons-paste-${randomUUID().slice(0, 8)}.png`;
-    const written = await machineOf(node).create(path, image.toPNG());
+    const path = `${dir}/${name}`;
+    const written = await machineOf(node).create(path, image);
     return written.ok ? { ok: true, path } : { ok: false, error: t("err.pasteImage", { detail: written.detail ?? written.reason }) };
   });
 
@@ -2111,6 +2325,8 @@ app.whenReady().then(() => {
   // `before`: the phone's "show older", the PHONE_EVENTS events before that time and whether there are more.
   /** How far back each folder's newest events took last time: a poll starts there instead of growing to it again. */
   const newestBytes = new Map<string, number>();
+  /** Each local Claude record's last read, by the stamp it was read at (one per folder, bot and full or not). */
+  const lastRead = new Map<string, { stamp: string; result: SessionWorkflowResult }>();
   /** A bot's name from the slug in its session key: its preamble, and so its records, carry the name. */
   const botNameOf = (nodeId: string, repoId: string, slug: string): string | undefined =>
     bots.list().find((one) => one.nodeId === nodeId && one.repoId === repoId && botSlug(one.name) === slug)?.name;
@@ -2131,27 +2347,45 @@ app.whenReady().then(() => {
     if (format === "opencode") {
       const exported = await machineOf(node).record("opencode", repo.path);
       if (!exported) return { ok: false, reason: "no_transcript" };
-      return { ok: true, workflow: parseOpencodeExport(exported, full) };
+      return { ok: true, workflow: earlierOnly(parseOpencodeExport(exported, full), before) };
     }
     if (format === "codex") {
       const rollout = await machineOf(node).record("codex", repo.path, owner);
-      if (!rollout) return { ok: false, reason: "no_transcript" };
-      return { ok: true, workflow: parseCodexRollout(rollout, full) };
+      if (!rollout) return { ok: false, reason: "no_transcript", ...(node.kind === "ssh" ? { why: "missing" as const } : {}) };
+      // Codex 0.169+ keeps the items in its history database: read here, or on the node by its own sqlite3 or python3.
+      const fromDb = node.kind === "local" ? await codexRecordFromDb(rollout)
+        : await remoteCodexRecord(rollout, `${nodeId}::${repo.path}`, async (script) => (await sharedRun.run(node.id, sshOptions(node), script)) ?? runRemote(sshOptions(node), script));
+      if (fromDb === "no_reader") return { ok: false, reason: "no_transcript", why: "no_reader" };
+      const record = fromDb ?? rollout;
+      const workflow = parseCodexRollout(record, full);
+      // The database holds the items only: the model is named in the rollout's own settings lines.
+      const model = workflow.model ?? (record === rollout ? undefined : parseCodexRollout(rollout).model);
+      return { ok: true, workflow: earlierOnly({ ...workflow, ...(model === undefined ? {} : { model }) }, before) };
     }
     // Over SSH the record is read from its end only as far back as these events need: often MBs of tool output each.
     const machine = machineOf(node);
     // On this PC the whole record is read at once. Over SSH: doubling to the newest 50 (measured: 7-8 MB on a 28 MB record), then 4 MB more per "show older" step.
     const keep = node.kind === "local" ? PHONE_EVENTS.local : PHONE_EVENTS.remote;
     const place = `${nodeId}::${repo.path}\0${owner ?? ""}`;
+    // On this PC the record's newest file, size and time say whether it changed: a chat read on every change in its
+    // record folder (watchChat) and on its 2.5 s floor parses it only when it did.
+    const stamp = before === undefined && node.kind === "local" ? await machine.recordStamp("claude", repo.path, owner).catch(() => undefined) : undefined;
+    const readKey = `${place}\0${full}`;
+    const cached = stamp === undefined ? undefined : lastRead.get(readKey);
+    if (cached !== undefined && cached.stamp === stamp) return cached.result;
     for (let bytes = before === undefined ? newestBytes.get(place) ?? 2_000_000 : 2_000_000; ; ) {
       const held = await machine.claudeRecord(repo.path, bytes, owner);
-      if (held === undefined) return { ok: false, reason: "no_transcript" };
+      // Another PC's record not found is said so (its folder may go by another name there); on this PC none is none yet.
+      if (held === undefined) return { ok: false, reason: "no_transcript", ...(node.kind === "ssh" ? { why: "missing" as const } : {}) };
+      if (typeof held === "string") return { ok: false, reason: "no_transcript", why: held };
       const workflow = parseTranscript(held.text, full, Infinity);
       const earlier = before === undefined ? workflow.events : workflow.events.filter((event) => event.at < before);
       if (earlier.length > keep || held.whole || bytes >= (before === undefined ? 8_000_000 : 128_000_000)) {
         if (before === undefined) {
           newestBytes.set(place, bytes);
-          return { ok: true, workflow: { ...workflow, events: recentEvents(workflow.events) } };
+          const result: SessionWorkflowResult = { ok: true, workflow: { ...workflow, events: recentEvents(workflow.events) } };
+          if (stamp !== undefined) lastRead.set(readKey, { stamp, result });
+          return result;
         }
         return { ok: true, workflow: { ...workflow, events: earlier.slice(-keep), more: earlier.length > keep || !held.whole } };
       }
@@ -2159,15 +2393,55 @@ app.whenReady().then(() => {
       bytes = Math.max(bytes, length) + (before === undefined ? Math.max(length, 1_000_000) : 4_000_000);
     }
   };
-  ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string, bot?: string) => workflowOf(nodeId, repoId, false, undefined, typeof bot === "string" ? bot : undefined));
+  // A prompt's pictures stay here (heldPictures), each asked for once by the chat (chatPhoto): a read carries their names.
+  const pictures = new Map<string, string>();
+  const picturePlace = (nodeId: string, repoId: string, bot: unknown) => `${nodeId}\0${repoId}\0${typeof bot === "string" ? bot : ""}`;
+  ipcMain.handle(channels.sessionWorkflow, (_event, nodeId: string, repoId: string, bot?: string, full?: boolean, before?: number) =>
+    // Failing to reach the PC at all (its key unreadable, say) is a reason the chat shows, not a read it drops quietly.
+    workflowOf(nodeId, repoId, full === true, Number.isFinite(before) ? before : undefined, typeof bot === "string" ? bot : undefined)
+      .then((read): SessionWorkflowResult => read.ok ? { ...read, workflow: { ...read.workflow, events: heldPictures(read.workflow.events, picturePlace(nodeId, repoId, bot), pictures) } } : read)
+      .catch((): SessionWorkflowResult => ({ ok: false, reason: "no_transcript", why: "unreachable" })));
+  ipcMain.handle(channels.chatPhoto, (_event, nodeId: string, repoId: string, bot: unknown, name: unknown): string | undefined =>
+    typeof name === "string" ? pictures.get(`${picturePlace(nodeId, repoId, bot)}\0${name}`) : undefined);
+  /**
+   * Each folder's chat, by its session key: the conversation each AI had when the chat moved from it to another, and
+   * when. Going back to one goes on with that conversation. In memory: after a restart of the app, a summary again.
+   */
+  const leftChats = new Map<string, Map<AgentKind, { id: string; at: number }>>();
+  /** The conversation of the folder's newest record of that AI, the one its chat reads; undefined when it cannot tell. */
+  const conversationOf = async (node: NodeConfig, folder: string, agent: AgentKind): Promise<string | undefined> => {
+    if (agent === "codex") return rolloutId((await machineOf(node).record("codex", folder)) ?? "");
+    if (agent !== "claude") return undefined;
+    const held = await machineOf(node).claudeRecord(folder, 2_000_000);
+    return typeof held === "object" ? transcriptId(held.text) : undefined;
+  };
   // What another AI is told to carry on this folder's conversation; read before the old one is replaced.
-  ipcMain.handle(channels.handoffText, async (_event, nodeId: string, repoId: string): Promise<string | undefined> => {
-    const read = await workflowOf(nodeId, repoId).catch(() => undefined);
+  ipcMain.handle(channels.handoffText, async (_event, nodeId: string, repoId: string, to?: unknown): Promise<Handoff> => {
     const node = nodes.list().find((candidate) => candidate.id === nodeId);
     const repo = node?.repos.find((candidate) => candidate.id === repoId);
-    const from = sessionExecutor.get(sessionKey(nodeId, repoId)) ?? node?.agent;
-    if (!read?.ok || !repo || !isAgentKind(from)) return undefined;
-    return handoffPrompt(read.workflow, agents[from].short, repo.path, t);
+    const key = sessionKey(nodeId, repoId);
+    const from = sessionExecutor.get(key) ?? node?.agent;
+    if (!node || !repo || !isAgentKind(from)) return {};
+    // Moving the chat: the conversation it leaves is kept to come back to, if its AI can be pointed back at it.
+    const moving = isAgentKind(to) && to !== from;
+    const [read, id] = await Promise.all([
+      workflowOf(nodeId, repoId).catch(() => undefined),
+      moving && agentSpec(from).resumeIdCommand ? conversationOf(node, repo.path, from).catch(() => undefined) : undefined,
+    ]);
+    const left = leftChats.get(key) ?? new Map<AgentKind, { id: string; at: number }>();
+    const back = moving ? left.get(to) : undefined;
+    // Not known this time: an older one kept would be gone back to with an old "since".
+    if (id !== undefined) leftChats.set(key, left.set(from, { id, at: Date.now() }));
+    else if (moving) left.delete(from);
+    // Two minutes before the switch: a remote machine's clock, which stamps its record, may run behind this one's.
+    const text = read?.ok ? handoffPrompt(read.workflow, agents[from].short, t, back && back.at - 2 * 60_000) : undefined;
+    return { ...(text ? { text } : {}), ...(back ? { resume: back.id } : {}) };
+  });
+  ipcMain.handle(channels.codexModels, async (_event, nodeId: string) => {
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    if (!node?.home) return undefined;
+    const cache = await machineOf(node).read(`${node.home}/.codex/models_cache.json`, 16 * 1024 * 1024).catch(() => undefined);
+    return cache ? codexModelList(cache.toString("utf8")) : undefined;
   });
 
   // Once per quiet (pet.ts), and only the tail: the page goes on meanwhile, and
@@ -2215,6 +2489,21 @@ app.whenReady().then(() => {
       .filter((node) => node.kind === "local")
       .flatMap((node) => node.repos.map((repo) => ({ nodeId: node.id, repoId: repo.id, dir: transcriptDir(repo.path) })));
     transcriptWatchers.start(targets);
+  });
+
+  ipcMain.on(channels.watchChat, (_event, key: string, nodeId: string, repoId: string, on: boolean) => {
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    const repo = node?.repos.find((candidate) => candidate.id === repoId);
+    if (!on || typeof key !== "string" || !node || !repo) return unwatchChat(String(key));
+    if (node.kind === "local") return watchChat(key, { nodeId, repoId, dir: transcriptDir(repo.path) });
+    // The loop is sh; a Windows PC's chat keeps its 2.5 s read.
+    if (node.windows) return unwatchChat(key);
+    const executor = sessionExecutor.get(key) ?? node.agent;
+    const format = executor === "shell" ? null : agentSpec(executor).can.transcript;
+    if (format === "claude") watchRemoteChat(key, nodeId, `"$HOME"/.claude/projects/${posixQuote(projectSlug(repo.path))}`);
+    // Codex writes its database item by item while it works: read once a second at most (each read asks only the new rows).
+    else if (format === "codex") watchRemoteChat(key, nodeId, codexWatchList, 1000);
+    else unwatchChat(key);
   });
 
   ipcMain.handle(channels.listDelegations, (): DelegationInfo[] => delegations);
@@ -2676,6 +2965,9 @@ app.whenReady().then(() => {
    */
   /** A path's size, or that it is a folder or not there: on this PC by stat, on another by one shell line. */
   const sizeOn = async (node: NodeConfig, path: string): Promise<number | "dir" | "missing"> => {
+    // Named by an AI's answer or a printed line: a share or device path here would connect out and offer this PC's
+    // credentials (localPath). Another PC's `//host` is no folder worth that risk there either.
+    if (node.kind === "local" ? !localPath(path, process.platform === "win32") : /^[\\/]{2}/.test(path)) return "missing";
     if (node.kind === "local") {
       return stat(path).then((info) => (info.isDirectory() ? "dir" as const : info.size), () => "missing" as const);
     }
@@ -3107,6 +3399,30 @@ app.whenReady().then(() => {
     },
   );
 
+  // A picture an AI's answer names (the chat view): the answer is untrusted, so the path is held to chatImagePath here,
+  // whatever the page sent -- a `\\host\share` path would make Windows connect to that host and offer its credentials.
+  ipcMain.handle(channels.chatImage, async (_event, nodeId: string, repoId: string, path: unknown): Promise<{ ok: true; base64: string } | { ok: false; error: string }> => {
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    const repo = node?.repos.find((candidate) => candidate.id === repoId);
+    if (!node || !repo || typeof path !== "string") return { ok: false, error: "unknown" };
+    const machine = machineOf(node);
+    const file = chatImagePath(path, repo.path, machine.windows);
+    if (file === undefined) return { ok: false, error: "not_allowed" };
+    const bytes = await machine.read(file, previewLimit);
+    return bytes === undefined ? { ok: false, error: "unreadable" } : { ok: true, base64: bytes.toString("base64") };
+  });
+  ipcMain.handle(channels.chatCommands, async (_event, nodeId: string, repoId: string, agent: unknown, own: unknown) => {
+    const node = nodes.list().find((candidate) => candidate.id === nodeId);
+    const repo = node?.repos.find((candidate) => candidate.id === repoId);
+    if (!node || !repo || !isAgentKind(agent)) return [];
+    const machine = machineOf(node);
+    // The files' list at once; Claude's own only when asked for (it starts a claude): the chat asks as a "/" list opens.
+    const lister = own === true ? machine : { customCommands: machine.customCommands };
+    // "/" commands, and for Codex its "$" skills (the chat tells them apart by their first letter).
+    const [commands, skills] = await Promise.all([sessionCommands(agent, repo.path, node.home, lister), sessionSkills(agent, repo.path, machine)]);
+    return [...commands, ...skills];
+  });
+
   /**
    * A folder for work that has none yet. The name is the operator's, so it
    * is checked rather than trusted: anything that could climb out of the
@@ -3302,7 +3618,7 @@ app.whenReady().then(() => {
     },
   );
 
-  // Reads what VS Code, Cursor, Claude Code and Codex already keep on this
+  // Reads what VS Code, Cursor (remote and recent folders), Claude Code and Codex already keep on this
   // machine; see import-scan.ts. Read-only, and only when asked.
   ipcMain.handle(channels.scanImports, () =>
     scanImports({ home: homedir(), appData: app.getPath("appData"), nodes: nodes.list() }),
@@ -3802,6 +4118,8 @@ app.whenReady().then(() => {
     // Typed once the new AI is up: what another AI's conversation handed over (handoffPrompt).
     firstPrompt?: string,
     bot?: string,
+    // Codex on this model (codexModelList's slug); kept for its relaunches until the folder is opened without one.
+    model?: string,
   ): Promise<SessionState> => {
     if (executor !== undefined && executor !== "shell" && !isAgentKind(executor)) {
       return { kind: "closed", reason: "spawn_failed", detail: "Unknown executor" };
@@ -3823,6 +4141,21 @@ app.whenReady().then(() => {
     if (!sessionExecutor.has(key)) sessionExecutor.set(key, plain ? "shell" : node.agent);
     const ready = await machineOf(node).ready();
     if (!ready.ok) return { kind: "closed", reason: "auth_failed", detail: ready.reason };
+    const folder = node.repos.find((r) => r.id === repoId)?.path;
+    // A model pick goes on with the folder's own Codex conversation, by its id: `fork --last` may take a bot's run
+    // there, or another terminal's. `--last` only when no id can be read.
+    if (resume === true && !plain && bot === undefined && node.agent === "codex" && model !== undefined && /^\w[\w.:-]*$/.test(model)) {
+      const id = folder === undefined ? undefined : await conversationOf(node, folder, "codex").catch(() => undefined);
+      if (isConversationId(id)) resume = id;
+    }
+    // What a launch continues, asked again by "다시 켜기": a bot of this AI may have run in the folder meanwhile.
+    const plan = (asked: boolean | string, freshStart: boolean) => launchResume(node.agent, {
+      fresh: freshStart,
+      resume: asked,
+      person: !plain && bot === undefined,
+      botHere: bots.list().some((one) => one.nodeId === nodeId && one.repoId === repoId && (one.executor === node.agent || one.retired === node.agent)),
+    }, () => folder === undefined ? Promise.resolve(undefined) : conversationOf(node, folder, node.agent));
+    const { launch, replace } = await plan(resume ?? false, fresh);
     void reconcileWorktrees(nodeId);
     try {
       if (!plain) await machineOf(node).checkAgent(node.agent).catch(async (error: unknown) => {
@@ -3852,11 +4185,14 @@ app.whenReady().then(() => {
     if (llm === "unreachable" || llm === "nokey") return { kind: "closed", reason: "spawn_failed", detail: t(llm === "nokey" ? "llm.nokeyOpen" : "llm.unreachable") };
     if (llm) llmLaunches.set(key, llm);
     else llmLaunches.delete(key);
+    // Only a name Codex lists, nothing a shell or Codex's own flags would read as more.
+    if (model !== undefined && /^\w[\w.:-]*$/.test(model)) modelLaunches.set(key, model);
+    else if (fresh) modelLaunches.delete(key);
     sessions.get(key)?.close();
     agentWatch.delete(key);
     setAgentGone(key, false);
-    // A pick replaces what the folder's tmux session still runs: reattaching would ignore it.
-    if ((fresh || typeof resume === "string") && node.kind === "ssh" && node.useTmux) {
+    // A pick replaces what the folder's tmux session still runs: reattaching would ignore it. Never a reattach (launchResume).
+    if (replace && node.kind === "ssh" && node.useTmux) {
       await machineOf(node).run(tmuxKillCommand(key, plain ? "shell" : node.agent), { login: true });
     }
     // A bot's preamble goes only to an AI started now: over tmux an open may reattach one already running.
@@ -3874,7 +4210,7 @@ app.whenReady().then(() => {
     if (!plain && !firstPrompt && bot === undefined) updatedThisRun.add(updateKey);
     // A PC's own terminal has no folder: home, as a remote login lands there too.
     const cwd = repo?.path ?? (node.kind === "local" ? homedir() : undefined);
-    const { session, survives } = buildSession(node, key, cwd, cols, rows, resume ?? false, update, plain, bypass === true || bot !== undefined, repo?.label, bot !== undefined);
+    const { session, survives } = buildSession(node, key, cwd, cols, rows, launch, update, plain, bypass === true || bot !== undefined, repo?.label, bot !== undefined);
     sessions.set(key, session);
     sessionExecutor.set(key, plain ? "shell" : node.agent);
     const screen = { ring: new OutputRing(), cols, rows };
@@ -3897,13 +4233,17 @@ app.whenReady().then(() => {
         // The operator may have moved about in the shell the AI left. Over SSH this is tmux, which has its own -c.
         const back = node.kind !== "local" || !cwd ? "" : process.platform === "win32" ? `cd /d "${cwd}" && ` : `cd ${posixQuote(cwd)} && `;
         // A bot never continues a conversation: it would take up the person's newest in the folder.
-        session.write(`${back}${launchLine(node, key, cwd, bot === undefined, false, false, bypass === true || bot !== undefined, repo?.label, bot !== undefined)}\r`);
+        const goOn = (await plan(bot === undefined, false)).launch;
+        session.write(`${back}${launchLine(node, key, cwd, goOn, false, false, bypass === true || bot !== undefined, repo?.label, bot !== undefined)}\r`);
         const fork = agentSpec(node.agent).forkCommand;
         if (fork) typeWhenSettled(session, fork);
       })(),
     } : undefined;
     if (watch) agentWatch.set(key, watch);
     let outputQuiet: NodeJS.Timeout | undefined;
+    // A character split between two chunks (Korean is 3 bytes) waits for its rest instead of showing as U+FFFD.
+    // One per session: it goes with this closure when the session does.
+    const decoder = new StringDecoder("utf8");
     session.on("data", (chunk: Buffer) => {
       // Per session: another one's output must not hold this quiet off. Also how something started by hand in what the AI left gets noticed.
       if (watch) {
@@ -3911,8 +4251,9 @@ app.whenReady().then(() => {
         outputQuiet = setTimeout(() => lookAt(node), OUTPUT_QUIET_MS);
         outputQuiet.unref();
       }
-      const text = chunk.toString("utf8");
+      const text = decoder.write(chunk);
       screen.ring.push(chunk);
+      if (!text) return;
       phoneHost?.api.output(key, text);
       if (!window.isDestroyed()) {
         window.webContents.send(channels.data, key, text);
@@ -3939,7 +4280,12 @@ app.whenReady().then(() => {
     // ponytail: that case keeps a 3 s look going until the session closes; give typeWhenSettled a way to give up if it ever costs.
     const openedAt = Date.now();
     const botReady = () => agentSettled(key) && (lastInputAt.get(key) ?? -Infinity) < openedAt;
-    if (firstPrompt && !plain) typeWhenSettled(session, firstPrompt.replace(/\s+/g, " "), 3000, startQuestion, bot === undefined ? undefined : botReady);
+    // Soon after the AI's own sign that its prompt takes words (readyMark); a long quiet where it gives none.
+    // A handoff its AI never marks up after a question goes to the window after a while, which types it only over a
+    // plain prompt (main.ts typeHandoff); a bot's line waits as before.
+    const handoff = firstPrompt?.replace(/\s+/g, " ");
+    const held = bot === undefined && handoff ? { ms: 20_000, gaveUp: () => void (!window.isDestroyed() && window.webContents.send(channels.handoffHeld, key, handoff)) } : undefined;
+    if (handoff && !plain) typeWhenSettled(session, handoff, 3000, startQuestion, bot === undefined ? undefined : botReady, agentSpec(node.agent).readyMark, held);
     return session.open();
   };
 
@@ -3968,9 +4314,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     channels.restartSession,
-    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState> =>
+    (_event, nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string, model?: unknown): Promise<SessionState> =>
       // A bot's session restarts as itself, never as the folder's plain one, and never continues a person's conversation.
-      openOrRestart(nodeId, repoId, cols, rows, true, executor, typeof bot === "string" ? false : resume, bypass, terminal, firstPromptOf(nodeId, repoId, firstPrompt, bot), typeof bot === "string" ? bot : undefined),
+      openOrRestart(nodeId, repoId, cols, rows, true, executor, typeof bot === "string" ? false : resume, bypass, terminal, firstPromptOf(nodeId, repoId, firstPrompt, bot), typeof bot === "string" ? bot : undefined, typeof model === "string" ? model : undefined),
   );
 
   ipcMain.on(channels.writeSession, (_event, key: string, data: string) => {
@@ -4031,7 +4377,9 @@ app.whenReady().then(() => {
     const name = tmuxSessionName(tmuxScope(key, agent));
     const move = typeof to === "number" && Number.isFinite(to) ? Math.max(0, Math.round(to)) : undefined;
     const search = typeof find?.text === "string" && find.text !== "" ? { text: find.text, up: find.up !== false } : undefined;
-    return parseTmuxScroll((await scrollPool.run(node.id, sshOptions(node), tmuxScrollCommand(name, move, search))) ?? "");
+    // Over the pane's own connection: the chat leaves copy mode this way before each line it types (sendFromChat).
+    const command = tmuxScrollCommand(name, move, search);
+    return parseTmuxScroll((await openTerminal(node.id, key)?.exec(command)) ?? (await scrollPool.run(node.id, sshOptions(node), command)) ?? "");
   });
 
   ipcMain.on(channels.resizeSession, (_event, key: string, cols: number, rows: number) => {
@@ -4970,6 +5318,7 @@ app.whenReady().then(() => {
 // window-all-closed. Running twice finds nothing left the second time.
 function teardown(): void {
   transcriptWatchers.stop();
+  for (const key of [...chatWatchers.keys(), ...remoteChatWatchers.keys()]) unwatchChat(key);
   probePool.stop();
   for (const session of sessions.values()) session.close();
   sessions.clear();

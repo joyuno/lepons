@@ -24,6 +24,9 @@ export function livePins(pins: string[], nodes: NodeConfig[]): string[] {
 
 const networkReasons: SessionCloseReason[] = ["refused", "no_route", "dns_failed", "connect_timeout", "unreachable", "connection_lost"];
 
+/** A session the network ended (the PC went away), not one closed on purpose or by its own failure. */
+export const cutOff = (state: SessionState): boolean => state.kind === "closed" && networkReasons.includes(state.reason);
+
 /** A PC is off or cut off when a session could not reach it and none is up or on its way. */
 export function looksOffline(states: SessionState[]): boolean {
   return (

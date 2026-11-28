@@ -1,6 +1,6 @@
 import { fmt, t } from "../i18n.ts";
-import type { PhonePc, PhoneSessionView, PhoneSummary, WorkflowItem } from "../phone/types.ts";
-import type { MapInput, MapSession } from "../../../cockpit/src/renderer/workflowmap/model.ts";
+import type { PhoneBot, PhonePc, PhoneSessionView, PhoneSummary, WorkflowItem } from "../phone/types.ts";
+import type { MapBot, MapInput, MapSession } from "../../../cockpit/src/renderer/workflowmap/model.ts";
 
 /*
  * One PC's constellation from the phone's state: that PC as the hub, its
@@ -37,13 +37,30 @@ export function workflowOf(session: PhoneSessionView): MapSession["workflow"] {
   return events.length ? { events } : undefined;
 }
 
+/** A skip's reason in the phone's words, when it has words for it. */
+const whyOf = (reason?: string): string | undefined => (t as Record<string, string>)[`botWhy_${reason}`];
+
+/** A bot as the map draws it: under its folder, standing for its own session. */
+export function mapBot(bot: PhoneBot): MapBot {
+  const why = bot.last?.status === "failed" || bot.last?.status === "skipped" ? whyOf(bot.last.reason) : undefined;
+  return {
+    id: bot.id, folder: bot.folder, name: bot.name,
+    ...(bot.sessionId ? { session: bot.sessionId } : {}), ...(bot.state === "running" ? { running: true } : {}), ...(bot.paused ? { paused: true } : {}),
+    ...(bot.next ? { next: Date.parse(bot.next) } : {}),
+    ...(bot.last ? { last: { at: Date.parse(bot.last.at), state: bot.last.status, ...(why ? { why } : {}) } } : {}),
+    ...(bot.missed ? { missed: bot.missed.count } : {}),
+  };
+}
+
 /**
  * Sessions carry the PC's name, not its id, so the name is the key -- the
- * same one the sessions tab groups by. Folders are keyed by name within it.
+ * same one the sessions tab groups by. Folders are keyed by name within it;
+ * a folder with only bots is one too.
  */
-export function phoneMap(pc: PhonePc, sessions: readonly PhoneSessionView[], words: { agent: string; terminal: string }, now = Date.now()): MapInput {
+export function phoneMap(pc: PhonePc, sessions: readonly PhoneSessionView[], words: { agent: string; terminal: string }, now = Date.now(), bots: readonly PhoneBot[] = []): MapInput {
   const mine = sessions.filter((session) => session.pc === pc.label);
-  const folders = [...new Set(mine.map((session) => session.folder))];
+  const myBots = bots.filter((bot) => bot.pc === pc.label);
+  const folders = [...new Set([...mine.map((session) => session.folder), ...myBots.map((bot) => bot.folder)])];
   return {
     // Minutes are enough for "오늘": a finer clock would rebuild the map on every render.
     now: Math.floor(now / 60000) * 60000,
@@ -59,6 +76,7 @@ export function phoneMap(pc: PhonePc, sessions: readonly PhoneSessionView[], wor
     }),
     delegations: [],
     shares: [],
+    ...(myBots.length ? { bots: myBots.map(mapBot) } : {}),
   };
 }
 

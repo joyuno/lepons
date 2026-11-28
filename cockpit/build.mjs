@@ -38,6 +38,7 @@ await build({
 });
 copyFileSync("src/renderer/index.html", "dist/index.html");
 copyFileSync("src/renderer/pet.html", "dist/pet.html");
+copyFileSync("build/icon.png", "dist/lepons.png");
 cpSync("src/renderer/fonts", "dist/fonts", { recursive: true });
 cpSync("src/renderer/pet", "dist/pet", { recursive: true });
 cpSync("node_modules/material-icon-theme/icons", "dist/icons", { recursive: true });

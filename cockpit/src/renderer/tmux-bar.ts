@@ -24,3 +24,38 @@ export function positionAt(top: number, view: TmuxView, track: number, height: n
   if (room <= 0 || view.history <= 0) return 0;
   return Math.round(view.history * (1 - Math.max(0, Math.min(top, room)) / room));
 }
+
+/**
+ * A line the chat types into a pane, in order: out of tmux's copy mode first when `leave` is given (a remote pane left
+ * scrolled up, or holding a drag's selection, takes keys as copy-mode commands: the line was lost there, with no sign),
+ * then `type` (chat-view's typeLine), which calls `entered` with how its Enter went. How the line went. `typing` is
+ * asked just before the first key: false, the line was taken back while it waited, and nothing is typed. With no
+ * `leave` it is asked at once, before this returns (chat-view's sendLine counts on it: a local line is never queued).
+ */
+export async function chatLine(leave: (() => Promise<boolean>) | undefined, type: (entered: (result: SendResult) => void) => boolean, typing: () => boolean = () => true): Promise<SendResult> {
+  if (leave && !(await leave())) return "notSent";
+  if (!typing()) return "notSent";
+  return new Promise<SendResult>((done) => {
+    if (!type(done)) done("notSent");
+  });
+}
+
+/** A chat line's end: sent with its Enter; nothing typed; or typed into the prompt with its Enter held back (a menu came up). */
+export type SendResult = "sent" | "notSent" | "typed";
+
+/**
+ * The chat's stop: the CLI's own interrupt key, Esc for both chat AIs -- Claude Code's "esc to interrupt", and Codex
+ * 0.172's `tui.keymap.chat.interrupt_turn` default (codex-rs/tui/src/keymap.rs at rust-v0.172.0:
+ * `default_bindings![plain(KeyCode::Esc)]`). Out of tmux's copy mode first, as a line is (there Esc only leaves it),
+ * and never over a question on screen, read before and again after: its Esc would answer the menu. Only while the
+ * CLI's own working line is on screen, read again right before the key ("idle": none, nothing typed): an Esc to a
+ * CLI at rest is not a stop (Claude's clear, Codex's backtrack).
+ */
+export async function chatStop(leave: (() => Promise<boolean>) | undefined, io: { asking(): boolean; working(): boolean; press(key: string): void }): Promise<"stopped" | "asking" | "idle" | "notSent"> {
+  if (io.asking()) return "asking";
+  if (leave && !(await leave())) return "notSent";
+  if (io.asking()) return "asking";
+  if (!io.working()) return "idle";
+  io.press("\x1b");
+  return "stopped";
+}

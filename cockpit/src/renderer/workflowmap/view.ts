@@ -3,7 +3,7 @@ import { attachHover, hideTip, showTipAt } from "../hover.ts";
 import { holdOn, isProject, movedBy, type Spot } from "./hold.ts";
 import { boxOf, branchOf, build, nextWaiting, nodeOfSession, shiftBranch, ZOOM_HOME, ZOOM_MAX, ZOOM_MIN, type Box, type MapInput, type MapModel, type MNode } from "./model.ts";
 import { ease, Painter, themeFrom, type View, type Words } from "./paint.ts";
-import { renderPanel, type PanelDeps } from "./panel.ts";
+import { botWords, renderPanel, type PanelDeps } from "./panel.ts";
 import { oneLine, summarize } from "./summary.ts";
 
 /*
@@ -62,7 +62,7 @@ const words = (): Words => ({
   // Templates, unfilled: summary.ts fills them.
   block: {
     running: t("wfmap.agentRunning"), under: t("wfmap.underMinute"), minutes: t("wfmap.minutes"), hours: t("wfmap.hours"), done: t("wfmap.agentDone"),
-    sessions: t("wfmap.sessionCount"), working: t("wfmap.hubWorking"), waiting: t("wfmap.hubWaiting"), doneToday: t("wfmap.hubDone"),
+    sessions: t("wfmap.sessionCount"), working: t("wfmap.hubWorking"), waiting: t("wfmap.hubWaiting"), doneToday: t("wfmap.hubDone"), bot: botWords(),
   },
 });
 
@@ -307,6 +307,7 @@ export function createWorkflowMap(host: HTMLElement, pill: HTMLButtonElement, de
     const n = model.byId.get(id);
     if (!n) return "";
     if (n.kind === "sub") return [n.label, n.instr ? `${t("workflow.instructions")}: ${oneLine(n.instr, 200)}` : ""].filter(Boolean).join("\n");
+    if (n.kind === "bot") return n.label;
     const move = isProject(n) ? t("wfmap.holdToMove") : "";
     if (n.session) {
       const s = input.sessions.find((x) => x.id === n.session);

@@ -5,7 +5,7 @@ import { appendFile, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { heldRecord } from "./held-record.ts";
+import { heldRecord, OUTPUT_MARK, type HeldText } from "./held-record.ts";
 
 // Through a real sh, as over SSH: what is tested is the byte arithmetic of tail and head.
 test("a held record grows by what was written, goes back as far as asked, and joins whole lines", async (t) => {
@@ -28,7 +28,8 @@ test("a held record grows by what was written, goes back as far as asked, and jo
   const file = `${dir}/a.jsonl`;
   await writeFile(file, all + '{"n":"half');
   const record = heldRecord(dir);
-  const read = (bytes: number) => record(bytes, run);
+  // A sh that runs: never unreachable, nor denied.
+  const read = (bytes: number) => record(bytes, run) as Promise<HeldText | undefined>;
   const parsed = (text: string) => text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as { n: number });
 
   const first = (await read(1000))!;
@@ -84,4 +85,39 @@ test("a held record grows by what was written, goes back as far as asked, and jo
 
   // No record at all.
   assert.equal(await heldRecord(`${dir}/none`)(1000, run), undefined);
+});
+
+test("a held record past its first ask grows with one command, under a shell that prints first, and says why it has none", async (t) => {
+  try {
+    execFileSync("sh", ["-c", "true"]);
+  } catch {
+    t.skip("no sh here");
+    return;
+  }
+  const dir = (await mkdtemp(join(tmpdir(), "held-"))).replaceAll("\\", "/");
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const scripts: string[] = [];
+  // A chatty rc file: its banner comes before every command's own output.
+  const run = async (script: string) => {
+    scripts.push(script);
+    return `Welcome to the server\n${execFileSync("sh", ["-c", script], { encoding: "utf8" })}`;
+  };
+  // A long line just after where the first ask begins: its start is rounded up past that, as a big tool output does.
+  const file = `${dir}/a.jsonl`;
+  await writeFile(file, `{"n":0}\n{"long":"${"x".repeat(3000)}"}\n${'{"n":1}\n'.repeat(20)}`);
+  const record = heldRecord(dir);
+  const first = await record(1000, run);
+  assert.ok(typeof first === "object" && first.text.startsWith('{"n":1}'));
+  for (let n = 2; n < 5; n++) {
+    await appendFile(file, `{"n":${n}}\n`);
+    scripts.length = 0;
+    const grown = await record(1000, run);
+    assert.ok(typeof grown === "object" && grown.text.endsWith(`{"n":${n}}\n`));
+    assert.equal(scripts.length, 1, "one command when it only grew");
+  }
+  // The machine could not be asked; the folder is not this account's to read.
+  assert.equal(await heldRecord(dir)(1000, async () => undefined), "unreachable");
+  assert.equal(await heldRecord(dir)(1000, async () => `banner\n${OUTPUT_MARK}\ndenied\n`), "denied");
+  // Output with no marker is not the command's (an rc file that ended the shell first): never read as a path.
+  assert.equal(await heldRecord(dir)(1000, async () => `${file}\n10\n`), undefined);
 });

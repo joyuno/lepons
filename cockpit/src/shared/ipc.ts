@@ -8,6 +8,7 @@ import type { Locale } from "../i18n/i18n.ts";
 import { botSlug, type Bot } from "../agent/bots.ts";
 import type { DescribeItem, OsJob } from "../agent/os-jobs.ts";
 import type { CodexAutomation, CodexCloudTask } from "../agent/codex-automations.ts";
+import type { ApprovalAsk, ApprovalReply } from "./approval.ts";
 
 export type { AgentKind, Executor };
 
@@ -174,11 +175,12 @@ export function botOfKey(key: string): string | undefined {
  * its result) -- the part terminal output never shows.
  */
 export type WorkflowItem =
-  | { kind: "prompt"; at: number; text: string }
+  | { kind: "prompt"; at: number; text: string; /** The pictures sent with it, a full read's only: data URLs in main, their names (heldPictures) on the page, "" for one not drawn; the phone is sent none. */ images?: string[] }
   | { kind: "note"; at: number; text: string; /** The operator stopped the turn here. */ cancelled?: true }
   | {
       kind: "action"; at: number; text: string; /** Every call pooled here, for counting. */ labels?: string[]; /** The operator stopped the turn here. */ cancelled?: true;
       /** Whole paths of the files these calls changed; the PC's own reads only, never the phone's. */ paths?: string[];
+      /** What each call did, in a full read only: the conversation view's rows. */ steps?: ToolStep[];
     }
   | {
       kind: "subagent";
@@ -191,17 +193,45 @@ export type WorkflowItem =
       /** The operator stopped the turn here. */ cancelled?: true;
     };
 
+/** One tool call: its kind, the command's first line or a file's name (never a whole path: the phone gets this too), how it ended, and when. */
+export interface ToolStep {
+  tool: "command" | "read" | "edit" | "other";
+  target: string;
+  result?: "done" | "failed";
+  endAt?: number;
+  /** A command still without a result: its whole text (capped, cut with "…"), for the chat's question card that asks about it. */
+  command?: string;
+  /** What the call gave back (capped, cut with "…"), a full read's only: the PC chat's preview (the phone is sent none). */
+  output?: string;
+}
+
 export interface SessionWorkflow {
   /** Claude Code's own generated session title, when present. */
   title?: string;
   events: WorkflowItem[];
   /** Read for the phone's "show older": whether the record holds events before these. */
   more?: boolean;
+  /** The model the record names last (Claude's answers, Codex's turn settings, OpenCode's answers); absent when it names none. */
+  model?: string;
 }
 
 export type SessionWorkflowResult =
   | { ok: true; workflow: SessionWorkflow }
-  | { ok: false; reason: "remote_unsupported" | "no_transcript" };
+  | {
+      ok: false; reason: "remote_unsupported" | "no_transcript";
+      /**
+       * Why none was read, when it is known, for the PC chat to say: another PC's record not found (yet), not connected,
+       * the folder not this account's, or a Codex record with no reader on that PC; "starting", the window's own while a
+       * session moves to another AI.
+       */
+      why?: "missing" | "unreachable" | "denied" | "no_reader" | "starting";
+    };
+
+/** What handoffText gives: the line to type into the new AI, and the conversation of its own it goes on with. */
+export interface Handoff {
+  text?: string;
+  resume?: string;
+}
 
 /** A past conversation the session dialog offers to continue (spec C-5); `at` is its last write, in ms. */
 export interface PastConversation {
@@ -241,10 +271,10 @@ export interface RemoteFind {
   sources: string[];
 }
 
-/** A folder on this machine that Claude Code or Codex has sessions in. */
+/** A folder on this machine that an AI has sessions in, or Cursor's editor remembers (`agent`). */
 export interface LocalFind {
   path: string;
-  tools: Array<"claude" | "codex">;
+  tools: AgentKind[];
   /** Epoch ms of the newest session. */
   lastUsed: number;
   known: boolean;
@@ -534,6 +564,8 @@ export interface RelayView {
   server: string;
   /** The QR text while a pairing is open; phoneQr draws it. */
   qr?: string;
+  /** When that pairing closes, epoch ms. */
+  qrUntil?: number;
 }
 
 /** "server" takes the address as its value; "" puts back the default. */
@@ -688,7 +720,7 @@ export interface CockpitApi {
    * drop a conversation that has grown too long, rather than waiting on the
    * automatic idle reset.
    */
-  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string): Promise<SessionState>;
+  restartSession(nodeId: string, repoId: string | null, cols: number, rows: number, executor?: Executor, resume?: boolean | string, bypass?: boolean, terminal?: boolean, firstPrompt?: string, bot?: string, model?: string): Promise<SessionState>;
   writeSession(key: string, data: string): void;
   resizeSession(key: string, cols: number, rows: number): void;
   /**
@@ -707,10 +739,20 @@ export interface CockpitApi {
    * spending. This kills the remote session too.
    */
   stopSession(nodeId: string, repoId: string | null): Promise<void>;
-  /** The session's internal workflow, parsed from its transcript on disk; `bot` (botOfKey) for a bot's session. */
-  sessionWorkflow(nodeId: string, repoId: string, bot?: string): Promise<SessionWorkflowResult>;
-  /** A summary of the folder's conversation for another AI to carry on (handoffPrompt); none with nothing asked. */
-  handoffText(nodeId: string, repoId: string): Promise<string | undefined>;
+  /**
+   * The session's internal workflow, parsed from its transcript on disk; `bot` (botOfKey) for a bot's session.
+   * `full`: whole texts and each call's steps, as the phone reads; `before`: the events before that time, as the phone's "show older".
+   * Only Claude's record is read further back; Codex's and OpenCode's give what their read holds before it, with `more: false`.
+   */
+  sessionWorkflow(nodeId: string, repoId: string, bot?: string, full?: boolean, before?: number): Promise<SessionWorkflowResult>;
+  /**
+   * A summary of the folder's conversation for another AI to carry on (handoffPrompt); none with nothing asked. With
+   * `to`, the folder's chat moves to that AI: the one it leaves is remembered, and going back to an AI remembered so
+   * gives that AI's conversation to go on with (`resume`) and only what was done since it was left.
+   */
+  handoffText(nodeId: string, repoId: string, to?: AgentKind): Promise<Handoff>;
+  /** Codex's own model list on that PC (codexModelList); undefined when it cannot be read there. */
+  codexModels(nodeId: string): Promise<Array<{ slug: string; name: string }> | undefined>;
   /** How a quiet session's turn ended, from its record's tail; never rejects. `workedMs`: how long it had been busy. */
   /** `bot`: a bot's own session, read by its own AI. */
   sessionTurn(nodeId: string, repoId: string, workedMs: number, bot?: string): Promise<TurnEnd>;
@@ -834,7 +876,7 @@ export interface CockpitApi {
   pathForFile(file: File): string;
   /** Opens a file for editing; refused, with the reason, when that is not safe. */
   openForEdit(nodeId: string, path: string): Promise<EditOpenResult>;
-  /** What VS Code, Cursor, Claude Code and Codex know about that Lepons does not. */
+  /** What VS Code, Cursor (remote folders and recent folders), Claude Code and Codex know about that Lepons does not. */
   scanImports(): Promise<ImportScan>;
   /** The folders with Claude Code or Codex sessions on a connected PC; a reason when it cannot be read. */
   scanRemoteProjects(nodeId: string): Promise<{ ok: true; projects: RemoteProject[] } | { ok: false; reason: string }>;
@@ -849,6 +891,14 @@ export interface CockpitApi {
   readText(nodeId: string, path: string): Promise<{ ok: true; text: string } | { ok: false; error: string }>;
   /** Same as `readText`, base64 instead of decoded, for images and PDFs. */
   readBinary(nodeId: string, path: string): Promise<{ ok: true; base64: string } | { ok: false; error: string }>;
+  /** A picture an AI's answer names, read only as chatImagePath allows (a drive path, or inside the session's folder). */
+  chatImage(nodeId: string, repoId: string, path: string): Promise<{ ok: true; base64: string } | { ok: false; error: string }>;
+  /** A prompt's picture by the name a read gave it (WorkflowItem prompt `images`), as a data URL; undefined once main no longer holds it. */
+  chatPhoto(nodeId: string, repoId: string, bot: string | undefined, name: string): Promise<string | undefined>;
+  /** The chat composer's "/" list for that folder's session with this AI: the phone's /api/commands list (phone/suggest.ts sessionCommands). */
+  /** The session's "/" commands, and Codex's "$" skills after them (phone/suggest.ts sessionSkills). */
+  /** own: Claude's own list where it gives one (asked only in a folder Claude trusts, when what shapes it moved); else the files'. */
+  chatCommands(nodeId: string, repoId: string, agent: AgentKind, own: boolean): Promise<Array<{ name: string; description: string }>>;
   /**
    * Creates a folder on that machine and answers with its path, or with why
    * it could not be created -- a new project usually needs a home before it
@@ -878,7 +928,8 @@ export interface CockpitApi {
   tokenStats(): Promise<import("../agent/token-stats.ts").TokenStats>;
   /** The usage after any read, the ones main makes by itself included (this PC's status line saved a new one). */
   onUsage(handler: (usage: import("../agent/usage.ts").Usage) => void): void;
-  pasteImage(nodeId: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
+  /** A picture saved as a file in that PC's temp: the clipboard's (another PC's terminal), or `bytes` of `type` (the chat's composer, this PC too). */
+  pasteImage(nodeId: string, bytes?: Uint8Array, type?: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>;
   /** Files dropped onto a session on another PC, copied into a new folder in its temp: their paths there. */
   dropFiles(nodeId: string, paths: string[]): Promise<{ ok: true; paths: string[] } | { ok: false; error: string }>;
   onData(handler: (key: string, chunk: string) => void): void;
@@ -891,6 +942,8 @@ export interface CockpitApi {
    * Without this the window keeps whatever list it had at startup.
    */
   onNodes(handler: (nodes: NodeConfig[]) => void): void;
+  /** A bot was saved or removed (by the AI, the form or a delete): read the list again. */
+  onBotsChanged(handler: () => void): void;
   onOpenWith(handler: (opens: OpenWith[]) => void): void;
   /**
    * A share went down, failed a try at coming back, or came back. `nudge`
@@ -910,12 +963,22 @@ export interface CockpitApi {
   watchTranscripts(on: boolean): void;
   /** A watched local transcript changed on disk; safe to re-read that session. */
   onTranscript(handler: (nodeId: string, repoId: string) => void): void;
+  /** Watches the record folder of the chat `key` (a Claude session on this PC) while `on`; a change comes back as onChatRecord. */
+  watchChat(key: string, nodeId: string, repoId: string, on: boolean): void;
+  onChatRecord(handler: (key: string) => void): void;
+  /** A handoff its new AI never marked its prompt up for after a question (typeWhenSettled's held): the window types it where the screen shows a prompt. */
+  onHandoffHeld(handler: (key: string, text: string) => void): void;
   /** Main asks for a locked key's passphrase; the reply is never stored. */
   onPassphraseRequest(handler: (request: PassphraseRequest) => void): void;
   replyPassphrase(requestId: string, passphrase: string | null): void;
   /** Main asks a question it would once have asked in a native message box. */
   onDialogRequest(handler: (request: DialogRequest) => void): void;
   replyDialog(requestId: string, response: number): void;
+  /** Main asks about an AI's schedule request in the app's own dialog, one at a time; main checks the reply again. */
+  onApprovalRequest(handler: (ask: ApprovalAsk) => void): void;
+  replyApproval(requestId: string, reply: ApprovalReply): void;
+  /** The person is editing that request: its wait starts again. */
+  approvalEditing(requestId: string): void;
   /** The sessions as the rail shows them, sent whenever that changes. */
   phoneSnapshot(sessions: PhoneSession[]): void;
   phoneSettings(): Promise<PhoneSettingsView>;
@@ -1083,14 +1146,22 @@ export const channels = {
   data: "session:data",
   state: "session:state",
   nodesChanged: "nodes:changed",
+  botsChanged: "bot:changed",
   watchTranscripts: "workflow:watch-transcripts",
   transcriptChanged: "workflow:transcript-changed",
+  watchChat: "workflow:watch-chat",
+  chatRecordChanged: "workflow:chat-record-changed",
+  handoffHeld: "session:handoff-held",
   passphraseRequest: "key:passphrase-request",
   passphraseReply: "key:passphrase-reply",
   dialogRequest: "dialog:request",
   dialogReply: "dialog:reply",
+  approvalRequest: "approval:request",
+  approvalReply: "approval:reply",
+  approvalEditing: "approval:editing",
   sessionWorkflow: "workflow:session",
   handoffText: "workflow:handoff",
+  codexModels: "agent:codexModels",
   sessionTurn: "workflow:turn",
   restartAgent: "session:restart-agent",
   agentGone: "session:agent-gone",
@@ -1157,6 +1228,9 @@ export const channels = {
   saveEdited: "files:save-edited",
   readText: "files:read-text",
   readBinary: "files:read-binary",
+  chatImage: "files:chat-image",
+  chatPhoto: "workflow:chat-photo",
+  chatCommands: "chat:commands",
   makeFolder: "files:make-folder",
   makeFile: "files:make-file",
   phoneSnapshot: "phone:snapshot",

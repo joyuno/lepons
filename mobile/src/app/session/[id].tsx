@@ -16,7 +16,7 @@ import { Appear, Crossfade, ms, Press, TypingDots, useReducedMotion } from "@/mo
 import { chatFrom, type ChatItem } from "@/phone/chat";
 import { unpasted } from "@/phone/pasted";
 import { firstDrawn, sameRow, stillAtBottom, type Flow } from "@/phone/chat-rows";
-import { LinkNotice } from "@/link-notice";
+import { LinkNotice, useStillLoading } from "@/link-notice";
 import { fetchFile, openInViewer, openPrinted, printedFolder } from "@/open-file";
 import { findPaths } from "../../../../cockpit/src/shared/term-paths.ts";
 import { composerAction, formAnswered, formAnswers, menuKeys, type FormAnswer } from "@/phone/composer";
@@ -34,7 +34,7 @@ import { menuFrom, menuQuestion, menuTabs, type MenuOption, type MenuTab } from 
 import { statusFrom } from "@/phone/status";
 import { termLines, type TermRun } from "@/phone/term-lines";
 import { playSend, prepareSend } from "@/sound";
-import { chats, drafts, sends } from "@/store";
+import { chats, drafts, saved, sends } from "@/store";
 import { folderName, lampState, type CommandSuggestion, type PhoneSessionView } from "@/phone/types";
 import { commandsOf, olderOf, screenOf, withChange, withOlder, workflowChangeOf } from "@/phone/validate";
 import { DemoBadge, font, groupRow, Lamp, mono, monoSizes, radius, Segments, SelectableText, size, Skeleton, space, useTheme } from "@/ui";
@@ -48,6 +48,8 @@ type Attached = Picked & { key: number; path?: string; failed?: string };
  */
 const attachedBySession = new Map<string, Attached[]>();
 let attachedKey = 0;
+/** When a chat in memory was last received, by "pc/session": read from disk, or the PC's last answer for it. */
+const receivedAt = new Map<string, number>();
 /** Opens a file path the agent printed (open-file.ts openPrinted), or a folder in the files tab; the chat's, so a tap on one goes there. */
 const PathOpen = createContext<((path: string, folder?: boolean) => void) | undefined>(undefined);
 const q = encodeURIComponent;
@@ -124,7 +126,11 @@ export default function SessionScreen() {
   useFocusEffect(
     useCallback(() => {
       setFocused(true);
-      return () => setFocused(false);
+      return () => {
+        setFocused(false);
+        // A chat's save waits up to 15 s: leaving it writes it now.
+        void saved.flush();
+      };
     }, []),
   );
   useEffect(() => {
@@ -144,6 +150,30 @@ export default function SessionScreen() {
     setLimit(undefined);
     shown.current = chats.get(id)?.json ?? "";
   }, [id]);
+
+  // Not seen since the app started: the chat as saved, until the PC answers. An answer that lands first wins.
+  // Signed in only: an answer after a sign-out or unpair must not put back the folder they deleted.
+  const pc = c.demo || !c.signedIn ? undefined : c.pairing?.id;
+  const pcNow = useRef(pc);
+  pcNow.current = pc;
+  /** Which chat the disk has answered for: until then "nothing saved" would flash before the saved copy shows. */
+  const [readFor, setReadFor] = useState<string>();
+  useEffect(() => {
+    if (!pc || chats.get(id)) return;
+    void saved.loadChat(pc, id).then((got) => {
+      setReadFor(`${pc}/${id}`);
+      if (!got || chats.get(id) || pcNow.current !== pc) return;
+      const json = JSON.stringify(got.flow);
+      shown.current = json;
+      chats.set(id, json, got.flow);
+      receivedAt.set(`${pc}/${id}`, got.at);
+      setFlowState({ id, value: got.flow });
+    });
+  }, [id, pc]);
+  // Said under the notice while the PC cannot be reached: when what shows came. Never for a chat that is not on screen.
+  // Read at each draw: the link going down draws again, so no draw is spent on each answer.
+  const chatSavedAt = pc && flow ? receivedAt.get(`${pc}/${id}`) : undefined;
+  const loading = useStillLoading() || (pc !== undefined && readFor !== `${pc}/${id}`);
 
   // This session's screen on the link's one stream, only while the chat is in
   // view: output stops for the files tab or an open file, and coming back costs
@@ -173,6 +203,8 @@ export default function SessionScreen() {
         }
       },
       receive: (answer) => {
+        // The PC answered, even "same": what shows is as of now.
+        if (answer !== undefined && pcNow.current) receivedAt.set(`${pcNow.current}/${id}`, Date.now());
         if (answer === undefined) {
           setFlowState((old) => ({ id, value: (old.id === id ? old.value : chats.get(id)?.value) ?? null }));
           return { changed: false, size: 0 };
@@ -184,6 +216,7 @@ export default function SessionScreen() {
         if (changed) {
           shown.current = json;
           chats.set(id, json, next);
+          if (next && pcNow.current) saved.saveChat(pcNow.current, id, next);
           setFlowState({ id, value: next });
         }
         return { changed, size: json.length, pushed: next?.v !== undefined };
@@ -278,6 +311,7 @@ export default function SessionScreen() {
       const json = JSON.stringify(next);
       shown.current = json;
       chats.set(id, json, next);
+      if (pcNow.current) saved.saveChat(pcNow.current, id, next);
       setFlowState({ id, value: next });
       return true;
     } catch {
@@ -317,12 +351,12 @@ export default function SessionScreen() {
           <Segments role="tab" items={[["chat", session?.agentName || t.chat], ["term", t.terminal], ["docs", t.docs]]} value={sub} onChange={(next) => { setDocsAt(undefined); setSub(next); }} />
         </View>
       </View>
-      <View style={{ paddingHorizontal: space.lg }}><LinkNotice /></View>
+      <View style={{ paddingHorizontal: space.lg }}><LinkNotice savedAt={sub === "chat" ? chatSavedAt : undefined} /></View>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         {c.phone && !session ? <Text style={s.empty}>{params.opening && !openGaveUp ? t.sessionOpening : params.opening ? t.openFolderFailed : t.sessionGone}</Text> : null}
-        {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} loadOlder={loadOlder} /></PathOpen.Provider> : null}
+        {sub === "chat" ? <PathOpen.Provider value={openPath}><ChatView key={id} id={id} flow={flow} loading={loading} working={session?.mood === "working"} statusLine={statusLine} limit={limit} refresh={refreshControl} loadOlder={loadOlder} /></PathOpen.Provider> : null}
         {sub === "term" ? <TerminalView key={id} id={id} /> : null}
-        {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} start={docsAt} list={list} request={c.request} /> : null}
+        {sub === "docs" ? <DocsView key={id} id={id} root={session?.folder} start={docsAt} list={list} request={c.request} canAsk={c.canAsk} /> : null}
         {/* The menu as the PC read it, when it sends one (cockpit/src/phone/ask.ts); this phone's own reading of the screen otherwise. */}
         {sub === "chat" && session ? (
           <Composer key={`composer-${id}`} id={id} session={session}
@@ -336,7 +370,7 @@ export default function SessionScreen() {
 
 // --- the conversation ------------------------------------------------------------
 
-function ChatView(props: { id: string; flow: Flow | undefined; working: boolean; statusLine: string; limit: string | undefined; refresh: ReactElement; loadOlder: () => Promise<boolean> }) {
+function ChatView(props: { id: string; flow: Flow | undefined; loading: boolean; working: boolean; statusLine: string; limit: string | undefined; refresh: ReactElement; loadOlder: () => Promise<boolean> }) {
   const { c: p, s } = useSessionTheme();
   const scroll = useRef<ScrollViewInstance>(null);
   const atBottom = useRef(true);
@@ -430,7 +464,7 @@ function ChatView(props: { id: string; flow: Flow | undefined; working: boolean;
         follow();
       }}
     >
-      {props.flow === undefined ? <Text style={s.empty}>{t.loading}</Text> : null}
+      {props.flow === undefined ? <Text style={s.empty}>{props.loading ? t.loading : t.noSavedYet}</Text> : null}
       {props.flow !== undefined && items.length === 0 && waiting.length === 0 ? <Text style={s.empty}>{props.flow ? t.noChat : t.noWorkflow}</Text> : null}
       {recent.hidden > 0 ? (
         <Pressable accessibilityRole="button" onPress={() => setAnchor(keys[Math.max(0, start - CHAT_PAGE)])} style={({ pressed }) => ({ minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.6 : 1 })}>
@@ -844,7 +878,7 @@ function TerminalView({ id }: { id: string }) {
   }, [termId, ready]);
 
   const submit = async () => {
-    if (!termId || !ready) return;
+    if (!termId || !ready || !c.canAsk) return;
     const line = text;
     setText("");
     setNote("");
@@ -938,8 +972,8 @@ function TerminalView({ id }: { id: string }) {
             spellCheck={false}
             keyboardAppearance="dark"
           />
-          <Pressable accessibilityRole="button" accessibilityLabel={t.send} disabled={!ready} onPress={() => void submit()} hitSlop={8}
-            style={({ pressed }) => ({ width: 40, height: 36, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: TERM.cursor, opacity: !ready ? 0.4 : pressed ? 0.7 : 1 })}>
+          <Pressable accessibilityRole="button" accessibilityLabel={t.send} accessibilityState={{ disabled: !ready || !c.canAsk }} disabled={!ready || !c.canAsk} onPress={() => void submit()} hitSlop={8}
+            style={({ pressed }) => ({ width: 40, height: 36, borderRadius: radius.md, alignItems: "center", justifyContent: "center", backgroundColor: TERM.cursor, opacity: !ready || !c.canAsk ? 0.4 : pressed ? 0.7 : 1 })}>
             <Text style={{ fontFamily: mono, fontSize: size.headline, fontWeight: "700", color: TERM.bar }}>{"\u21b5"}</Text>
           </Pressable>
         </View>
@@ -952,13 +986,16 @@ function TerminalView({ id }: { id: string }) {
 // --- files ---------------------------------------------------------------------
 
 /** File browser requests only the directory currently open. */
-function DocsView({ id, root, start, list, request }: { id: string; root: string | undefined; start: string | undefined; list: ReturnType<typeof folderLister>; request: Connection["request"] }) {
+function DocsView({ id, root, start, list, request, canAsk }: { id: string; root: string | undefined; start: string | undefined; list: ReturnType<typeof folderLister>; request: Connection["request"]; canAsk: boolean }) {
   const { c: p, s } = useSessionTheme();
+  const canAskNow = useRef(canAsk);
+  canAskNow.current = canAsk;
   // Opened at a folder from the chat: back from it is the folder's top.
   const [history, setHistory] = useState(() => navigate({ paths: [""], index: 0 }, { open: start ?? "" }));
   const path = history.paths[history.index]!;
   const [entries, setEntries] = useState<FolderEntry[] | undefined>();
-  const [failed, setFailed] = useState(false);
+  /** "offline": the read failed while the PC could not be asked, which says nothing of the folder. */
+  const [failed, setFailed] = useState<false | "gone" | "offline">(false);
   /** The file on its way to the phone's viewer: there is no page to wait on, so its row says so. */
   const [opening, setOpening] = useState<string>();
   const openToken = useRef(0);
@@ -972,9 +1009,11 @@ function DocsView({ id, root, start, list, request }: { id: string; root: string
     try {
       const listed = await list(path, fresh);
       if (request === requestId.current) setEntries(listed);
-    } catch { if (request === requestId.current) { setFailed(true); setEntries([]); } }
+    } catch { if (request === requestId.current) { setFailed(canAskNow.current ? "gone" : "offline"); setEntries([]); } }
   };
   useEffect(() => { void load(); return () => { requestId.current++; }; }, [list, path]);
+  // The link is back: the folder it could not read is read again.
+  useEffect(() => { if (canAsk && failed === "offline") void load(); }, [canAsk]);
   return (
     <FlatList style={{ flex: 1 }} contentContainerStyle={{ padding: space.xl }}
       data={entries ?? []}
@@ -994,7 +1033,7 @@ function DocsView({ id, root, start, list, request }: { id: string; root: string
         <Text style={[s.crumbs, { flex: 1 }]} numberOfLines={1} ellipsizeMode="head" selectable>{[root ?? ".", ...(path ? path.split("/") : [])].join(" › ")}</Text>
       </View>
       {entries === undefined ? <FilesSkeleton /> : null}
-      {failed ? <Text style={s.empty}>{t.docGone}</Text> : null}
+      {failed ? <Text style={s.empty}>{failed === "offline" ? t.fileNeedsPc : t.docGone}</Text> : null}
       {!failed && entries?.length === 0 ? <Text style={s.empty}>{t.emptyFolder}</Text> : null}
       </View>}
       renderItem={({ item: entry, index }) => {
@@ -1080,7 +1119,8 @@ function StripEdge({ side, color }: { side: "left" | "right"; color: string }) {
  * Several questions' titles ("←  ☒ Color  ☐ Size  ✔ Submit  →"), swiped sideways between the card's arrows: the one
  * shown is scrolled into view, the answered ones are marked, and an edge dims while more titles are past it.
  */
-function TabStrip({ tabs, here, go }: { tabs: ReadonlyArray<{ label: string; done: boolean }>; here: number; go(i: number): void }) {
+/** `off`: each tab is a key to the PC (the menu's), which cannot be reached now; the form's own tabs never are. */
+function TabStrip({ tabs, here, go, off = false }: { tabs: ReadonlyArray<{ label: string; done: boolean }>; here: number; go(i: number): void; off?: boolean }) {
   const { c: p, s } = useSessionTheme();
   const tabsKey = tabs.map((tab) => tab.label).join("\u0000");
   // Each tab's place in the strip, its own width and how far the strip is scrolled.
@@ -1109,8 +1149,8 @@ function TabStrip({ tabs, here, go }: { tabs: ReadonlyArray<{ label: string; don
             <Pressable
               key={i}
               accessibilityRole="tab"
-              accessibilityState={{ selected: shown }}
-              disabled={shown}
+              accessibilityState={{ selected: shown, disabled: shown || off }}
+              disabled={shown || off}
               onLayout={(event) => {
                 const { x, width } = event.nativeEvent.layout;
                 tabBoxes.current[i] = { x, width };
@@ -1118,7 +1158,7 @@ function TabStrip({ tabs, here, go }: { tabs: ReadonlyArray<{ label: string; don
               onPress={() => go(i)}
               style={({ pressed }) => ({
                 height: 26, justifyContent: "center", paddingHorizontal: space.sm, borderRadius: radius.sm, borderCurve: "continuous",
-                borderWidth: 1, borderColor: shown ? p.link : "transparent", backgroundColor: shown ? p.raise : "transparent", opacity: pressed ? 0.6 : 1,
+                borderWidth: 1, borderColor: shown ? p.link : "transparent", backgroundColor: shown ? p.raise : "transparent", opacity: off && !shown ? 0.5 : pressed ? 0.6 : 1,
               })}
             >
               <Text numberOfLines={1} style={[s.text, shown && font.semibold, { maxWidth: 140, fontSize: size.caption, color: shown ? p.text : one.done ? p.go : p.muted }]}>
@@ -1249,8 +1289,8 @@ function AskForm({ form, session, onBusy, onSent, onOldPc }: {
           <Text style={[s.dim, { flex: 1, fontSize: size.caption, color: note ? p.stop : p.muted }]} accessibilityLiveRegion="polite">
             {note || (busy ? t.formSending : left > 0 ? t.formLeft.replace("{n}", String(left)) : "")}
           </Text>
-          <Pressable accessibilityRole="button" accessibilityState={{ disabled: left > 0 || busy, busy }} disabled={left > 0 || busy} onPress={() => void submit()}
-            style={({ pressed }) => ({ minHeight: 36, minWidth: 72, paddingHorizontal: space.lg, borderRadius: radius.lg, borderCurve: "continuous", backgroundColor: p.ink, alignItems: "center", justifyContent: "center", opacity: left > 0 ? 0.4 : pressed || busy ? 0.7 : 1 })}>
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: left > 0 || busy || !c.canAsk, busy }} disabled={left > 0 || busy || !c.canAsk} onPress={() => void submit()}
+            style={({ pressed }) => ({ minHeight: 36, minWidth: 72, paddingHorizontal: space.lg, borderRadius: radius.lg, borderCurve: "continuous", backgroundColor: p.ink, alignItems: "center", justifyContent: "center", opacity: left > 0 || !c.canAsk ? 0.4 : pressed || busy ? 0.7 : 1 })}>
             {busy ? <ActivityIndicator size="small" color={p.onInk} accessibilityLabel={t.loading} /> : <Text style={[font.semibold, { color: p.onInk, fontSize: size.callout }]}>{t.send}</Text>}
           </Pressable>
         </View>
@@ -1331,6 +1371,8 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
   /** Fetched once per session view, then filtered here as the operator types. */
   const commands = useRef<Promise<CommandSuggestion[]> | undefined>(undefined);
   const answerable = session.agent && !session.agentGone && session.mood !== "idle" && session.mood !== "failed";
+  /** The PC cannot be asked: typing and the draft go on; sending, picks, stop and attaching wait for the link. */
+  const offline = !c.canAsk;
   const insets = useSafeAreaInsets();
   /** Up: the bar sits on the keyboard. Down: it runs to the screen's edge, over the home indicator. */
   const [keyboard, setKeyboard] = useState(false);
@@ -1428,8 +1470,10 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
       if (no !== undefined || !("text" in body)) setNote({ text: no ?? "", bad: no !== undefined });
       return no;
     } catch {
-      setNote({ text: t.errorInput, bad: true });
-      return t.errorInput;
+      // Text comes back to the box (sends.refused), and the note says it did.
+      const why = "text" in body ? t.sendFailedKept : t.errorInput;
+      setNote({ text: why, bad: true });
+      return why;
     }
   };
 
@@ -1457,6 +1501,8 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
     // Seen and heard at once; the PC's answer comes later, and a no brings the text back (outbox.ts).
     sends.begin(id, draft, after);
     setText("");
+    // iOS keeps a cleared multiline box at its old height until the next layout; clearing it natively shrinks it at once.
+    input.current?.clear();
     setFiles(() => []);
     setPlaceholder(t.typeHere);
     setNote({ text: "", bad: false });
@@ -1543,10 +1589,11 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
   const sep = { borderTopWidth: 1, borderTopColor: p.line } as const;
   // Back to the question before, to change its answer; or on (Tab: also what takes a multi-select's ticks on). Never
   // greyed out: where the PC is may be the phone's guess (tabAt), and Left on the first question does nothing anyway.
+  // Only while the PC cannot be reached: each step is a key sent to it.
   const arrow = (back: boolean) => (
-    <Pressable accessibilityRole="button" accessibilityLabel={back ? t.menuPrev : t.menuNext}
+    <Pressable accessibilityRole="button" accessibilityLabel={back ? t.menuPrev : t.menuNext} accessibilityState={{ disabled: offline }} disabled={offline}
       onPress={() => void step(back ? -1 : 1)} hitSlop={6}
-      style={({ pressed }) => ({ width: 36, height: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, opacity: pressed ? 0.5 : 1 })}>
+      style={({ pressed }) => ({ width: 36, height: 32, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, opacity: offline || pressed ? 0.5 : 1 })}>
       <SymbolView name={back ? { ios: "chevron.left", android: "chevron_left" } : { ios: "chevron.right", android: "chevron_right" }} tintColor={p.link} size={16} />
     </Pressable>
   );
@@ -1578,7 +1625,7 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
               // too: ticking does not move on, › (Tab) takes the ticks on, ‹ goes back if there is a before.
               <View style={[sep, { flexDirection: "row", alignItems: "center", paddingHorizontal: space.xs, paddingVertical: space.xs }]}>
                 {arrow(true)}
-                {tabs ? <TabStrip tabs={tabs} here={here} go={(i) => void step(i - here)} /> : <View style={{ flex: 1 }} />}
+                {tabs ? <TabStrip tabs={tabs} here={here} go={(i) => void step(i - here)} off={offline} /> : <View style={{ flex: 1 }} />}
                 {arrow(false)}
               </View>
             ) : null}
@@ -1588,7 +1635,8 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
               <Pressable
                 key={option.n}
                 accessibilityRole={option.checked === undefined ? "button" : "checkbox"}
-                accessibilityState={option.checked === undefined ? undefined : { checked: option.checked }}
+                accessibilityState={option.checked === undefined ? { disabled: offline } : { checked: option.checked, disabled: offline }}
+                disabled={offline}
                 onPress={async () => {
                   // Typing an answer, the choices stay in sight: the typing row goes back to them, another row picks.
                   const keys = menuKeys(option, typingAnswer);
@@ -1605,7 +1653,7 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
                   setPlaceholder(t.freeTextHint);
                   input.current?.focus();
                 }}
-                style={({ pressed }) => [{ flexDirection: "row", gap: space.md, alignItems: "center", minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.md }, pressed && { backgroundColor: p.raise }]}
+                style={({ pressed }) => [{ flexDirection: "row", gap: space.md, alignItems: "center", minHeight: 44, paddingHorizontal: space.lg, paddingVertical: space.md }, pressed && { backgroundColor: p.raise }, offline && { opacity: 0.5 }]}
               >
                 {/* A multi-select row shows its box: ticked or not, as the PC's screen has it. */}
                 <View style={{ width: 24, height: 24, borderRadius: radius.xs + space.xxs, borderCurve: "continuous", backgroundColor: option.checked ? p.link : p.raise, alignItems: "center", justifyContent: "center" }}>
@@ -1625,8 +1673,8 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
                 <Text style={[s.dim, { flex: 1, fontSize: size.caption, color: p.live }]}>
                   {t.autoNote.replace("{time}", new Date(session.auto.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })).replace("{n}", String(session.auto.n))}
                 </Text>
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={() => void c.request("POST", "/api/auto-keep", { body: { s: id } }).catch(() => undefined)}
-                  style={({ pressed }) => ({ paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.sm, borderWidth: 1, borderColor: p.line, opacity: pressed ? 0.6 : 1 })}>
+                <Pressable accessibilityRole="button" accessibilityState={{ disabled: offline }} disabled={offline} hitSlop={8} onPress={() => void c.request("POST", "/api/auto-keep", { body: { s: id } }).catch(() => undefined)}
+                  style={({ pressed }) => ({ paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.sm, borderWidth: 1, borderColor: p.line, opacity: offline ? 0.5 : pressed ? 0.6 : 1 })}>
                   <Text style={[s.dim, { fontSize: size.caption }]}>{t.autoKeep}</Text>
                 </Pressable>
               </View>
@@ -1659,11 +1707,11 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
           <Press
             accessibilityRole="button"
             accessibilityLabel={t.attach}
-            accessibilityState={{ disabled: !answerable, expanded: picker !== undefined }}
-            disabled={!answerable}
+            accessibilityState={{ disabled: !answerable || offline, expanded: picker !== undefined }}
+            disabled={!answerable || offline}
             onPress={openPicker}
             hitSlop={{ left: 8, right: 4 }}
-            style={({ pressed }) => [s.circle, { width: 28, marginLeft: -space.xs, marginRight: -space.xs, borderWidth: 0, backgroundColor: "transparent", opacity: !answerable ? 0.5 : pressed ? 0.7 : 1 }]}
+            style={({ pressed }) => [s.circle, { width: 28, marginLeft: -space.xs, marginRight: -space.xs, borderWidth: 0, backgroundColor: "transparent", opacity: !answerable || offline ? 0.5 : pressed ? 0.7 : 1 }]}
           >
             <SymbolView name={{ ios: "paperclip", android: "attach_file" }} tintColor={p.muted} size={22} />
           </Press>
@@ -1738,11 +1786,11 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
         <Press
           accessibilityRole="button"
           accessibilityLabel={action === "stop" ? t.stop : t.send}
-          accessibilityHint={action === "stop" ? t.stopHint : undefined}
-          accessibilityState={{ disabled: !answerable || sending || uploading, busy: uploading }}
-          disabled={!answerable || sending || uploading}
+          accessibilityHint={offline ? t.sendNeedsPc : action === "stop" ? t.stopHint : undefined}
+          accessibilityState={{ disabled: !answerable || sending || uploading || offline, busy: uploading }}
+          disabled={!answerable || sending || uploading || offline}
           onPress={action === "stop" ? stop : () => void submit()}
-          style={({ pressed }) => [s.circle, { borderWidth: 0, backgroundColor: "transparent", opacity: !answerable || sending ? 0.5 : pressed ? 0.7 : 1 }]}
+          style={({ pressed }) => [s.circle, { borderWidth: 0, backgroundColor: "transparent", opacity: !answerable || sending || offline ? 0.5 : pressed ? 0.7 : 1 }]}
         >
           <Crossfade
             on={action === "stop"}
@@ -1760,7 +1808,10 @@ function Composer({ id, session, menu, tabs, question, tab, list, after, onSent 
         </Press>
       </View>
       {note.bad && answerable ? <Text style={[s.dim, { fontSize: size.caption, color: p.stop }]} accessibilityLiveRegion="polite">{note.text}</Text> : null}
+      {answerable && offline ? <Text style={[s.dim, { fontSize: size.caption }]} accessibilityLiveRegion="polite">{t.sendNeedsPc}</Text> : null}
     </View>
     </View>
   );
 }
+
+export { ScreenFailed as ErrorBoundary } from "@/screen-failed";

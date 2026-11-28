@@ -1,4 +1,5 @@
 import { posixQuote, type Session, type SessionState } from "../session/state.ts";
+import type { CommandDir } from "../phone/suggest.ts";
 import type { RecordFormat } from "../workflow/turn.ts";
 
 export type AgentKind = "claude" | "codex" | "grok" | "agy" | "agent" | "opencode";
@@ -63,7 +64,7 @@ export interface AgentCapabilities {
   /** The phone's "/" list: whose built-ins, and the folders its custom commands live in. */
   commands: {
     builtins: "claude" | "codex" | "opencode";
-    folders(repoPath: string, home: string): Array<{ kind: "commands" | "skills" | "prompts"; dir: string }>;
+    folders(repoPath: string, home: string): CommandDir[];
   } | null;
   /** The headless line for a delegated task; the instructions arrive on stdin. */
   delegate: string | null;
@@ -133,6 +134,11 @@ export interface AgentSpec {
    */
   resumeIdCommand?: (id: string) => string;
   /**
+   * Continues a person's own conversation by its id where resumeCommand would take the folder's newest (launchResume),
+   * as resumeCommand does it: in place for Claude. Absent: resumeIdCommand.
+   */
+  continueIdCommand?: (id: string) => string;
+  /**
    * Whether that resume exits, rather than starting a new conversation, in
    * a folder with none to continue. Claude does: "No conversation found to
    * continue", exit 1 (checked in a terminal). Codex's `fork --last` starts
@@ -145,6 +151,11 @@ export interface AgentSpec {
   forkCommand?: string;
   /** Typed to start a new conversation in the same session (a bot's fresh run). Absent where unchecked: the session is reopened instead. */
   clearCommand?: string;
+  /**
+   * In the CLI's output once its prompt takes words (typeWhenSettled): what is typed then reaches it, not a shell or
+   * a screen still loading. Absent where unmeasured: a long quiet stands in.
+   */
+  readyMark?: RegExp;
 }
 
 export const agents: Record<AgentKind, AgentSpec> = {
@@ -166,6 +177,9 @@ export const agents: Record<AgentKind, AgentSpec> = {
     // copy's old ending as the session's state. One Claude per folder in Lepons, so nothing else appends to it here.
     resumeCommand: "claude --effort high --continue",
     resumeIdCommand: (id) => `claude --effort high --resume ${id} --fork-session`,
+    // --continue's own way, by id: the same conversation, no copy ("--fork-session: When resuming, create a new session
+    // ID instead of reusing the original", 2.1.332).
+    continueIdCommand: (id) => `claude --effort high --resume ${id}`,
     bypassFlag: "--dangerously-skip-permissions",
     reviewFlag: "",
     // cmd.exe has no quoting for `"` and expands %VAR% even inside quotes,
@@ -174,6 +188,9 @@ export const agents: Record<AgentKind, AgentSpec> = {
       `--name ${shell === "cmd" ? `"${name.replace(/["%\r\n]/g, "")}"` : posixQuote(name)}`,
     resumeExitsWhenEmpty: true,
     clearCommand: "/clear",
+    // Its prompt's footer, "? for shortcuts" or a mode's "(shift+tab to cycle)", drawn with the box (2.1.332, measured
+    // here at 1.0 s; the cursor moves between its words leave these whole). A question at start has no footer.
+    readyMark: /shortcuts|shift\+tab/,
     install: {
       posix: "curl -fsSL https://claude.ai/install.sh | bash",
       win32: "irm https://claude.ai/install.ps1 | iex",
@@ -203,6 +220,7 @@ export const agents: Record<AgentKind, AgentSpec> = {
           { kind: "commands", dir: `${home}/.claude/commands` },
           { kind: "skills", dir: `${repoPath}/.claude/skills` },
           { kind: "skills", dir: `${home}/.claude/skills` },
+          { kind: "plugins", home, repo: repoPath },
         ],
       },
       delegate: "claude --effort high --dangerously-skip-permissions -p",
@@ -226,6 +244,10 @@ export const agents: Record<AgentKind, AgentSpec> = {
     reviewFlag: "--approve-for-me",
     resumeExitsWhenEmpty: false,
     clearCommand: "/new",
+    // Its own "idle" (OSC 7501) once it takes input: 2.8 s in, after its hooks question, measured with 0.172. Its prompt
+    // is drawn earlier, while it loads, and it draws on for seconds after (MCP servers starting); a line sent then waits
+    // as a "queued follow-up" and runs once they are up (measured).
+    readyMark: /\x1b\]7501;state=idle/,
     install: {
       posix: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
       win32: 'powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"',
@@ -252,7 +274,8 @@ export const agents: Record<AgentKind, AgentSpec> = {
       },
       commands: {
         builtins: "codex",
-        folders: (_repoPath, home) => [{ kind: "prompts", dir: `${home}/.codex/prompts` }],
+        // Nothing custom: 0.172 has no /prompts:, and its skills are "$" mentions (phone/suggest.ts codexBuiltins).
+        folders: () => [],
       },
       delegate: 'codex exec -c model_reasoning_effort="high" --dangerously-bypass-approvals-and-sandbox -',
       usage: { tokens: true, limits: "record" },
@@ -488,6 +511,28 @@ export function isConversationId(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
+/** What a launch line continues: nothing, the folder's newest, a picked conversation (forked), or a person's own by id. */
+export type Resume = boolean | string | { own: string };
+
+/**
+ * What a session's launch continues, and whether a remote tmux session goes first (`replace`). `resume` is what the
+ * caller asked: `true` continues the folder's newest (Claude's --continue, Codex's fork --last), which, with a bot of
+ * that AI working in the folder, may be the bot's (seen 11/28: the main pane opened a bot's talk). So there a person's
+ * session continues their own conversation by its id, or starts a new one where none is found or the record cannot
+ * tell. Only a fresh start or a picked conversation replaces tmux's session: a reattach (an open, a reconnect, the
+ * app's restore) keeps the AI running in it, and its launch line runs only if that session is gone.
+ */
+export async function launchResume(
+  agent: AgentKind,
+  ask: { fresh: boolean; resume: boolean | string; person: boolean; botHere: boolean },
+  own: () => Promise<string | undefined>,
+): Promise<{ launch: Resume; replace: boolean }> {
+  const replace = ask.fresh || typeof ask.resume === "string";
+  if (ask.resume !== true || !ask.person || !ask.botHere || !agents[agent].resumeIdCommand) return { launch: ask.resume, replace };
+  const id = await own().catch(() => undefined);
+  return { launch: isConversationId(id) ? { own: id } : false, replace };
+}
+
 /** Reads a loginStatusCommand's exit code and output: signed in only when it says so. */
 export function signedInFrom(code: number, output: string): boolean {
   return code === 0 && !/not logged in|not authenticated|"loggedIn"\s*:\s*false/i.test(output);
@@ -574,10 +619,12 @@ export function launchFlags(spec: AgentSpec, shell: "posix" | "cmd", bypass: boo
  * opened. `wrap` is applied to each launch, so an environment prefix reaches
  * the fallback too. Grouped on POSIX for withUpdate's `cd <repo> && ...`
  * reason. An agent with no resume starts a new conversation. `id` continues
- * that conversation instead of the last one.
+ * that conversation instead of the last one: as a pick (resumeIdCommand), or `own`, as resumeCommand would
+ * (continueIdCommand).
  */
-export function resumeLine(spec: AgentSpec, wrap: (command: string) => string, shell: "posix" | "cmd", flags = "", id?: string): string {
-  const resume = id !== undefined && spec.resumeIdCommand ? spec.resumeIdCommand(id) : spec.resumeCommand;
+export function resumeLine(spec: AgentSpec, wrap: (command: string) => string, shell: "posix" | "cmd", flags = "", id?: string, own = false): string {
+  const byId = (own && spec.continueIdCommand) || spec.resumeIdCommand;
+  const resume = id !== undefined && byId ? byId(id) : spec.resumeCommand;
   if (resume === undefined) return wrap(spec.sessionCommand + flags);
   if (!spec.resumeExitsWhenEmpty) return wrap(resume + flags);
   const either = `${wrap(resume + flags)} || ${wrap(spec.sessionCommand + flags)}`;
@@ -590,6 +637,9 @@ export function resumeLine(spec: AgentSpec, wrap: (command: string) => string, s
  */
 export const startQuestion = /\btrust\b|Yes, I accept|Do you want/i;
 
+/** The quiet that will do once the CLI has said its prompt takes words: what it draws with that, landed. */
+const UP_QUIET_MS = 400;
+
 /**
  * Types text, then Enter, once: the first time the session's output has
  * been quiet for quietMs, when the TUI has drawn and waits for input.
@@ -597,28 +647,65 @@ export const startQuestion = /\btrust\b|Yes, I accept|Do you want/i;
  * not read as part of a paste. Dropped if the session closes first.
  * With `ready`, a quiet while it says no is looked at again after another
  * quietMs: until then what is typed might reach a shell, not the AI.
+ * Once `up` (the CLI's readyMark) has been seen, a short quiet will do.
+ * With `held`: a question last seen `held.ms` ago and no quiet without one since (the CLI never marked its prompt up
+ * after it, or nothing more came) gives the text back to `held.gaveUp`, untyped -- whoever reads the screen types it.
  */
-export function typeWhenSettled(session: Pick<Session, "on" | "off" | "write">, text: string, quietMs = 1500, holdWhile?: RegExp, ready?: () => boolean): void {
+export function typeWhenSettled(
+  session: Pick<Session, "on" | "off" | "write">,
+  text: string,
+  quietMs = 1500,
+  holdWhile?: RegExp,
+  ready?: () => boolean,
+  up?: RegExp,
+  held?: { ms: number; gaveUp: () => void },
+): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let bound: ReturnType<typeof setTimeout> | undefined;
+  // The output's last few bytes too, for a mark cut between two chunks.
+  let tail = "";
+  let isUp = false;
   // What came since the last quiet: a question there holds the text until the operator answers it.
   let seen = "";
   const stop = () => {
     clearTimeout(timer);
+    clearTimeout(bound);
     session.off("data", onData);
     session.off("state", onState);
   };
   const onData = (chunk?: Buffer | string) => {
     clearTimeout(timer);
-    if (holdWhile) seen = (seen + String(chunk ?? "")).slice(-8000);
+    if (holdWhile) {
+      seen = (seen + String(chunk ?? "")).slice(-8000);
+      // Only what follows the AI's prompt can be asking now: a start question has no prompt under it (Claude's
+      // question screens draw no footer, Codex says idle only at its prompt). Above it is a resumed talk redrawn.
+      const marks = up ? [...seen.matchAll(new RegExp(up.source, `${up.flags.replace("g", "")}g`))] : [];
+      const last = marks[marks.length - 1];
+      if (last) seen = seen.slice(last.index + last[0].length);
+    }
+    if (up && !isUp) {
+      const recent = tail + String(chunk ?? "");
+      isUp = up.test(recent);
+      tail = recent.slice(-200);
+    }
     timer = setTimeout(function settled() {
       const asking = holdWhile?.test(seen.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ""));
       seen = "";
-      if (asking) return;
+      if (asking) {
+        if (held) {
+          clearTimeout(bound);
+          bound = setTimeout(() => {
+            stop();
+            held.gaveUp();
+          }, held.ms);
+        }
+        return;
+      }
       if (ready && !ready()) return void (timer = setTimeout(settled, quietMs));
       stop();
       session.write(text);
       setTimeout(() => session.write("\r"), 150);
-    }, quietMs);
+    }, isUp ? UP_QUIET_MS : quietMs);
   };
   const onState = (state: SessionState) => { if (state.kind === "closed") stop(); };
   session.on("data", onData);

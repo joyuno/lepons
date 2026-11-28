@@ -254,3 +254,37 @@ test("a worktree's folder is joined to its original's by a branch edge", () => {
   assert.deepEqual(m.edges.filter((e) => e.kind === "branch").map((e) => [e.from, e.to, e.live]), [["f:local::a", "f:local::c", false]]);
   assert.equal(build(base).edges.some((e) => e.kind === "branch"), false);
 });
+
+test("bots hang under their folder where subagents do; a folder with only bots still shows; with none, nothing moves", () => {
+  const base = input();
+  assert.deepEqual(build({ ...base, bots: [] }).nodes, build(base).nodes, "no bots: the same map");
+  const withBots: MapInput = {
+    ...base,
+    folders: [...base.folders, { id: "local::e", pc: "local", label: "bots only" }],
+    sessions: [...base.sessions, { id: "local::b::bot", folder: "local::b", label: "Claude Code", mood: "working", workflow: { events: [ev("prompt", T - 180000, "아침 정리")] } }],
+    bots: [
+      { id: "b1", folder: "local::b", name: "정리봇", session: "local::b::bot", last: { at: T - 3600000, state: "done" } },
+      { id: "b2", folder: "local::e", name: "보고봇", next: T + 600000, last: { at: T - 60000, state: "failed" } },
+      { id: "b3", folder: "local::e", name: "쉬는봇", paused: true },
+      { id: "b4", folder: "local::e", name: "놓친봇", missed: 2 },
+    ],
+  };
+  const m = build(withBots);
+  const bot = m.byId.get("b:b1")!;
+  assert.equal(bot.kind, "bot");
+  assert.equal(bot.parent, "f:local::b");
+  assert.deepEqual([bot.mood, bot.live, bot.since, bot.bot?.running], ["working", true, T - 180000, true], "its session at work: the bot at work since its turn began");
+  assert.equal(m.byId.get("f:local::b")!.kind, "merged", "its own session is the bot, not a second session of the folder");
+  assert.equal(m.byId.has("s:local::b::bot"), false);
+  assert.equal(nodeOfSession(m, "local::b::bot")!.id, "b:b1");
+  assert.equal(m.edges.find((e) => e.to === "b:b1")!.kind, "tree");
+  // At the subagents' layer: the same card size, set back toward the folder by the same inset.
+  const sub = m.byId.get("a:local::a:1")!, subFolder = m.byId.get("f:local::a")!, botFolder = m.byId.get("f:local::b")!;
+  const width = (n: typeof sub) => footprint(n).map((b) => [Math.round(b.x1 - b.x0), Math.round(b.y1 - b.y0)]);
+  assert.deepEqual(width(bot), width(sub));
+  const colOf = (f: typeof sub) => m.clusters.find((c) => c.id === f.folder)!.colX;
+  assert.ok(Math.abs((colOf(botFolder) - bot.x) * bot.side - (colOf(subFolder) - sub.x) * sub.side) < 1e-6, "the same inset as a subagent");
+  assert.equal(m.byId.get("f:local::e")!.kind, "folder", "a folder with only bots is a folder");
+  assert.deepEqual(m.nodes.filter((n) => n.parent === "f:local::e").map((n) => [n.id, n.mood]), [["b:b2", "failed"], ["b:b3", "idle"], ["b:b4", "waiting"]]);
+  assert.notDeepEqual(m.placements.get("local")!.key, build(base).placements.get("local")!.key, "bots coming lay the PC out again");
+});

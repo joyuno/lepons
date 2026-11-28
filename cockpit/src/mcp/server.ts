@@ -22,8 +22,11 @@ export interface DelegationHub {
     executor?: AgentKind,
   ): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }>;
   check(id: string): Promise<{ ok: true; report: string } | { ok: false; error: string }>;
-  /** Puts a schedule on the folder's machine, once someone at this PC says yes (agent/schedule.ts). */
-  schedule(request: ScheduleRequest): Promise<{ ok: true; id: string; detail: string } | { ok: false; error: string }>;
+  /**
+   * Puts a schedule on the folder's machine, once someone at this PC says yes (agent/schedule.ts). They may
+   * edit it first, or make it a bot: `cron` is what was saved, and `detail` says what they changed.
+   */
+  schedule(request: ScheduleRequest): Promise<{ ok: true; id: string; detail: string; cron?: string } | { ok: false; error: string }>;
   /** The schedules this caller may see, each with its latest run. */
   schedules(repo?: string): Promise<{ ok: true; report: string } | { ok: false; error: string }>;
   unschedule(id: string): Promise<{ ok: true; detail: string } | { ok: false; error: string }>;
@@ -363,7 +366,7 @@ export function createMcpServer(catalog: RepoCatalog, hub: DelegationHub): McpSe
         ...(name?.trim() ? { name: name.trim() } : {}),
       });
       if (!outcome.ok) return { isError: true, content: text(outcome.error) };
-      return { content: text(`scheduled: ${outcome.id} (${parsed.cron}). ${outcome.detail}`) };
+      return { content: text(`scheduled: ${outcome.id} (${outcome.cron ?? parsed.cron}). ${outcome.detail}`) };
     },
   );
 

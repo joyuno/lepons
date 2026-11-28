@@ -1,4 +1,5 @@
 import { Marked, Renderer, type Token, type TokenizerAndRendererExtension, type Tokens } from "marked";
+import { remotePath } from "../shared/image-path.ts";
 
 /**
  * Markdown as the file pane shows it: Obsidian's extensions on top of GFM,
@@ -154,6 +155,34 @@ export function renderMarkdown(text: string): RenderedMarkdown {
   }
   return { html: (front?.html ?? "") + md.parser(tokens), source };
 }
+
+// An AI's answer, drawn into the page itself (not a sandboxed frame like a file): the same parser, but any HTML it
+// wrote -- a block or a tag inside a line -- shows as the text it is.
+// An image loads nothing from here: a web address is a link with its words, and a path is a label the chat view swaps
+// for the picture once it has read that file from the session's PC (chat-view.ts).
+const answer = new Marked({ gfm: true });
+answer.use({
+  extensions: [blockComment, inlineComment, highlight, wikilink],
+  renderer: {
+    html: ({ text }) => escapeHtml(text),
+    image({ href, text }) {
+      let path = href;
+      try {
+        path = decodeURI(href);
+      } catch {
+        // Kept as written.
+      }
+      const label = escapeHtml(text || path.split(/[\\/]/).pop() || path);
+      if (/^https?:\/\//i.test(path)) return `<a href="${escapeHtml(path)}" class="chatImage" title="${escapeHtml(path)}">${label}</a>`;
+      // Another scheme (data:, file:, javascript:), a network or device path (`\\host`, `/\host`, `\\?\`) or a
+      // drive-relative one: only its words. "C:\…" is a path (image-path.ts).
+      if (remotePath(path) || path === "") return `<span class="chatImage">${label}</span>`;
+      return `<span class="chatImage" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}">${label}</span>`;
+    },
+  },
+});
+
+export const renderAnswer = (text: string): string => answer.parse(text.replace(/\r\n?/g, "\n"), { async: false });
 
 /**
  * What a copy from the rendered view should put on the clipboard: the source

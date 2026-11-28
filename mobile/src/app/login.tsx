@@ -4,6 +4,7 @@ import { Text, TextInput } from "react-native";
 
 import { useConnection } from "@/connection";
 import { t } from "@/i18n";
+import { useLinkWord } from "@/link-notice";
 import { Button, Screen, useTheme } from "@/ui";
 
 /** Password + 6-digit TOTP, the same /api/login the PC's phone page uses. */
@@ -14,6 +15,7 @@ export default function Login() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const word = useLinkWord();
 
   const ready = password.length > 0 && /^\d{6}$/.test(code) && c.status.kind === "connected" && !busy;
 
@@ -61,7 +63,7 @@ export default function Login() {
         maxLength={6}
       />
       {error ? <Text style={s.error}>{error}</Text> : null}
-      {c.status.kind !== "connected" ? <Text style={s.dim}>{t[c.status.kind === "confirm" ? "connecting" : c.status.kind]}</Text> : null}
+      {c.status.kind !== "connected" ? <Text style={s.dim}>{word ? t[word] : t.connecting}</Text> : null}
       <Button title={t.login} onPress={() => void submit()} disabled={!ready} />
     </Screen>
   );

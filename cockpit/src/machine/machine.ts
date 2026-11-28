@@ -1,10 +1,11 @@
-import { exec } from "node:child_process";
+import { exec, execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 
 import { listLocalDirectory } from "../browse/local.ts";
-import { checkExecutor, localProbe, runDelegatedTask } from "../agent/delegate.ts";
+import { checkExecutor, localLaunch, localProbe, runDelegatedTask } from "../agent/delegate.ts";
 import type { AgentKind } from "../agent/agents.ts";
 import { askHookDir } from "../agent/usage.ts";
 import { removeScript, transferScript } from "../browse/entry-ops.ts";
@@ -13,14 +14,139 @@ import { localStore, withRemoteStore, type FileStore } from "../main/edit-file.t
 import { codexRolloutFiles, codexRolloutTail, latestCodexRollout, remoteRolloutListScript, remoteRolloutScript, tailBytes } from "../workflow/codex.ts";
 import { localPast, parsePastListing, remoteClaudePastScript, remoteCodexPastScript } from "../workflow/past.ts";
 import { probeCommand, readWithProbe, type ProbedRead } from "../workflow/probe.ts";
-import { heldRecord, type HeldText } from "../workflow/held-record.ts";
+import { afterMark, heldRecord, marked, type HeldMiss, type HeldText } from "../workflow/held-record.ts";
 import { pickScript } from "../workflow/owner.ts";
 import { latestTranscript, latestTranscriptTail, parseFileList, projectSlug, remoteTranscriptListScript, remoteTranscriptTailScript, transcriptFiles, transcriptStamp, transcriptText } from "../workflow/transcript.ts";
 import type { RecordFormat, RecordTail } from "../workflow/turn.ts";
 import { pickOpencodeSession } from "../workflow/opencode.ts";
 import { findScript, hiddenAllowed, listFiles, lstatInside, parseFindOutput, parsePhoneDirectory, phoneDirectory, phoneDirectoryScript, stepsInside, viewable, viewableFiles, viewableFindScript, type Hidden, type PhoneFileEntry } from "../phone/docs.ts";
 import { askHookListing, askHookName, askHookScript, type AskHookFile } from "../phone/ask.ts";
-import { commandFrom, commandScript, parseCommandOutput, type CommandSuggestion } from "../phone/suggest.ts";
+import { codexSkillStateScript, commandFrom, commandScript, expandPlugins, parseCodexSkillState, parseCommandOutput, parsePluginState, pluginFiles, pluginStateScript, type CodexSkillState, type CommandDir, type CommandSuggestion } from "../phone/suggest.ts";
+import { claudeConfigFacts, claudeFactsScript, localGitRoot, claudeInitLine, claudeListFlags, claudeListScript, claudeListSettings, claudeMcpLine, claudeMcpSettled, claudeStampFiles, parseClaudeFacts, parseClaudeList } from "../phone/suggest.ts";
+
+/**
+ * Claude's "/" list per PC and folder, asked only in a folder Claude was trusted in (claudeConfigFacts), again only when
+ * its stamp moved -- the times of what changes its skills, commands, plugins and MCP servers, and the MCP part of its
+ * config -- or after 30 minutes. Each ask starts a claude and its MCP servers: one at a time per PC.
+ */
+const claudeLists = new Map<string, { stamp: string; at: number; list: Promise<CommandSuggestion[] | undefined> }>();
+const claudeAsking = new Map<string, Promise<unknown>>();
+export async function claudeListFor(pc: string, repo: string, facts: () => Promise<{ config: string; times: string; gitRoot: string | null | undefined } | undefined>, ask: () => Promise<CommandSuggestion[] | undefined>): Promise<CommandSuggestion[] | undefined> {
+  const read = await facts().catch(() => undefined);
+  const { trusted, mcp } = claudeConfigFacts(read?.config ?? "", repo, read?.gitRoot);
+  if (!read || !trusted) return undefined;
+  const key = `${pc}\0${repo}`;
+  const stamp = createHash("sha1").update(`${read.times}\0${mcp}`).digest("hex");
+  const held = claudeLists.get(key);
+  if (held && held.stamp === stamp && Date.now() - held.at < 30 * 60_000) return held.list;
+  // After the PC's ask on its way, whichever folder it was for.
+  const before = claudeAsking.get(pc) ?? Promise.resolve();
+  const list = before.then(ask, ask).catch(() => undefined);
+  claudeAsking.set(pc, list);
+  claudeLists.set(key, { stamp, at: Date.now(), list });
+  // One that said nothing is asked again next time.
+  void list.then((found) => {
+    if (found === undefined && claudeLists.get(key)?.list === list) claudeLists.delete(key);
+  });
+  return list;
+}
+
+/** Claude's config and the stamped files' times on this PC, as claudeFactsScript reads them on another. */
+async function localClaudeFacts(repo: string): Promise<{ config: string; times: string; gitRoot: string | null }> {
+  const home = homedir().replace(/\\/g, "/");
+  const config = await readFile(join(home, ".claude.json"), "utf8").catch(() => "");
+  const times = await Promise.all(claudeStampFiles(home, repo.replace(/\\/g, "/")).map(async (path) => `${(await stat(path).catch(() => undefined))?.mtimeMs ?? "-"} ${path}`));
+  return { config, times: times.join("\n"), gitRoot: await localGitRoot(repo, (path) => lstat(path).catch(() => undefined)) };
+}
+
+/**
+ * Where claude is on this PC, from the PATH only: on Windows cmd.exe would run a claude.cmd in the session's folder
+ * before the PATH's. Looked up from the temp folder, so `where` does not find one there either.
+ */
+function localClaudePath(env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  if (process.platform !== "win32") return Promise.resolve("claude");
+  return new Promise((resolve) => {
+    execFile("where.exe", ["claude"], { cwd: tmpdir(), env, windowsHide: true, timeout: 5000 }, (error, stdout) => {
+      const found = error ? undefined : stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => /\.(exe|cmd|bat)$/i.test(line));
+      resolve(found);
+    });
+  });
+}
+
+/**
+ * claudeListScript on this PC, read as it comes: once Claude has answered, its MCP servers are asked after every 0.3 s
+ * and its input ends as soon as none is still coming up (8 s at most); it then exits by itself. 15 s and it is ended.
+ */
+async function localClaudeList(repo: string): Promise<CommandSuggestion[] | undefined> {
+  const windows = process.platform === "win32";
+  // As the other claude probes (index.ts sanitizedEnv): a child-session mark would make it a nested session. And cmd.exe
+  // is told not to look in the current folder first.
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(windows ? { NoDefaultCurrentDirectoryInExePath: "1" } : {}) };
+  for (const name of ["CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_BRIDGE_SESSION_ID"]) delete env[name];
+  const claude = await localClaudePath(env);
+  if (claude === undefined) return undefined;
+  // cmd.exe passes \" through and claude reads it as "; a POSIX login shell takes it quoted, and `exec` so a kill reaches claude.
+  const launch = localLaunch(`${windows ? `"${claude}"` : "exec claude"} ${claudeListFlags.join(" ")} ${windows ? claudeListSettings.replace(/"/g, '\\"') : posixQuote(claudeListSettings)}`);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let output = "";
+    let asking: NodeJS.Timeout | undefined;
+    const child = spawn(launch.file, launch.args, { cwd: repo, env, shell: launch.shell, windowsHide: true });
+    const hard = setTimeout(() => {
+      if (windows && child.pid !== undefined) spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill());
+      else child.kill();
+    }, 15_000);
+    child.on("error", () => undefined);
+    child.stdin.on("error", () => undefined);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      // As the remote side's head -c.
+      if (output.length < 4_000_000) output += chunk;
+      if (asking !== undefined || !output.includes('"lepons-init"')) return;
+      asking = setInterval(() => {
+        if (!claudeMcpSettled(output) && Date.now() - started < 8000) return void child.stdin.write(`${claudeMcpLine}\n`);
+        clearInterval(asking);
+        child.stdin.end();
+      }, 300);
+    });
+    child.on("close", () => {
+      clearTimeout(hard);
+      clearInterval(asking);
+      resolve(parseClaudeList(output));
+    });
+    child.stdin.write(`${claudeInitLine}\n`);
+  });
+}
+
+/** CodexSkillState on this PC, as codexSkillStateScript reads it on another. */
+export async function localCodexSkillState(repo: string, env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<CodexSkillState> {
+  const codexHome = env["CODEX_HOME"] || join(home, ".codex");
+  const config = (await readFile(join(codexHome, "config.toml"), "utf8").catch(() => "")).split(/\r?\n/).filter((line) => /^\s*(\[|enabled\s*=)/.test(line)).join("\n");
+  const folders = async (dir: string) => (await readdir(dir, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory()).map((entry) => join(dir, entry.name));
+  const versions: string[] = [];
+  for (const market of await folders(join(codexHome, "plugins", "cache"))) {
+    for (const plugin of await folders(market)) {
+      const dated = await Promise.all((await folders(plugin)).map(async (version) => ({ version, at: (await stat(version).catch(() => undefined))?.mtimeMs ?? 0 })));
+      const newest = dated.sort((a, b) => b.at - a.at)[0];
+      if (newest) versions.push(newest.version);
+    }
+  }
+  const has = (path: string) => stat(path).then(() => true, () => false);
+  const repoDirs: string[] = [];
+  let dir = repo;
+  for (;;) {
+    if (await has(join(dir, ".agents", "skills"))) repoDirs.push(join(dir, ".agents", "skills"));
+    if (await has(join(dir, ".git"))) break;
+    const up = dirname(dir);
+    // Out of a repository: that folder's own only.
+    if (up === dir) {
+      repoDirs.splice(0, repoDirs.length, ...((await has(join(repo, ".agents", "skills"))) ? [join(repo, ".agents", "skills")] : []));
+      break;
+    }
+    dir = up;
+  }
+  return { home, codexHome, config, versions, repoDirs };
+}
 import type { ReadResponse } from "../read/envelope.ts";
 import { grepRemote, type GrepResult } from "../read/grep.ts";
 import { grepLocal } from "../read/grep-local.ts";
@@ -95,7 +221,9 @@ export interface Machine {
   /** Every file under `root`, for a phone's "@"; dot-named ones as `hidden` says. Empty when the machine cannot be asked. */
   allFiles(root: string, hidden?: Hidden): Promise<string[]>;
   /** The slash commands and skills in these folders. Empty when the machine cannot be asked. */
-  customCommands(dirs: Parameters<typeof commandScript>[0]): Promise<CommandSuggestion[]>;
+  customCommands(dirs: CommandDir[]): Promise<CommandSuggestion[]>;
+  /** Claude's own "/" list for a session in `repo`, asked of its claude with no model call (suggest.ts claudeListScript). Undefined when it could not say. */
+  claudeCommands(repo: string): Promise<CommandSuggestion[] | undefined>;
   /** The folder's dependency manifests. Undefined when the machine cannot be asked. */
   manifests(root: string): Promise<Manifests | undefined>;
 
@@ -115,8 +243,9 @@ export interface Machine {
   /**
    * Claude's newest record for a folder, at least its last `bytes` (whole lines): all of it here, and over SSH
    * kept between reads, so a read fetches only what was written since (held-record.ts). `whole` when it is all there.
+   * Undefined: there is none; a HeldMiss says why none could be read.
    */
-  claudeRecord(folder: string, bytes: number, bot?: string): Promise<HeldText | undefined>;
+  claudeRecord(folder: string, bytes: number, bot?: string): Promise<HeldText | HeldMiss | undefined>;
   /**
    * A string that stays the same while that record does, so it need not be read
    * and parsed again. Undefined when it cannot tell: Codex's rollout is found only
@@ -251,16 +380,24 @@ export function localMachine(trash: MachineReach["trash"]): Machine {
     allFiles: (root, hidden = false) => listFiles(root, () => true, 6, 3000, hidden),
     customCommands: async (dirs) => {
       const custom: CommandSuggestion[] = [];
-      for (const { kind, dir } of dirs) {
-        const files = await listFiles(dir, (name) => (kind === "skills" ? name === "SKILL.md" : name.toLowerCase().endsWith(".md")), kind === "skills" ? 2 : 3, 200);
+      const whole = (path: string) => readFile(path, "utf8").catch(() => "");
+      const folders = await expandPlugins(dirs, async (at) => {
+        const files = pluginFiles(at.home, at.repo);
+        return { installed: await whole(files.installed), blocked: await whole(files.blocked), settings: await Promise.all(files.settings.map(whole)) };
+      }, (at) => localCodexSkillState(at.repo));
+      for (const { kind, dir, plugin } of folders) {
+        // A skill's folder may be a link to where it was installed (~/.agents/skills/…): followed, as the AIs do.
+        const files = kind === "commands" ? await listFiles(dir, (name) => name.toLowerCase().endsWith(".md"), 3, 200)
+          : (await readdir(dir).catch(() => [])).slice(0, 200).map((name) => `${name}/SKILL.md`);
         for (const file of files) {
-          const text = await readFile(join(dir, file), "utf8").then((content) => content.slice(0, 2000), () => "");
-          const command = commandFrom(kind, file, text);
+          const text = await readFile(join(dir, file), "utf8").then((content) => content.slice(0, 2000), () => undefined);
+          const command = text === undefined ? undefined : commandFrom(kind, file, text, plugin);
           if (command) custom.push(command);
         }
       }
       return custom;
     },
+    claudeCommands: (repo) => claudeListFor("local", repo, () => localClaudeFacts(repo), () => localClaudeList(repo)),
     manifests: async (root) => {
       const entries = await Promise.all(manifestFiles.map(async (name) =>
         [name, await readFile(join(root, name), "utf8").catch(() => undefined)] as const));
@@ -440,7 +577,24 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
     },
     customCommands: async (dirs) => {
       if (!(await ready())) return [];
-      return parseCommandOutput((await reach.runRemote(options(), commandScript(dirs, posixQuote))) ?? "");
+      // Claude's asks twice: which plugins it loads there, then their folders with the rest.
+      // Over the connection already open, as the other reads here.
+      const run = async (script: string) => (await pooled(script)) ?? (await reach.runRemote(options(), script));
+      const folders = await expandPlugins(dirs, async (at) => parsePluginState((await run(pluginStateScript(at, posixQuote))) ?? ""),
+        async (at) => parseCodexSkillState((await run(codexSkillStateScript(at, posixQuote))) ?? ""));
+      return parseCommandOutput((await run(commandScript(folders, posixQuote))) ?? "");
+    },
+    claudeCommands: async (repo) => {
+      if (node.home === "" || !(await ready())) return undefined;
+      return claudeListFor(node.id, repo, async () => {
+        // Over the connection already open, as the other reads here.
+        const script = claudeFactsScript(node.home, repo, posixQuote);
+        const output = (await pooled(script)) ?? (await reach.runRemote(options(), script));
+        return output === undefined ? undefined : parseClaudeFacts(output);
+      }, async () => {
+        const ran = await run(claudeListScript(repo, posixQuote), { login: true, timeoutMs: 20_000 });
+        return ran ? parseClaudeList(ran.output) : undefined;
+      });
     },
     manifests: async (root) => {
       if (!(await ready())) return undefined;
@@ -455,7 +609,7 @@ export function sshMachine(node: SshNode, reach: MachineReach): Machine {
         return clock?.code === 0 && Number.isFinite(now) ? { tail: tail ?? "", now: now * 1000 } : undefined;
       }
       const script = format === "claude" ? remoteTranscriptTailScript(folder, bot) : remoteRolloutScript(rolloutCwd(folder), bot);
-      const output = await reach.runRemote(options(), `date +%s; ${script}`);
+      const output = afterMark(await reach.runRemote(options(), marked(`date +%s; ${script}`)));
       const clock = /^(\d+)\r?\n/.exec(output ?? "");
       return clock ? { tail: output!.slice(clock[0].length), now: Number(clock[1]) * 1000 } : undefined;
     },

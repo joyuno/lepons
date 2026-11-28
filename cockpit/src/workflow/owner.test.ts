@@ -123,7 +123,7 @@ test("on another machine the same lookups pick the same records", { skip: !shell
     assert.match(sh(remoteTranscriptTailScript("/work/app", "뉴스 봇")), /NEWS/);
     assert.equal(sh(remoteTranscriptTailScript("/work/app", "없는 봇")), "");
 
-    const held = (bot?: string) => heldRecord(dir, bot)(1_000_000, async (script) => sh(script));
+    const held = async (bot?: string) => { const got = await heldRecord(dir, bot)(1_000_000, async (script) => sh(script)); return typeof got === "object" ? got : undefined; };
     assert.match((await held())?.text ?? "", /PERSON/);
     assert.match((await held("정리 봇"))?.text ?? "", /TIDY/);
 

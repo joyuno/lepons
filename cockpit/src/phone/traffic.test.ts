@@ -233,6 +233,12 @@ test("/api/workflow sends the session's newest PHONE_EVENTS, says how many the p
   assert.deepEqual(asked, [undefined, undefined, 120 - keep]);
 });
 
+test("the model the PC's chat chip reads never reaches the phone, older records included", async (t) => {
+  const workflow = { title: "t", events: [{ kind: "prompt", at: 1, text: "p" }] as WorkflowItem[], model: "claude-opus-5-5" };
+  const { get } = setup(t, { workflow: async () => ({ ok: true, workflow }) });
+  for (const query of ["", "&v=", "&before=5"]) assert.equal("model" in ((await get(`/api/workflow?s=${ID}${query}`)).body as object), false, query);
+});
+
 test("/api/workflow with &v=: unchanged is a few bytes; new events alone; anything else the whole list", async (t) => {
   let events: WorkflowItem[] = [{ kind: "prompt", at: 1, text: "p" }, { kind: "subagent", at: 2, description: "d", instructions: "i" }, { kind: "action", at: 3, text: "Read a", labels: ["Read a"] }];
   let result: SessionWorkflowResult = { ok: true, workflow: { events } };

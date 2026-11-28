@@ -26,7 +26,7 @@ export interface SavedLayout {
   background?: string[];
 }
 
-/** The layout with only what can be written down: no editors, no views. */
+/** The layout with only what can be written down: no editors, no overlays. */
 export function layoutOf(tree: SavedPane, executors: Record<string, string>, open: readonly string[] = []): SavedLayout {
   const strip = (pane: SavedPane): SavedPane =>
     pane.kind === "split"

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { Client, ClientChannel } from "ssh2";
 
 import { connect, type ConnectOptions, type NodeAuth } from "./connect.ts";
+import { execOn } from "./pool.ts";
 import {
   defaultTerm,
   startupLine,
@@ -51,6 +52,7 @@ export class NodeSession extends EventEmitter implements Session {
   readonly #options: NodeSessionOptions;
   #state: SessionState = { kind: "connecting" };
   #channel: ClientChannel | undefined;
+  #client: Client | undefined;
   #end: (() => void) | undefined;
 
   constructor(options: NodeSessionOptions) {
@@ -74,6 +76,7 @@ export class NodeSession extends EventEmitter implements Session {
     }
 
     const { client, failure } = result.connection;
+    this.#client = client;
     this.#end = () => client.end();
     client.on("close", () => this.#close(failure() ?? "connection_lost"));
     client.on("error", () => this.#close(failure() ?? "connection_lost"));
@@ -110,6 +113,39 @@ export class NodeSession extends EventEmitter implements Session {
 
   write(data: string): void {
     this.#channel?.write(data);
+  }
+
+  /** A command over this terminal's own connection, with no sign-in of its own: what it printed, or undefined while it is not up. */
+  exec(command: string): Promise<string | undefined> {
+    return this.#client && this.#state.kind === "ready" ? execOn(this.#client, command) : Promise.resolve(undefined);
+  }
+
+  /**
+   * A command left running over this connection, what it prints handed on as it comes, `ended` once it stops (or never
+   * started). Undefined while the session is not up. Gives back its stop.
+   */
+  follow(command: string, data: (chunk: string) => void, ended: () => void): (() => void) | undefined {
+    const client = this.#client;
+    if (!client || this.#state.kind !== "ready") return undefined;
+    let stopped = false;
+    let channel: ClientChannel | undefined;
+    client.exec(command, (err, opened) => {
+      if (err) return ended();
+      channel = opened;
+      if (stopped) return opened.close();
+      opened.setEncoding("utf8");
+      opened.on("data", data);
+      opened.stderr.resume();
+      opened.on("close", ended);
+      opened.on("error", () => {});
+    });
+    return () => {
+      stopped = true;
+      // Ended there, not only let go here: an sshd may leave a command whose pipe closed running. (One that takes no
+      // signals has the command's own ending: remoteWatchScript.)
+      channel?.signal("KILL");
+      channel?.close();
+    };
   }
 
   resize(cols: number, rows: number): void {

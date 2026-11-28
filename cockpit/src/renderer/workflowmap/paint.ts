@@ -1,4 +1,4 @@
-import { agentBlock, chars, folderBlock, type BlockWords } from "./summary.ts";
+import { agentBlock, botBlock, chars, folderBlock, hm, type BlockWords } from "./summary.ts";
 import { blockH, blockLines, cloud, level, nodeScale, PX, type Cluster, type Line, type MapModel, type MEdge, type MNode, type Mood } from "./model.ts";
 
 /*
@@ -106,8 +106,6 @@ export function ease(p: number): number {
   const t = (lo + hi) / 2;
   return 3 * (1 - t) * t * t + t * t * t;
 }
-
-export const hm = (at: number) => { const d = new Date(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 
 export class Painter {
   private ctx: CanvasRenderingContext2D;
@@ -583,7 +581,8 @@ export class Painter {
     }
     const mood = n.mood ?? "idle";
     const big = mood === "working" && n.kind === "session";
-    this.dot(c, cx, y, mood, n.kind === "sub" ? 3 : big ? 7 : 4.2);
+    if (n.kind === "bot") this.botIcon(c, cx, y, mood, 4.5);
+    else this.dot(c, cx, y, mood, n.kind === "sub" ? 3 : big ? 7 : 4.2);
     if (mood === "waiting" && n.kind === "session" && !this.dim(n.id)) this.waits.push(cx, y, 4.2);
     if (n.kind === "session" && (mood === "working" || mood === "waiting" || n.id === this.selected)) {
       c.font = `500 11.5px ${t.sans}`; c.fillStyle = t.text; c.textAlign = n.side > 0 ? "left" : "right";
@@ -666,6 +665,22 @@ export class Painter {
     }
   }
 
+  /** A bot's mark where a dot would be: a robot's head (antenna, two eyes), `r` its half width, coloured as the dot of that mood is. */
+  private botIcon(c: CanvasRenderingContext2D, x: number, y: number, mood: Mood, r: number) {
+    const t = this.theme;
+    const ink = mood === "working" ? t.working : mood === "failed" ? t.failed : mood === "waiting" ? t.waiting : mood === "done" ? t.done : t.idle;
+    const top = y - r * 0.6, h = r * 1.6;
+    c.strokeStyle = ink; c.fillStyle = ink; c.lineWidth = Math.max(1, r * 0.22); c.lineCap = "round";
+    c.beginPath(); c.moveTo(x, top); c.lineTo(x, y - r * 1.05); c.stroke();
+    c.beginPath(); c.arc(x, y - r * 1.1, r * 0.22, 0, Math.PI * 2); c.fill();
+    c.lineCap = "butt";
+    c.beginPath(); c.roundRect(x - r, top, r * 2, h, r * 0.4);
+    // Done is hollow, as its dot is a ring; the rest are filled.
+    if (mood === "done") { c.fillStyle = t.fill; c.fill(); c.stroke(); } else c.fill();
+    c.fillStyle = mood === "done" ? ink : t.fill;
+    for (const ex of [-0.42, 0.42]) { c.beginPath(); c.arc(x + ex * r, y + r * 0.15, r * 0.22, 0, Math.PI * 2); c.fill(); }
+  }
+
   private badge(c: CanvasRenderingContext2D, text: string, x: number, y: number, k: number): number {
     const t = this.theme, font = `700 ${10.5 * k}px ${t.mono}`;
     const w = this.measure(c, font, text) + 11 * k, h = 16 * k;
@@ -695,7 +710,7 @@ export class Painter {
       this.hits.push({ id: n.id, x: left, y: y - h / 2, w, h, r: h / 2 });
       return;
     }
-    if (n.kind === "sub") { this.agentCard(c, n, k * PX.sub); return; }
+    if (n.kind === "sub" || n.kind === "bot") { this.agentCard(c, n, k * PX.sub); return; }
     const isFolder = n.kind === "folder" || n.kind === "merged";
     const s = k;
     const H = PX.pill * s, padX = 11 * s, dotR = 5 * s;
@@ -783,12 +798,18 @@ export class Painter {
     c.lineWidth = lw; c.strokeStyle = line; c.beginPath(); c.roundRect(left + 0.5, top + 0.5, w - 1, h - 1, Math.max(0, r - 0.5)); c.stroke();
   }
 
-  /** A subagent: a card of its own, what it was asked (and its kind of agent), then how long it has been out or what came back. */
+  /**
+   * A subagent: a card of its own, what it was asked (and its kind of agent), then how long it has been out or what came back.
+   * A bot's card is the same, its name and botBlock's line, with a robot's head for its dot.
+   */
   private agentCard(c: CanvasRenderingContext2D, n: MNode, s: number) {
     const t = this.theme, x = this.sx(n), y = this.sy(n);
     const running = n.mood !== "done";
-    const [asked, status] = agentBlock({ asked: n.label, running, ...(n.since === undefined ? {} : { since: n.since }), ...(n.result ? { result: n.result } : {}) }, this.model.now, this.words.block);
-    const pad = PX.padX * s, lh = PX.line * s, dotR = 3.6 * s, maxW = PX.blockW * s, H = blockH(2) * s;
+    const bot = n.kind === "bot" && n.bot ? n.bot : undefined;
+    const [asked, status] = bot
+      ? botBlock({ ...bot, ...(n.since === undefined ? {} : { since: n.since }) }, this.model.now, this.words.block)
+      : agentBlock({ asked: n.label, running, ...(n.since === undefined ? {} : { since: n.since }), ...(n.result ? { result: n.result } : {}) }, this.model.now, this.words.block);
+    const pad = PX.padX * s, lh = PX.line * s, dotR = (bot ? 5 : 3.6) * s, maxW = PX.blockW * s, H = blockH(2) * s;
     const f1 = `600 ${11.5 * s}px ${t.sans}`, f2 = `400 ${11 * s}px ${t.sans}`, fTag = `600 ${9.5 * s}px ${t.mono}`;
     // The default kind says nothing; a named one (Explore, Plan) does.
     const tag = n.agentType && n.agentType !== "general-purpose" ? this.clip(c, fTag, n.agentType, 72 * s) : "";
@@ -802,7 +823,8 @@ export class Painter {
     const mood = n.mood ?? "idle", live = mood === "working", sel = n.id === this.selected;
     this.card(c, left, top, W, H, 6 * s, live ? t.borderLive : sel ? t.text : t.border, live ? 1.4 : sel ? 1.5 : 1);
     const y1 = top + PX.padY * s + lh / 2, y2 = y1 + lh;
-    this.dot(c, left + pad + dotR, y1, mood, mood === "idle" ? dotR * 0.82 : dotR);
+    if (bot) this.botIcon(c, left + pad + dotR, y1, mood, dotR);
+    else this.dot(c, left + pad + dotR, y1, mood, mood === "idle" ? dotR * 0.82 : dotR);
     c.textAlign = "left"; c.font = f1; c.fillStyle = t.text; c.fillText(l1, left + textX, y1 + 0.5 * s);
     if (tag) {
       const tx = left + textX + w1 + 6 * s, th = 13 * s;

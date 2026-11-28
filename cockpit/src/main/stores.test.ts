@@ -111,6 +111,16 @@ test("a relay key is sealed by the OS where it can be, and opens only there", ()
   assert.equal(openSecret("other", box(true)), undefined);
 });
 
+test("a saved or removed bot tells its listeners, a run does not", () => {
+  const store = new BotStore(scratch());
+  let told = 0;
+  store.onChange(() => told++);
+  store.set({ id: "b1", name: "bot", nodeId: "n", repoId: "r", folder: "/f", executor: "claude", role: "", fresh: false, jobs: [] });
+  store.addRun("b1", { jobId: "j", startedAt: "t", status: "done" });
+  store.remove("b1");
+  assert.equal(told, 2);
+});
+
 // bots.json is written often; a write cut off part way must not read back as no bots at all.
 test("a write that fails part way leaves the old file whole", () => {
   const path = scratch();

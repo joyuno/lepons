@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import type { PastConversation } from "../shared/ipc.ts";
 import { isConversationId } from "../agent/agents.ts";
 import { posixQuote } from "../session/state.ts";
-import { cwdNeedle, headBytes, onePathALine, same } from "./codex.ts";
+import { cwdPatterns, headBytes, onePathALine, same } from "./codex.ts";
 import { projectSlug } from "./transcript.ts";
 
 /**
@@ -111,7 +111,7 @@ export function remoteClaudePastScript(dir: string): string {
 export function remoteCodexPastScript(repoPath: string): string {
   return (
     `set --; ${onePathALine}for f in $(ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null | head -${codexScan}); do ` +
-    `head -c ${headBytes} "$f" | grep -qF ${posixQuote(cwdNeedle(repoPath))} || continue; ` +
+    `head -c ${headBytes} "$f" | grep -qF ${cwdPatterns(repoPath)} || continue; ` +
     `echo "@@ ${mtime} $f"; id=\${f%.jsonl}; set -- "$@" -e "\${id##*-}"; done; ` +
     `echo; echo @@index; [ $# -gt 0 ] && grep -hF "$@" "$HOME"/.codex/session_index.jsonl 2>/dev/null; true`
   );

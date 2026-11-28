@@ -4,6 +4,8 @@ import { describeItem, jobOrigin, jobProgram, jobTitle, scheduleText, type JobOr
 import { rruleSchedule, type CodexAutomation, type CodexCloudTask } from "../agent/codex-automations.ts";
 import { MAX_SCHEDULE_TEXT, NO_SESSION, describeWhen, parseWhen, presetCron, presetOf, type When } from "../agent/schedule.ts";
 import { botProfilePath } from "../agent/bots.ts";
+import { dialogShell } from "./dialog-shell.ts";
+import { menuMove } from "./chat-view.ts";
 import { agents, delegateAgents, type AgentKind } from "../agent/agents.ts";
 
 /**
@@ -242,6 +244,10 @@ const keep = (key: string, make: () => HTMLElement): HTMLElement => {
 export function initAutomation(element: HTMLElement, given: AutomationActions): void {
   host = element;
   actions = given;
+  // A press anywhere but the bot page's ⋯ and its menu closes the menu.
+  document.addEventListener("pointerdown", (event) => {
+    if (botMenu && !(event.target as Element).closest(".autoMore")) dropMenu();
+  }, true);
 }
 
 /**
@@ -305,8 +311,12 @@ function syncReading(): void {
  * Otherwise false, and the view is left.
  */
 export function automationEscape(): boolean {
-  if (botMenu) botMenu = false;
-  else if (jobEdit !== undefined) jobEdit = undefined;
+  if (botMenu) {
+    botMenu = false;
+    render();
+    host?.querySelector<HTMLElement>('[data-focus="botMore"]')?.focus();
+    return true;
+  } else if (jobEdit !== undefined) jobEdit = undefined;
   else if (nameEdit !== undefined) nameEdit = undefined;
   else if (botOpen !== undefined) {
     botOpen = undefined;
@@ -375,24 +385,8 @@ function formDialog(): void {
     return;
   }
   if (!dialogBox) {
-    const dialog = make("dialog", "autoDialog");
-    const head = make("h2", "autoDialogHead");
+    const { dialog, head, body, foot } = dialogShell();
     const said = make("p", "autoSaid");
-    // The form's styles are the view's: .autoSet.
-    const body = make("div", "autoSet autoDialogBody");
-    const foot = make("div", "autoSet autoDialogFoot");
-    dialog.append(head, body, foot);
-    // Only a press and a click both outside the box close it: not its own padding, nor a text selection dragged out.
-    const outside = (event: MouseEvent) => {
-      const box = dialog.getBoundingClientRect();
-      return event.target === dialog && (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom);
-    };
-    let pressedOutside = false;
-    dialog.addEventListener("pointerdown", (event) => { pressedOutside = outside(event); });
-    dialog.addEventListener("click", (event) => {
-      if (pressedOutside && outside(event)) dialog.close();
-      pressedOutside = false;
-    });
     dialog.addEventListener("close", () => {
       if (dialogKey() !== undefined) {
         // Esc or the backdrop: what an earlier try said goes with it.
@@ -404,7 +398,6 @@ function formDialog(): void {
       // The control that opened it was redrawn meanwhile: the focus goes to the new one.
       if (dialogReturn) host?.querySelector<HTMLElement>(`[data-focus="${CSS.escape(dialogReturn)}"]`)?.focus();
     });
-    document.body.append(dialog);
     dialogBox = { dialog, head, said, body, foot };
   }
   const { dialog, head, said, body, foot } = dialogBox;
@@ -426,6 +419,18 @@ function formDialog(): void {
     dialog.showModal();
     body.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
   }
+}
+
+/** The view opens on this bot's own page (the workflow map's 봇 페이지 열기). */
+export function openBotPage(id: string): void {
+  botOpen = id;
+  botForm = undefined;
+  botMenu = false;
+}
+
+/** A bot was saved or removed: an open view reads its list again. */
+export function botsUpdated(): void {
+  if (host && !host.hidden) loadBots();
 }
 
 function loadBots(): void {
@@ -580,7 +585,7 @@ function linkButton(text: string, click: () => void): HTMLButtonElement {
 const clock = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 /** "오늘 16:00", "어제 16:00", or the date as well further off. */
-function whenText(iso: string): string {
+export function whenText(iso: string): string {
   const at = new Date(iso);
   const time = clock(at.getHours() * 60 + at.getMinutes());
   const yesterday = new Date();
@@ -806,10 +811,14 @@ function botsSection(data: AutomationData, given: AutomationActions): HTMLElemen
   return section;
 }
 
+/** Why a run was skipped, in words. */
+export const skipText = (reason?: string): string =>
+  t(`automation.skip.${["busy", "unreachable", "timeout", "open_failed", "paused", "interrupted", "no_folder", "edited"].includes(reason ?? "") ? reason : "other"}`);
+
 /** How a run went, in words; the AI's own last words when it left some. */
 function runText(run: BotRun): string {
   if (run.answer) return run.answer;
-  if (run.state === "skipped") return t(`automation.skip.${["busy", "unreachable", "timeout", "open_failed", "paused", "interrupted", "no_folder", "edited"].includes(run.reason ?? "") ? run.reason : "other"}`);
+  if (run.state === "skipped") return skipText(run.reason);
   return t(run.state === "failed" ? "automation.runFailed" : run.state === "missed" ? "automation.runMissed" : "automation.runDone");
 }
 
@@ -1344,33 +1353,24 @@ function botPage(bot: BotRow, data: AutomationData, given: AutomationActions): H
     element.addEventListener("click", click);
     return element;
   };
+  // The list here only reads; its buttons open the bot's dialog, where the jobs are changed and ordered.
+  const openForm = (add: boolean, from: string) => {
+    botForm = bot.id;
+    botFormAdd = add;
+    dialogReturn = from;
+    schedSaid = "";
+    render();
+  };
+  // The two used most stay buttons; the rest wait under ⋯, 삭제 last and apart.
   right.append(
     button(t("automation.runNow"), () => botChange(window.cockpit.botRunNow(bot.id), t("automation.started", { name: bot.name }))),
     button(t("automation.openSession"), () => given.goToBot(bot)),
+    moreMenu(bot, openForm),
   );
-  const more = button("⋯", () => {
-    botMenu = !botMenu;
-    render();
-  });
-  more.setAttribute("aria-label", t("automation.moreActions"));
-  more.setAttribute("aria-expanded", String(botMenu));
-  right.append(more);
-  if (botMenu) {
-    const menu = make("span", "autoMenu");
-    menu.append(button(t(bot.paused ? "osjob.action.resume" : "osjob.action.pause"), () => botChange(window.cockpit.botPause(bot.id, !bot.paused))));
-    const remove = button(t("schedules.remove"), () => {
-      if (remove.dataset.armed !== "1") {
-        remove.dataset.armed = "1";
-        remove.textContent = t("automation.removeSure");
-        return;
-      }
-      botChange(window.cockpit.botRemove(bot.id), "", () => { botOpen = undefined; });
-    });
-    menu.append(remove);
-    right.append(menu);
-  }
-  head.append(back, make("span", "autoDim", "/"), lamp, make("h2", "", bot.name),
-    make("span", "autoMuted", t("automation.where", { pc: pcLabel(bot.nodeId), folder, agent: agents[bot.executor]?.label ?? bot.executor })), right);
+  const name = make("h2", "");
+  name.append(lamp, bot.name);
+  head.append(back, make("span", "autoDim", "/"), name, right,
+    make("span", "autoMuted autoBotWhere", t("automation.where", { pc: pcLabel(bot.nodeId), folder, agent: agents[bot.executor]?.label ?? bot.executor })));
 
   const grid = make("div", "autoBotGrid");
   const profile = make("section", "autoSection");
@@ -1388,14 +1388,6 @@ function botPage(bot: BotRow, data: AutomationData, given: AutomationActions): H
   const work = make("section", "autoSection");
   const workHead = make("div", "autoHead");
   workHead.append(make("span", "autoTitle", t("automation.work")));
-  // The list here only reads; its buttons open the bot's dialog, where the jobs are changed and ordered.
-  const openForm = (add: boolean, from: string) => {
-    botForm = bot.id;
-    botFormAdd = add;
-    dialogReturn = from;
-    schedSaid = "";
-    render();
-  };
   const addLink = linkButton(`+ ${t("automation.form.addJob")}`, () => openForm(true, "botAddJob"));
   addLink.dataset.focus = "botAddJob";
   workHead.append(addLink);
@@ -1416,12 +1408,98 @@ function botPage(bot: BotRow, data: AutomationData, given: AutomationActions): H
   if (!bot.runs?.length) runs.append(make("p", "autoMuted", t("automation.noRuns")));
   for (const run of bot.runs ?? []) {
     const row = make("div", "autoRun");
-    row.append(make("span", `lamp${run.state === "done" ? " live" : run.state === "skipped" || run.state === "missed" ? " wait" : " fail"}`), make("span", "autoMuted", whenText(run.startedAt)), make("span", "", runText(run)));
+    const when = make("span", "autoMuted");
+    when.append(make("span", `lamp${run.state === "done" ? " live" : run.state === "skipped" || run.state === "missed" ? " wait" : " fail"}`), whenText(run.startedAt));
+    row.append(when, make("span", "", runText(run)));
     runs.append(row);
   }
   side.append(work, runs);
   grid.append(profile, side);
   return [head, ...(schedSaid && !dialogKey() ? [make("p", "autoSaid", schedSaid)] : []), grid];
+}
+
+/**
+ * The bot page's ⋯ and the menu it drops: 고치기, 멈추기 or 다시 켜기, then 삭제 apart (two presses).
+ * Drawn from `botMenu`, so a redraw keeps it open, and each item's data-focus keeps the keyboard on it.
+ * Enter or Space opens it, ↑/↓ moves, Esc (automationEscape) or a click elsewhere closes it.
+ */
+function moreMenu(bot: BotRow, openForm: (add: boolean, from: string) => void): HTMLElement {
+  const wrap = make("span", "autoMore");
+  const more = make("button", "autoBtn", "⋯");
+  more.type = "button";
+  more.dataset.focus = "botMore";
+  more.title = t("automation.moreActions");
+  more.setAttribute("aria-label", t("automation.moreActions"));
+  more.setAttribute("aria-haspopup", "menu");
+  more.setAttribute("aria-expanded", String(botMenu));
+  const open = (at: number) => {
+    botMenu = true;
+    render();
+    host?.querySelector<HTMLElement>(`[data-focus="botMenu:${at}"]`)?.focus();
+  };
+  more.addEventListener("click", () => {
+    if (!botMenu) return open(0);
+    botMenu = false;
+    render();
+  });
+  more.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    open(event.key === "ArrowDown" ? 0 : 2);
+  });
+  wrap.append(more);
+  if (!botMenu) return wrap;
+  const menu = make("div", "setMenu");
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", t("automation.moreActions"));
+  // An item that does its work closes the menu and leaves the keyboard on ⋯.
+  const done = (run: () => void) => () => {
+    botMenu = false;
+    render();
+    host?.querySelector<HTMLElement>('[data-focus="botMore"]')?.focus();
+    run();
+  };
+  const item = (text: string, click: () => void, danger = false) => {
+    const element = make("button", danger ? "danger" : "", text);
+    element.type = "button";
+    element.tabIndex = -1;
+    element.setAttribute("role", "menuitem");
+    element.dataset.focus = `botMenu:${menu.childElementCount}`;
+    element.addEventListener("click", click);
+    menu.append(element);
+    return element;
+  };
+  item(t("automation.editBot"), done(() => openForm(false, "botMore")));
+  item(t(bot.paused ? "osjob.action.resume" : "osjob.action.pause"), done(() => botChange(window.cockpit.botPause(bot.id, !bot.paused))));
+  const remove = item(t("schedules.remove"), () => {
+    if (remove.dataset.armed !== "1") {
+      remove.dataset.armed = "1";
+      remove.textContent = t("automation.removeSure");
+      return;
+    }
+    done(() => botChange(window.cockpit.botRemove(bot.id), "", () => { botOpen = undefined; }))();
+  }, true);
+  menu.addEventListener("keydown", (event) => {
+    const items = [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    const to = menuMove(event.key, items.indexOf(document.activeElement as HTMLElement), items.length);
+    if (to === undefined) return;
+    event.preventDefault();
+    items[to]!.focus();
+  });
+  // Tabbing out closes it, as a click elsewhere does (initAutomation); a redraw taking the old menu away does not.
+  wrap.addEventListener("focusout", (event) => {
+    const to = event.relatedTarget as Node | null;
+    if (botMenu && to && !wrap.contains(to) && wrap.isConnected) dropMenu();
+  });
+  wrap.append(menu);
+  return wrap;
+}
+
+/** Closes the ⋯ menu by taking it out, not redrawing: the press or Tab that closed it still lands where it was going. */
+function dropMenu(): void {
+  botMenu = false;
+  host?.querySelector(".autoMore .setMenu")?.remove();
+  host?.querySelector('[data-focus="botMore"]')?.setAttribute("aria-expanded", "false");
 }
 
 /**
@@ -1740,7 +1818,7 @@ function select(label: string, options: Array<[value: string, text: string]>, va
 }
 
 /** When: a choice, its time, and cron typed in for what the choices do not cover. `value()` is what parseWhen takes. */
-function whenPicker(t: typeof translate, cronText?: string): { row: HTMLElement; value(): string } {
+export function whenPicker(t: typeof translate, cronText?: string): { row: HTMLElement; value(): string } {
   const parsed = cronText ? parseWhen(cronText) : undefined;
   const when = parsed?.ok ? parsed.when : { minute: 0, hour: 9, days: [1, 2, 3, 4, 5] };
   const kind = select(t("schedules.when"), [

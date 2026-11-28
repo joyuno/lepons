@@ -34,9 +34,11 @@ export function usePcReconnect() {
 /** The refresh button at a PC row's end: full colour when the PC is down or off, quiet when connected; it turns until the PC answers. */
 export function PcReconnectButton({ label, state, busy, onPress }: { label: string; state: PcState | undefined; busy: boolean; onPress: () => void }) {
   const { c: p } = useTheme();
+  // Only the PC this phone reaches can pass the word on: off while it cannot be asked.
+  const off = !useConnection().canAsk;
   return (
-    <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${t.reconnect}`} accessibilityState={{ busy, disabled: busy }} disabled={busy} hitSlop={8} onPress={onPress}
-      style={({ pressed }) => ({ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: pressed ? 0.5 : 1 })}>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${label}, ${t.reconnect}`} accessibilityState={{ busy, disabled: busy || off }} disabled={busy || off} hitSlop={8} onPress={onPress}
+      style={({ pressed }) => ({ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", opacity: off ? 0.4 : pressed ? 0.5 : 1 })}>
       <Spin busy={busy}><SymbolView name={{ ios: "arrow.clockwise", android: "refresh" }} tintColor={state === "failed" ? p.stop : reconnectProminent(state) ? p.text : p.muted} size={20} /></Spin>
     </Pressable>
   );

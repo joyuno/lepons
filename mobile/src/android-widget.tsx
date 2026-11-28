@@ -193,8 +193,10 @@ async function overRelay<T>(work: (client: RelayClient) => Promise<T>): Promise<
     connect: (url) => new WebSocket(url) as unknown as RelaySocket,
     random: getRandomBytes,
     status: (status) => {
+      // The PC says it once: the app, not on this link, would never hear it.
+      if (status.kind === "unpaired") void store.markUnpaired(pc.id).catch(() => undefined);
       if (status.kind === "connected") ready();
-      else if (["replaced", "error", "refused", "confirm"].includes(status.kind)) fail(new Error(status.kind));
+      else if (["replaced", "error", "refused", "unpaired", "confirm"].includes(status.kind)) fail(new Error(status.kind));
     },
   });
   // The task has 30 seconds (the library's headless task): 12 to get in, then two requests of 7 at most.

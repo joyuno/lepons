@@ -2,9 +2,10 @@ import { router } from "expo-router";
 import { SymbolView } from "expo-symbols";
 import { Pressable, RefreshControl, Text, View } from "react-native";
 
-import { Chip, MissedBox, useBotActions, useBots, when } from "@/bots-ui";
+import { BotNote, Chip, MissedBox, useBotActions, useBots, when } from "@/bots-ui";
 import { useConnection } from "@/connection";
 import { fmt, t } from "@/i18n";
+import { LinkNotice, useStillLoading } from "@/link-notice";
 import { botLamp, botStatus, nextBot, todayPoints } from "@/phone/bots";
 import type { PhoneBot } from "@/phone/types";
 import { font, Lamp, Screen, size, Skeleton, space, useTheme } from "@/ui";
@@ -18,18 +19,20 @@ const open = (bot: PhoneBot) => router.push({ pathname: "/bot/[id]", params: { i
 export default function Bots() {
   const c = useConnection();
   const { c: p, s } = useTheme();
-  const { bots, status, refresh } = useBots();
+  const { bots, status, savedAt, reading, refresh } = useBots();
   const act = useBotActions(refresh);
+  const loading = useStillLoading() || reading;
   const refreshing = <RefreshControl refreshing={false} onRefresh={() => { c.refresh(); void refresh(); }} tintColor={p.muted} />;
 
   return (
     <Screen refresh={refreshing}>
+      <LinkNotice after={space.lg} savedAt={savedAt} />
       <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
         {c.demo ? <Text style={[s.dim, { flex: 1, color: p.live }]}>{t.demoBanner}</Text> : <View style={{ flex: 1 }} />}
         {bots?.length ? <Text style={[s.dim, { fontSize: size.footnote }]}>{fmt(t.botsCount, { n: bots.length })}</Text> : null}
       </View>
       {status === "old" ? <Text style={s.empty}>{t.botsOld}</Text>
-        : !bots ? status === "failed" ? <Text style={s.empty}>{t.botsFailed}</Text> : (
+        : !bots ? status === "failed" && c.canAsk ? <Text style={s.empty}>{t.botsFailed}</Text> : !loading ? <Text style={s.empty}>{t.noSavedYet}</Text> : (
           <View accessible accessibilityLabel={t.loadingList} style={{ gap: space.lg }}>
             <Skeleton height={96} style={{ borderRadius: 16 }} />
             <Skeleton height={120} style={{ borderRadius: 16 }} />
@@ -58,8 +61,8 @@ export default function Bots() {
                     <Chip text={bot.next ? fmt(t.botNext, { when: when(bot.next) }) : t.botNoNext} color={p.text} />
                     <Chip text={chip} color={p[state.tone]} />
                   </View>
-                  <MissedBox bot={bot} busy={act.busy} onRun={() => void act.missed(bot, true)} onSkip={() => void act.missed(bot, false)} />
-                  {act.note?.id === bot.id ? <Text style={s.dim} accessibilityLiveRegion="polite">{act.note.text}</Text> : null}
+                  <MissedBox bot={bot} busy={act.busy} off={act.off} onRun={() => void act.missed(bot, true)} onSkip={() => void act.missed(bot, false)} />
+                  {act.note?.id === bot.id ? <BotNote note={act.note} off={act.off} /> : null}
                 </View>
               );
             })}
@@ -115,3 +118,5 @@ function Today({ bots }: { bots: PhoneBot[] }) {
     </View>
   );
 }
+
+export { ScreenFailed as ErrorBoundary } from "@/screen-failed";

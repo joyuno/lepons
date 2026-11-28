@@ -107,7 +107,7 @@
 
 <main>
 <section class="leg left" id="share">
-<div class="copy"><h2>코드베이스 공유</h2><p class="lead">git 없이도 다른 PC의 AI가 내 코드를 읽어요.</p><p>공유 맵에서 폴더를 다른 PC로 끌어다 놓으면 끝이에요. 회사 폐쇄망에서 일하거나 GitHub에 올리기 싫은 파일이 있을 때, 매번 커밋하고 푸시하고 풀하기 번거로울 때, git이 아직 낯설 때 쓰라고 만들었어요.</p><p>git으로 옮기면 파일은 가도 대화는 따라오지 않아서 다른 PC의 AI에게 같은 파일을 처음부터 다시 읽혀야 하는데, Lepons에서는 그 PC의 AI가 필요한 파일만 그 자리에서 찾아 읽으니 옮기고 설명하는 수고와 토큰이 함께 줄어요.</p><p class="note">공유받은 AI는 읽기만 해요. 고칠 일은 폴더가 있는 PC의 AI에게 맡겨요. 맡긴 일은 권한 확인 없이 돌아가니까 믿을 수 있는 PC끼리만 공유하세요. 코드를 읽을 때 비밀번호나 키처럼 보이는 값은 가려요.</p></div>
+<div class="copy"><h2>코드베이스 공유</h2><p class="lead">git 없이도 다른 PC의 AI가 내 코드를 읽어요.</p><p>공유 맵에서 폴더를 다른 PC로 끌어다 놓으면 끝이에요. 회사 폐쇄망이라 GitHub를 쓸 수 없을 때, 올리기 싫은 파일이 있을 때, 커밋·푸시·풀이 번거롭거나 git이 아직 낯설 때 쓰면 돼요.</p><p>git으로 옮기면 파일만 가고 대화 내용까진 몰라서 다른 PC의 AI가 같은 파일을 처음부터 다시 읽어야 해요. Lepons에서는 그 PC의 AI가 필요한 파일만 그 자리에서 찾아 읽어요. 다시 파일을 읽지 않아도 되니 토큰도 절약돼요.</p><p class="note">공유받은 AI는 읽기만 해요. 고칠 일은 폴더가 있는 PC의 AI에게 맡기는데, 맡긴 일은 권한을 묻지 않고 돌아가니 믿을 수 있는 PC끼리만 공유하세요. 비밀번호나 키처럼 보이는 값은 가린 채 읽어요.</p></div>
 <div class="vis"><svg class="sharemap" viewBox="0 0 360 290" width="360" height="290" role="img" aria-label="공유 맵 그림. 이 PC 카드의 shop-web 폴더를 회사 서버 카드로 끌어다 놓으면 두 카드 사이에 선이 생기고 회사 서버의 AI가 shop-web 코드를 읽어요.">
 <g transform="translate(2 8)"><rect class="card" width="150" height="176" rx="14"/><circle class="lamp go" cx="18" cy="24" r="4.5"/><text class="tt" x="31" y="29">이 PC</text><path class="hair" d="M0 44H150"/><text class="wd" x="14" y="66">폴더</text>
 <rect class="row hot" x="12" y="76" width="126" height="34" rx="8"/><text class="fn" x="24" y="98">shop-web</text><rect class="row" x="12" y="118" width="126" height="34" rx="8"/><text class="fn" x="24" y="140">docs-site</text></g>
@@ -163,7 +163,7 @@
 </div>
 <div class="desk"><p class="phead">이 PC · shop-web</p><div class="pbody mono"><span>이 수정을 적용할까요?</span><br><span class="dk0">&gt; <i class="caret"></i></span><span class="dk1">&gt; 1<br>작업 중…</span><span class="dk2">&gt; 2<br>알겠어요. 어떻게 고칠지 알려 주세요.</span></div><p class="try">폰 화면의 1이나 2를 눌러 보세요. 답이 PC로 가요.</p></div>
 </div>
-<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">내 모든 PC의 모든 에이전트를 한 손에.</p><p>Lepons를 설치한 PC를 여러 대 연결해 두고 홈 화면 위쪽에서 바로 바꿔요. 자리를 비워도 일은 멈추지 않아요. 허락이나 답이 필요한 순간에는 알림이 오고 폰에서 답하면 PC에서 작업이 바로 이어져요. 세션을 열고 닫거나 끊긴 세션을 다시 연결하고, 사진이나 파일을 첨부해 보내고, PC 터미널도 폰에서 열어요.</p><p class="note">폰과 PC는 QR 코드를 한 번 찍으면 연결돼요. 주고받는 내용은 처음부터 끝까지 암호화되고, 중간의 중계 서버도 그 내용을 읽을 수 없어요.</p></div>
+<div class="copy"><h2>폰으로 이어서 하기</h2><p class="lead">내 모든 PC의 모든 에이전트를 한 손에.</p><p>PC가 켜져만 있다면 폰에서도 개발할 수 있어요. 세션의 선택지 알림, 응답 대기 알림, 에러 알림을 받아 볼 수 있어요. 폰에서 답하면 PC로 전달돼요. 세션 열고 닫기, 사진·파일 첨부, PC 터미널까지 폰에서 돼요.</p><p class="note">QR 코드를 한 번 찍으면 연결돼요. 주고받는 내용은 끝까지 암호화돼서 중계 서버도 읽을 수 없어요.</p></div>
 </section>
 <div class="cross flip" aria-hidden="true"><i></i><i></i></div>
 

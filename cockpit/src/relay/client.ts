@@ -156,6 +156,13 @@ export class RelayClient {
     return true;
   }
 
+  /** The operator let the paired phone go: tell it, if it is here, so it forgets this PC; then stop. */
+  unpair(): void {
+    const link = this.#link;
+    if (link?.phase === "open") this.#send(link, { t: "error", message: "unpaired" });
+    this.stop();
+  }
+
   #dial(): void {
     this.#options.status({ kind: "connecting" });
     let socket: RelaySocket;

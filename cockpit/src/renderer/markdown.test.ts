@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { renderMarkdown } from "./markdown.ts";
+import { renderAnswer, renderMarkdown } from "./markdown.ts";
 
 /** Every block's data-md-start/end, as the source slices they point at. */
 function slices(html: string, source: string): string[] {
@@ -47,6 +47,41 @@ test("Obsidian's callouts, highlights, comments, tags and wikilinks render", () 
   assert.match(html, /<span class="wikilink"[^>]*>별칭<\/span>/);
   assert.match(html, /<span class="wikilink embed"[^>]*>그림\.png<\/span>/);
   assert.match(html, /<details class="callout" data-callout="tip"[^>]*><summary class="callout-title">접힘<\/summary>/);
+});
+
+// The chat view draws answers into the page itself, which holds the preload API: no tag an AI wrote may become one.
+test("renderAnswer shows raw HTML as text", () => {
+  const inline = renderAnswer("<img src=x onerror=alert(1)> **b**");
+  assert.match(inline, /&lt;img/);
+  assert.match(inline, /<strong>b<\/strong>/);
+  assert.doesNotMatch(inline, /<img/);
+  const block = renderAnswer("<form action=x>\n<input name=a>\n</form>\n\n- item");
+  assert.match(block, /&lt;form/);
+  assert.doesNotMatch(block, /<form|<input/);
+  assert.match(block, /<li>item<\/li>/);
+});
+
+test("renderAnswer draws no image itself: a web address becomes a link, a path a label for the chat to fill", () => {
+  const web = renderAnswer("![차트](https://example.com/a.png)");
+  assert.doesNotMatch(web, /<img/);
+  assert.match(web, /<a href="https:\/\/example.com\/a.png" class="chatImage"[^>]*>차트<\/a>/);
+  const local = renderAnswer("![](<docs/사진 1.png>)\n\n![shot](<C:\\work\\shot.png>)");
+  assert.doesNotMatch(local, /<img/);
+  assert.match(local, /<span class="chatImage" data-path="docs\/사진 1.png"[^>]*>사진 1.png<\/span>/);
+  assert.match(local, /data-path="C:\\work\\shot.png"[^>]*>shot</);
+  // A network or device path in any spelling: opening one would connect to that host (image-path.ts).
+  for (const odd of ["![x](data:image/png;base64,AAAA)", "![x](javascript:alert(1))", "![x](//evil.example/a.png)", "![x](\\\\\\\\evil\\share\\a.png)",
+    "![x](/\\evil\\s\\a.png)", "![x](%5C%5Cevil/s/a.png)", "![x](<\\\\\\\\?\\C:\\a.png>)", "![x](C:a.png)"]) {
+    const html = renderAnswer(odd);
+    assert.doesNotMatch(html, /<img|data-path|href=/, odd);
+    assert.match(html, /<span class="chatImage">x<\/span>/, odd);
+  }
+  assert.doesNotMatch(renderAnswer('![a" onerror="x](p.png)'), /onerror="x"/);
+});
+
+test("renderAnswer draws a GFM table as a table", () => {
+  const html = renderAnswer("| 파일 | 줄 |\n| --- | --- |\n| src/app.ts | 2 |");
+  assert.match(html, /<table>[\s\S]*<th>파일<\/th>[\s\S]*<td>src\/app.ts<\/td>/);
 });
 
 test("what only looks like a tag is left alone", () => {
